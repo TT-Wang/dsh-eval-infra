@@ -116,6 +116,8 @@ export interface CandidateReport {
   gate: 'pass' | 'regressions' | 'incomplete'
   /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
   costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none'
+  /** Rerun validation of a failure (dsh-eval rerun), when one was made. */
+  rerun?: { scenario: string; newRunId: string; reps: number; failedAgain: number; sameCall: number; verdict: string; original: { call: number; baseline: string; candidate: string; failing: string } | null }
   /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
   passDiffCI: BootstrapCI
   /** One-word grade combining correctness and cost: improvement / regression / tradeoff / tie / inconclusive. */
@@ -545,7 +547,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       const src = replayed[0]!.usageProvenance!.replay!
       const live = replayed.reduce((a, l) => a + (l.usageProvenance!.replay?.live ?? 0), 0)
       const served = replayed.reduce((a, l) => a + (l.usageProvenance!.replay?.replayed ?? 0), 0)
-      notes.push(`Replay: ${replayed.length} trial${replayed.length === 1 ? '' : 's'} served ${served} recorded provider responses from run ${src.runId}${src.forkAt !== undefined ? ` and forked to live calls after ${src.forkAt} (${live} live responses)` : ' with no live calls (keyless)'}; usage and cost are the recorded figures re-priced, not new spend.`)
+      notes.push(`Replay: ${replayed.length} trial${replayed.length === 1 ? '' : 's'} served ${served} recorded provider responses from run ${src.runId}${src.forkAt !== undefined ? ` and forked to live calls after ${src.forkAt} (${live} live responses; the recorded part is re-priced, the live part is new spend)` : ' with no live calls (keyless); usage and cost are the recorded figures re-priced, not new spend'}.`)
     }
     const metered = ledgers.filter(l => l.usageProvenance?.source === 'meter' || l.usageProvenance?.source === 'replay')
     const selfReported = ledgers.filter(l => !l.usageProvenance || l.usageProvenance.source === 'self-reported')

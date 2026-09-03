@@ -17,7 +17,7 @@ import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
-import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, writeJsonAtomic, writeLedger, type Progress } from './store.js'
+import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, runPathsAt, writeJsonAtomic, writeLedger, type Progress } from './store.js'
 import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
 
 export interface RunRequest {
@@ -46,6 +46,10 @@ export interface RunRequest {
   sequential?: boolean
   /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
   sandbox?: 'host' | 'docker'
+  /** Container runtime for docker mode (`runsc`, `kata`, …), recorded in env.json. */
+  dockerRuntime?: string
+  /** Keep dsh's in-process sandbox on inside the container (defence in depth) instead of the plain bash executor. */
+  dockerKeepSandbox?: boolean
   /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
   meter?: boolean
   /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
@@ -133,6 +137,13 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (apiKey === undefined && hooks.driverFactory === undefined) {
     throw new LaunchError('DEEPSEEK_API_KEY not found (env, $DSH_HOME/.env or ~/.dsh/.env)', 'env')
   }
+  // Third-party plugins default to the container path when Docker is available (the host sandbox is not a security boundary per dsh's SAFETY.md); --sandbox host overrides.
+  let sandbox: 'host' | 'docker' = request.sandbox ?? 'host'
+  if (request.sandbox === undefined && hooks.driverFactory === undefined) {
+    const { linkedPluginPaths, dockerAvailable } = await import('./docker.js')
+    const external = linkedPluginPaths(project.home, project.config.profile).filter(p => existsSync(p))
+    if (external.length > 0 && (await dockerAvailable()).ok) { sandbox = 'docker'; log(`sandbox: ${external.length} linked third-party plugin(s) present and Docker available → container per trial (pass --sandbox host to run on the host)`) }
+  }
 
   let plan: RunPlan
   let id: string
@@ -173,7 +184,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       scenarioRoot: project.scenarioRoot,
     }
     if (request.label !== undefined) plan.label = request.label
-    if (request.sandbox === 'docker') plan.sandbox = 'docker'
+    if (sandbox === 'docker') plan.sandbox = 'docker'
     if (request.perturb) plan.perturb = true
     if (request.replay) plan.replay = request.replay
   }
@@ -215,16 +226,15 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   }
   writeJsonAtomic(paths.plan, plan)
   const env = await recordEnvironment(prepared.composed)
-  writeJsonAtomic(paths.env, { ...env, sandbox: request.sandbox ?? 'host', ...(request.sandbox === 'docker' ? { dockerImage: request.dockerImage ?? 'node:22-bookworm-slim' } : {}), diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
+  writeJsonAtomic(paths.env, { ...env, sandbox, ...(sandbox === 'docker' ? { dockerImage: request.dockerImage ?? 'node:22-bookworm-slim', ...(request.dockerRuntime !== undefined ? { dockerRuntime: request.dockerRuntime } : {}), dshSandboxInContainer: request.dockerKeepSandbox === true } : {}), diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
   for (const [arm, text] of Object.entries(prepared.composed)) writeFileSync(join(paths.arms, `${arm}.composed.yml`), text)
 
   const runEnv: Record<string, string> = { DSH_TELEMETRY_DISABLED: '1' }
   if (apiKey !== undefined) runEnv['DEEPSEEK_API_KEY'] = apiKey
-  const sandbox = request.sandbox ?? 'host'
   let driverFactory = hooks.driverFactory
   let baseOverlayRows: Array<Record<string, unknown>> = []
   if (driverFactory === undefined && sandbox === 'docker') {
-    const { dockerAvailable, dockerDriverFactory, prepareNativeShims, CONTAINER_OVERLAY_ROWS } = await import('./docker.js')
+    const { dockerAvailable, dockerDriverFactory, prepareNativeShims, CONTAINER_OVERLAY_ROWS, CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX } = await import('./docker.js')
     const { dshSourceRoot } = await import('./env.js')
     const avail = await dockerAvailable()
     if (!avail.ok) throw new LaunchError(`docker sandbox requested but docker is not usable: ${avail.detail}`, 'env')
@@ -233,8 +243,8 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     const arch = process.arch === 'x64' ? 'x64' : 'arm64'
     const nativeShims = prepareNativeShims(project.home, source, arch, log)
     log(`docker sandbox: ${avail.detail}; image ${request.dockerImage ?? 'node:22-bookworm-slim'}; ${nativeShims.length} native shim(s)`)
-    driverFactory = dockerDriverFactory({ dshSource: source, nativeShims, ...(request.dockerImage !== undefined ? { image: request.dockerImage } : {}) }, paths.dir)
-    baseOverlayRows = CONTAINER_OVERLAY_ROWS
+    driverFactory = dockerDriverFactory({ dshSource: source, nativeShims, ...(request.dockerImage !== undefined ? { image: request.dockerImage } : {}), ...(request.dockerRuntime !== undefined ? { runtime: request.dockerRuntime } : {}), ...(request.dockerKeepSandbox ? { keepDshSandbox: true } : {}) }, paths.dir)
+    baseOverlayRows = request.dockerKeepSandbox ? CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX : CONTAINER_OVERLAY_ROWS
   }
   const deps: RunDeps = {
     driverFactory: driverFactory ?? sdkDriverFactory(project.config.dshBin !== undefined ? { dshBin: project.config.dshBin } : {}),
@@ -499,8 +509,8 @@ export async function rebuildLedgers(project: Project, id: string): Promise<numb
 
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 /** Re-derive the report from the ledgers, annotations and judge files without writing anything. */
-export function deriveReport(project: Project, id: string): Report {
-  const paths = runPaths(project.runsRoot, id)
+export function deriveReport(project: Project, id: string, at?: ReturnType<typeof runPaths>): Report {
+  const paths = at ?? runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
@@ -529,7 +539,90 @@ export function deriveReport(project: Project, id: string): Report {
       }
     }
   }
+  for (const f of readdirSync(paths.dir).filter(f => f.startsWith('rerun-') && f.endsWith('.json')).sort()) {
+    try {
+      const r = JSON.parse(readFileSync(join(paths.dir, f), 'utf8')) as RerunResult
+      const cand = report.candidates.find(c => c.arm === r.candidate)
+      if (cand) cand.rerun = r
+      report.notes.push(`${r.candidate}: rerun validation of ${r.scenario} (run ${r.newRunId}, ${r.reps} reruns): ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, first divergence at the same call (${r.original.call}: ${r.original.baseline} vs ${r.original.candidate}) in ${r.sameCall}/${r.reps}` : `no original divergence to validate; ${r.failedAgain}/${r.reps} reruns had exactly one failing arm`} → ${r.verdict}.`)
+    } catch { /* unreadable rerun file */ }
+  }
   return report
+}
+
+export interface RerunResult {
+  scenario: string
+  candidate: string
+  newRunId: string
+  reps: number
+  original: { rep: number; call: number; baseline: string; candidate: string; failing: string } | null
+  /** Reruns in which the originally failing arm failed again (or, without an original, exactly one arm failed). */
+  failedAgain: number
+  /** Reruns whose first divergence happened at the same call index as the original. */
+  sameCall: number
+  verdict: 'reproduced' | 'partly reproduced' | 'not reproduced' | 'no original failure'
+}
+
+/** First tool call at which two trials' tool sequences part, and which arm failed (null when both passed or both failed). */
+export function pairDivergence(rb: RunLedger, rc: RunLedger, candidateName: string, baselineName: string): { call: number; baseline: string; candidate: string; failing: string } | null {
+  const okB = rb.verdict?.ok === true && rb.error === undefined
+  const okC = rc.verdict?.ok === true && rc.error === undefined
+  if (okB === okC) return null
+  const seq = (l: RunLedger): string[] => l.steps.flatMap(st => st.calls.map(c => c.name))
+  const sb = seq(rb)
+  const sc = seq(rc)
+  let i = 0
+  while (i < sb.length && i < sc.length && sb[i] === sc[i]) i += 1
+  return { call: i + 1, baseline: sb[i] ?? '(stops)', candidate: sc[i] ?? '(stops)', failing: okB ? candidateName : baselineName }
+}
+
+/**
+ * Rerun validation of a failure: run one scenario again with the same arms a few
+ * times and check whether the originally failing arm fails again and whether the
+ * first divergence recurs at the same call. The result is stored beside the
+ * original run (a derived file, so its seal stays valid) and shown in its report.
+ */
+export async function rerunScenario(project: Project, runId: string, scenario: string, options: { repeats?: number; candidate?: string; log?: (line: string) => void; hooks?: LaunchHooks } = {}): Promise<RerunResult> {
+  const paths = runPaths(project.runsRoot, runId)
+  if (!existsSync(paths.plan)) throw new LaunchError(`run ${runId} not found`, 'usage')
+  const plan = readPlan(paths)
+  const candidate = options.candidate ?? plan.candidates[0]?.name
+  if (candidate === undefined) throw new LaunchError('the run has no candidate arm', 'usage')
+  const original = (() => {
+    const b = readLedgers(paths).filter(l => l.scenario === scenario && l.arm === plan.baseline.name).sort((x, y) => x.rep - y.rep)
+    const c = readLedgers(paths).filter(l => l.scenario === scenario && l.arm === candidate)
+    for (const rb of b) { const rc = c.find(x => x.rep === rb.rep); if (!rc) continue; const d = pairDivergence(rb, rc, candidate, plan.baseline.name); if (d) return { rep: rb.rep, ...d } }
+    return null
+  })()
+  const reps = options.repeats ?? 3
+  const launched = await launchRun(project, { baseline: plan.baseline.name, candidates: [candidate], scenarios: [scenario], repeats: reps, concurrency: 2, label: `rerun:${runId}:${scenario}`, includeHoldout: true, skipSelfcheck: true, sandbox: plan.sandbox === 'docker' ? 'docker' : 'host' }, { ...(options.hooks ?? {}), ...(options.log ? { log: options.log } : {}) })
+  await launched.done
+  const fresh = readLedgers(runPaths(project.runsRoot, launched.id))
+  let failedAgain = 0
+  let sameCall = 0
+  for (let rep = 1; rep <= reps; rep += 1) {
+    const rb = fresh.find(l => l.scenario === scenario && l.arm === plan.baseline.name && l.rep === rep)
+    const rc = fresh.find(l => l.scenario === scenario && l.arm === candidate && l.rep === rep)
+    if (!rb || !rc) continue
+    const d = pairDivergence(rb, rc, candidate, plan.baseline.name)
+    if (!d) continue
+    if (original === null || d.failing === original.failing) failedAgain += 1
+    if (original !== null && d.failing === original.failing && d.call === original.call) sameCall += 1
+  }
+  const verdict: RerunResult['verdict'] = original === null ? 'no original failure' : failedAgain === 0 ? 'not reproduced' : failedAgain === reps ? 'reproduced' : 'partly reproduced'
+  const result: RerunResult = { scenario, candidate, newRunId: launched.id, reps, original, failedAgain, sameCall, verdict }
+  writeJsonAtomic(join(paths.dir, `rerun-${scenario}.json`), result)
+  rebuildReport(project, runId)
+  return result
+}
+
+/** Verify a run directory that lives anywhere (a published bundle): hashes plus report re-derivation. */
+export function verifyRunDir(project: Project, dir: string): VerifyResult {
+  const paths = runPathsAt(dir)
+  if (!existsSync(paths.plan)) throw new LaunchError(`${dir} is not a run directory (no plan.json)`, 'usage')
+  const id = readPlan(paths).id
+  const pick = (r: Report): Record<string, unknown> => ({ candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })) })
+  return verifyRun(paths, () => ({ fresh: pick(deriveReport(project, id, paths)), stored: existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null }))
 }
 
 export function rebuildReport(project: Project, id: string): Report {

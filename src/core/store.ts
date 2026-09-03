@@ -7,7 +7,7 @@
  * directory is self-contained and can be shared or re-reported.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, renameSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { RunEnvironment, RunIndexEntry, RunLedger, RunPlan } from './types.js'
 
 export interface RunPaths {
@@ -35,6 +35,12 @@ export function runPaths(root: string, runId: string): RunPaths {
     arms: join(dir, 'arms'),
     ledgers: join(dir, 'ledgers'),
   }
+}
+
+/** Paths for a run directory that lives anywhere (a published bundle, a copied run). */
+export function runPathsAt(dir: string): RunPaths {
+  const d = resolve(dir)
+  return { root: dirname(dirname(d)), dir: d, plan: join(d, 'plan.json'), env: join(d, 'env.json'), progress: join(d, 'progress.json'), report: join(d, 'report.json'), reportMd: join(d, 'report.md'), arms: join(d, 'arms'), ledgers: join(d, 'ledgers') }
 }
 
 export function newRunId(now = new Date()): string {

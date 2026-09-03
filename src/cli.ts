@@ -14,9 +14,9 @@
  *   dsh-eval export <runId> [--out dir]      ATIF trajectories of every trial
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync , cpSync} from 'node:fs'
 import { join, resolve } from 'node:path'
-import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunIntegrity } from './core/orchestrate.js'
+import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
 import { ensureEvalProfile, loadProject, saveProjectConfig, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -190,7 +190,9 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(aa ? { aa: true } : {}),
     ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
     ...(args.flags['sequential'] === true ? { sequential: true } : {}),
-    ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : {}),
+    ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : args.flags['sandbox'] === 'host' ? { sandbox: 'host' as const } : {}),
+    ...(typeof args.flags['docker-runtime'] === 'string' ? { dockerRuntime: args.flags['docker-runtime'] } : {}),
+    ...(args.flags['docker-keep-sandbox'] === true ? { dockerKeepSandbox: true } : {}),
     ...(args.flags['no-meter'] === true ? { meter: false } : {}),
     ...(args.flags['perturb'] === true ? { perturb: true } : {}),
     ...(typeof args.flags['replay'] === 'string' ? { replay: { runId: args.flags['replay'], ...(num(args.flags['fork-at']) !== undefined ? { forkAt: num(args.flags['fork-at'])! } : {}) } } : {}),
@@ -274,10 +276,47 @@ async function cmdPerturb(project: Project, args: Args): Promise<number> {
   return 0
 }
 
+async function cmdRerun(project: Project, args: Args): Promise<number> {
+  const [id, scenario] = args.positional
+  if (id === undefined || scenario === undefined) { err('usage: dsh-eval rerun <runId> <scenario> [--repeats 3] [--arm <candidate>]'); return 3 }
+  const r = await regradeSafeRerun(project, id, scenario, args)
+  out(`rerun ${r.newRunId}: ${r.verdict} — ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, same first divergence (call ${r.original.call}) in ${r.sameCall}/${r.reps}` : `${r.failedAgain}/${r.reps} reruns had one failing arm`}`)
+  return 0
+}
+
+async function regradeSafeRerun(project: Project, id: string, scenario: string, args: Args): Promise<import('./core/orchestrate.js').RerunResult> {
+  const { rerunScenario } = await import('./core/orchestrate.js')
+  return rerunScenario(project, id, scenario, { ...(num(args.flags['repeats']) !== undefined ? { repeats: num(args.flags['repeats'])! } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), log: out })
+}
+
+function cmdPublish(project: Project, args: Args): number {
+  const id = args.positional[0]
+  if (id === undefined) { err('usage: dsh-eval publish <runId> [--out <dir>]'); return 3 }
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) { err(`run ${id} not found`); return 3 }
+  const outDir = typeof args.flags['out'] === 'string' ? resolve(args.flags['out']) : join(project.evalDir, 'bundles', id)
+  mkdirSync(outDir, { recursive: true })
+  cpSync(paths.dir, outDir, { recursive: true })
+  const html = exportHtml(project, id, join(outDir, 'report.html'))
+  if (html !== 0) return html
+  const v = verifyRunDir(project, outDir)
+  writeFileSync(join(outDir, 'VERIFY.md'), [
+    `# Verifying this evaluation bundle`, '',
+    `Run \`${id}\`, sealed ${v.sealedAt ?? '(unsealed)'}; evidence sha256 \`${v.evidenceSha ?? '—'}\`.`, '',
+    'Every evidence file (plan, environment, arms, ledgers, events, traces, meter ledgers, artifacts) is listed with its sha256 in `manifest.json`, and `report.json` / `report.md` / `report.html` are derived from those files. To check that nothing was altered and that the report follows from the evidence:', '',
+    '```bash', `dsh-eval verify ${outDir}`, '```', '',
+    'The command recomputes every hash, lists missing or changed files, re-derives the report from the ledgers and compares its readings (gate, cost reading, grade, verdict) with the stored report. Exit code 0 means the bundle verifies.', '',
+    'Meter ledgers under `meter/` carry a hash chain per trial (`prev`/`hash`), and `*.responses.jsonl` files hold the recorded provider responses so the run can be replayed without a key: `dsh-eval run --replay <runId> …` from a project that contains this run directory under `.dsh-eval/runs/`.', '',
+  ].join('\n'))
+  out(`bundle → ${outDir}`)
+  out(`  evidence ${v.evidenceSha?.slice(0, 16) ?? '—'}… · ${v.ok ? 'verifies' : 'DOES NOT verify'} · report.html + VERIFY.md included`)
+  return v.ok ? 0 : 1
+}
+
 function cmdVerify(project: Project, args: Args): number {
   const id = args.positional[0]
-  if (id === undefined) { err('usage: dsh-eval verify <runId> [--json]'); return 3 }
-  const v = verifyRunIntegrity(project, id)
+  if (id === undefined) { err('usage: dsh-eval verify <runId | run directory> [--json]'); return 3 }
+  const v = existsSync(join(id, 'plan.json')) ? verifyRunDir(project, id) : verifyRunIntegrity(project, id)
   if (args.flags['json'] === true) { out(JSON.stringify(v, null, 2)); return v.ok ? 0 : 1 }
   if (v.sealedAt === null) { out(`run ${id}: ${v.reportDiff[0] ?? 'not sealed'}`); return 1 }
   out(`run ${id}: sealed ${v.sealedAt} · evidence ${v.evidenceSha!.slice(0, 16)}…`)
@@ -407,7 +446,10 @@ function help(): number {
   run … [--perturb] [--order signal]   paraphrase variants on repeats above 1; sequential order by archive signal
   run … [--replay <runId> [--fork-at N]] [--max-usd-per-trial X]   keyless replay of a recorded run (fork: N recorded responses, then live); per-trial spend cap
   perturb <globs> [--n N] [--model M]   write semantics-preserving paraphrases (prompts.variants.json) for --perturb
-  verify <runId> [--json]      check the sealed evidence hashes and that the report re-derives from them
+  verify <runId | dir> [--json]   check the sealed evidence hashes and that the report re-derives from them
+  rerun <runId> <scenario> [--repeats 3]   rerun one scenario's pair to validate a failure and its divergence point
+  publish <runId> [--out dir]  copy the sealed run with report.html and VERIFY.md into a bundle a third party can verify
+  run … [--sandbox host|docker] [--docker-runtime runsc|kata] [--docker-keep-sandbox]   container per trial (default when third-party plugins are linked and Docker is available)
   regrade <runId>              re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal
                                       blinded judge over scenarios that declare meta.judge: several --model form a panel; absolute mode grades
                                       each trial and rectifies pass rates with human annotations (PPI++)
@@ -434,6 +476,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'verify': return cmdVerify(project, args)
     case 'perturb': return cmdPerturb(project, args)
     case 'regrade': return cmdRegrade(project, args)
+    case 'rerun': return cmdRerun(project, args)
+    case 'publish': return cmdPublish(project, args)
     case 'judge': return cmdJudge(project, args)
     case 'runs': return cmdRuns(project)
     case 'ui': return cmdUi(project, args)

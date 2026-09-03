@@ -19,6 +19,10 @@ export interface DockerOptions {
   dshSource: string
   /** Extra `docker run` arguments (e.g. `--memory 2g`). */
   extraArgs?: string[]
+  /** Container runtime (`--runtime`): e.g. `runsc` (gVisor) or `kata` for microVM isolation when the host provides it. */
+  runtime?: string
+  /** Keep dsh's in-process sandbox rows on inside the container (needs a kernel with Landlock or user namespaces + bubblewrap). */
+  keepDshSandbox?: boolean
   /** Extra host paths to mount read-only at the same path (plugins linked into the profile are discovered automatically). */
   mounts?: string[]
   /** Linux native-module shims from `prepareNativeShims`: [hostDir, containerTarget] pairs mounted over the checkout. */
@@ -118,6 +122,8 @@ export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: s
   args.push('-e', 'NODE_OPTIONS=--max-old-space-size=2048')
   for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) args.push('-e', k)
   for (const [k, v] of Object.entries(input.arm.env ?? {})) args.push('-e', `${k}=${v}`)
+  if (options.runtime) args.push('--runtime', options.runtime)
+  if (options.keepDshSandbox) args.push('--security-opt', 'seccomp=unconfined', '--security-opt', 'apparmor=unconfined', '--cap-add', 'SYS_ADMIN')
   args.push(...(options.extraArgs ?? []))
   // dsh's loader imports plugins through Node's internal ESM loader; on the host it reaches it via a native addon built for that
   // platform, inside a Linux container it needs `--expose-internals` (the loader checks execArgv for exactly this flag).
@@ -146,6 +152,11 @@ export function dockerDriverFactory(options: DockerOptions, runDir: string): Dri
 }
 
 /** Overlay rows that make a profile run inside a container: the in-process sandbox off, the plain bash executor on. */
+/** Container rows when dsh's own sandbox is kept on inside the container (defence in depth): only the native image module is off. */
+export const CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX = [
+  { id: 'attachment-local', disabled: true },
+]
+
 export const CONTAINER_OVERLAY_ROWS = [
   // Rows that need native modules built for the host platform (sharp for image attachments); text scenarios do not use them.
   { id: 'attachment-local', disabled: true },

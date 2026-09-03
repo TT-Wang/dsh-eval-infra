@@ -11,6 +11,8 @@ export interface RunPaths {
     ledgers: string;
 }
 export declare function runPaths(root: string, runId: string): RunPaths;
+/** Paths for a run directory that lives anywhere (a published bundle, a copied run). */
+export declare function runPathsAt(dir: string): RunPaths;
 export declare function newRunId(now?: Date): string;
 export declare function writeJsonAtomic(path: string, value: unknown): void;
 export declare function readJson<T>(path: string): T;

@@ -32,6 +32,10 @@ export interface RunRequest {
     sequential?: boolean;
     /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
     sandbox?: 'host' | 'docker';
+    /** Container runtime for docker mode (`runsc`, `kata`, …), recorded in env.json. */
+    dockerRuntime?: string;
+    /** Keep dsh's in-process sandbox on inside the container (defence in depth) instead of the plain bash executor. */
+    dockerKeepSandbox?: boolean;
     /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
     meter?: boolean;
     /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
@@ -145,7 +149,46 @@ export declare function readJudgeReports(paths: ReturnType<typeof runPaths>): Re
 export declare function rebuildLedgers(project: Project, id: string): Promise<number>;
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 /** Re-derive the report from the ledgers, annotations and judge files without writing anything. */
-export declare function deriveReport(project: Project, id: string): Report;
+export declare function deriveReport(project: Project, id: string, at?: ReturnType<typeof runPaths>): Report;
+export interface RerunResult {
+    scenario: string;
+    candidate: string;
+    newRunId: string;
+    reps: number;
+    original: {
+        rep: number;
+        call: number;
+        baseline: string;
+        candidate: string;
+        failing: string;
+    } | null;
+    /** Reruns in which the originally failing arm failed again (or, without an original, exactly one arm failed). */
+    failedAgain: number;
+    /** Reruns whose first divergence happened at the same call index as the original. */
+    sameCall: number;
+    verdict: 'reproduced' | 'partly reproduced' | 'not reproduced' | 'no original failure';
+}
+/** First tool call at which two trials' tool sequences part, and which arm failed (null when both passed or both failed). */
+export declare function pairDivergence(rb: RunLedger, rc: RunLedger, candidateName: string, baselineName: string): {
+    call: number;
+    baseline: string;
+    candidate: string;
+    failing: string;
+} | null;
+/**
+ * Rerun validation of a failure: run one scenario again with the same arms a few
+ * times and check whether the originally failing arm fails again and whether the
+ * first divergence recurs at the same call. The result is stored beside the
+ * original run (a derived file, so its seal stays valid) and shown in its report.
+ */
+export declare function rerunScenario(project: Project, runId: string, scenario: string, options?: {
+    repeats?: number;
+    candidate?: string;
+    log?: (line: string) => void;
+    hooks?: LaunchHooks;
+}): Promise<RerunResult>;
+/** Verify a run directory that lives anywhere (a published bundle): hashes plus report re-derivation. */
+export declare function verifyRunDir(project: Project, dir: string): VerifyResult;
 export declare function rebuildReport(project: Project, id: string): Report;
 /** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
 export declare function verifyRunIntegrity(project: Project, id: string): VerifyResult;

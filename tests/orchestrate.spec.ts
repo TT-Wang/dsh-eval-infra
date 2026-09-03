@@ -166,3 +166,35 @@ describe('sealed evidence, verify and regrade', () => {
     expect(existsSync(join(paths.dir, 'manifest.json'))).toBe(true)
   })
 })
+
+describe('rerun validation and bundles', () => {
+  it('reruns a failing scenario, records whether the failure and divergence recur, and verifies a published copy', async () => {
+    const { rerunScenario, verifyRunDir } = await import('../src/core/orchestrate.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { cpSync, mkdtempSync, existsSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const p = project()
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory({ failing: ['persona'] }), invoke: fakeDsh })
+    await launched.done
+    const r = await rerunScenario(p, launched.id, 't1_write_answer', { repeats: 2, hooks: { driverFactory: scriptedDriverFactory({ failing: ['persona'] }), invoke: fakeDsh } })
+    expect(r.original?.failing).toBe('persona')
+    expect(r.reps).toBe(2)
+    expect(r.failedAgain).toBe(2)
+    expect(r.sameCall).toBe(2)
+    expect(r.verdict).toBe('reproduced')
+    const paths = runPaths(p.runsRoot, launched.id)
+    expect(existsSync(join(paths.dir, 'rerun-t1_write_answer.json'))).toBe(true)
+    const report = JSON.parse(readFileSync(paths.report, 'utf8')) as { candidates: Array<{ rerun?: { verdict: string } }>; notes: string[] }
+    expect(report.candidates[0]!.rerun?.verdict).toBe('reproduced')
+    expect(report.notes.some(n => n.includes('rerun validation'))).toBe(true)
+    // the rerun file is derived, so the original seal still verifies; a copied bundle verifies too
+    const { verifyRunIntegrity } = await import('../src/core/orchestrate.js')
+    expect(verifyRunIntegrity(p, launched.id).ok).toBe(true)
+    const bundle = join(mkdtempSync(join(tmpdir(), 'dsh-eval-bundle-')), launched.id)
+    cpSync(paths.dir, bundle, { recursive: true })
+    const v = verifyRunDir(p, bundle)
+    expect(v.ok).toBe(true)
+    expect(v.reportReproduces).toBe(true)
+  })
+})

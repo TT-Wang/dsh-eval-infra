@@ -43,6 +43,8 @@ function isDerived(rel: string): boolean {
   if (DERIVED.has(rel)) return true
   if (rel.startsWith('judge-') && rel.endsWith('.json')) return true
   if (rel.startsWith('regrade-') && rel.endsWith('.json')) return true
+  if (rel.startsWith('rerun-') && rel.endsWith('.json')) return true
+  if (rel === 'report.html' || rel === 'VERIFY.md') return true
   return false
 }
 

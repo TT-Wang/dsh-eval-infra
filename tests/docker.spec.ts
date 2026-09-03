@@ -50,3 +50,26 @@ describe('docker sandbox', () => {
     expect(text).toContain('tool-web')
   })
 })
+
+describe('container runtime options', () => {
+  it('passes the runtime and the keep-sandbox security options through', async () => {
+    const { dockerArgs } = await import('../src/core/docker.js')
+    const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-docker-'))
+    const src = join(root, 'src'); mkdirSync(join(src, 'apps', 'cli', 'lib'), { recursive: true })
+    const home = join(root, 'home'); mkdirSync(home)
+    const work = join(root, 'work'); mkdirSync(work)
+    const run = join(root, 'run'); mkdirSync(run)
+    const input = { arm: { name: 'a', profile: 'eval', provider: 'deepseek', model: 'deepseek-v4-flash', overlays: [], env: {} } as any, scenario: {} as any, workdir: work, evalHome: home, overlays: [], env: {} }
+    const args = dockerArgs(input, { dshSource: realpathSync(src), runtime: 'runsc', keepDshSandbox: true }, run)
+    expect(args).toContain('--runtime')
+    expect(args[args.indexOf('--runtime') + 1]).toBe('runsc')
+    expect(args).toContain('seccomp=unconfined')
+    expect(args).toContain('SYS_ADMIN')
+    const plain = dockerArgs(input, { dshSource: realpathSync(src) }, run)
+    expect(plain).not.toContain('--runtime')
+    expect(plain).not.toContain('SYS_ADMIN')
+  })
+})
