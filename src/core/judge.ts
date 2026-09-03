@@ -102,14 +102,18 @@ export function deepseekChat(config: JudgeConfig): ChatCall {
     const res = await fetch(`${(config.baseUrl ?? 'https://api.deepseek.com').replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({ model: config.model, messages, temperature: config.temperature ?? 0, max_tokens: 400, response_format: { type: 'json_object' } }),
+      // Reasoning models spend completion tokens on thinking before the JSON answer; the cap must leave room for both.
+      body: JSON.stringify({ model: config.model, messages, temperature: config.temperature ?? 0, max_tokens: 12000, response_format: { type: 'json_object' } }),
     })
     if (!res.ok) throw new Error(`judge request failed: ${res.status} ${(await res.text()).slice(0, 200)}`)
-    const body = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } }
+    const body = await res.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } }
     const u = body.usage ?? {}
     const hit = u.prompt_cache_hit_tokens ?? 0
     const miss = u.prompt_cache_miss_tokens ?? Math.max(0, (u.prompt_tokens ?? 0) - hit)
-    return { text: body.choices?.[0]?.message?.content ?? '', usage: { hit, miss, output: u.completion_tokens ?? 0 } }
+    const choice = body.choices?.[0]
+    const text = choice?.message?.content ?? ''
+    if (text.trim() === '') return { text: JSON.stringify({ winner: 'tie', reason: `judge returned no answer (finish_reason ${choice?.finish_reason ?? 'unknown'})` }), usage: { hit, miss, output: u.completion_tokens ?? 0 } }
+    return { text, usage: { hit, miss, output: u.completion_tokens ?? 0 } }
   }
 }
 

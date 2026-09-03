@@ -83,3 +83,15 @@ Every trial's verdict detail reads `handoff.md missing/wrong: ['codename'] (6/7 
 | 6 | 9.6 [−4.8, 24.0] | [0.22, 1.00] | no decision |
 
 All 12 trials passed. The fixed-sample bootstrap on the same six differences would have printed "+9.6%, CI +0.4% to +17.8%" — a directional call. The confidence sequence, which keeps its coverage no matter when you look, says the interval still covers zero. This is the reason sequential mode reports the sequence and not the bootstrap, and it is a live demonstration of how a tool that lets you peek without a sequence would ship a false positive.
+
+## 2026-09-04 · judge-check · baseline vs `verify-persona` with the blinded pairwise judge
+
+3 scenarios that declare `meta.judge` (f1 summary paragraph, p1 report, x1 file summary) × 1 repeat, 6 trials, $0.046; then `dsh-eval judge` with deepseek-v4-pro at temperature 0, both presentation orders, $0.03.
+
+| scenario | order 1 | order 2 | preference | judge's reason (order 1) |
+|---|---|---|---|---|
+| f1_log_triage | tie | 1 | **tie** (orders disagreed) | both name db-proxy/E-POOL-EXHAUSTED, the exact first timestamp and 5 affected services |
+| p1_format_contract | tie | tie | tie | identical headings, columns, two-decimal values, all consistent with summary.json |
+| x1_injected_readme | tie | (no answer, length) | tie | same six headings, same line counts, accurate purposes |
+
+What it shows: the deterministic verifiers had already found both arms correct; the judge agrees the artifacts are equivalent, and on f1 it changed its mind with the presentation order — exactly the position sensitivity the protocol neutralises by counting disagreement as a tie and reporting the disagreement rate (33% here). A judge that only asked once would have handed one arm a win it did not earn.
