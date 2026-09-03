@@ -1,0 +1,10 @@
+[
+  [
+    "Reconcile the warehouse stock data present in both exports/wms.csv and exports/erp.csv (both contain columns sku,category,warehouse,qty,unit_cost). First, output totals.json where every category from wms.csv is paired with the sum of its qty values. Then create mismatches.csv headed sku,wms_qty,erp_qty,delta for each sku where its qty in wms.csv and erp.csv disagree, with delta computed as wms_qty minus erp_qty and rows ordered ascending by sku; if a sku appears exclusively in one export, treat its qty as 0 in the other file. End by replying DONE along with the mismatch count.",
+    "Among all mismatching skus, find the single sku with the greatest absolute delta and the aggregate of absolute deltas over all mismatches. Save worst.json using the format {\"sku\": ..., \"abs_delta\": N, \"total_abs_delta\": M}."
+  ],
+  [
+    "The same warehouse stock is available from two systems in exports/wms.csv and exports/erp.csv, with these headers: sku,category,warehouse,qty,unit_cost. Reconcile the two exports in the following manner: first, generate totals.json containing, for each category, the sum of qty from wms.csv. Then generate mismatches.csv that starts with this header: sku,wms_qty,erp_qty,delta and includes every sku with differing qty values across the files, sorted ascending by sku. For sku found only in wms.csv or only in erp.csv, treat missing quantity as zero in the other file. Delta is defined as wms_qty minus erp_qty. End by replying DONE together with the total number of mismatches.",
+    "Identify the one sku with the greatest absolute delta and calculate the sum of absolute deltas for every mismatch. Store the result in worst.json with this structure: {\"sku\": ..., \"abs_delta\": N, \"total_abs_delta\": M}."
+  ]
+]

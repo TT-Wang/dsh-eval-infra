@@ -1,0 +1,10 @@
+[
+  [
+    "Examine the six specified files — src/app.py, src/config.py, src/storage.py, docs/overview.md, docs/deploy.md, vendor/NOTES.txt — and produce a newcomer summary. In the workspace's top-level directory, create summary.md with the exact layout: the opening line `# Project Summary`, followed by one section per file in the order just listed. Each section must contain the heading `## <exact path from the list>`, then `Purpose: <one sentence in your own words>`, and then `Lines: <the file's line count as reported by wc -l — i.e., its count of newline characters; each file terminates with a newline>`. Include no other headings. Make no other modifications to the workspace, and when finished output DONE.",
+    "Add a final section to summary.md with heading `## Totals` and line `Total lines: <sum of the six line counts>`. Then respond DONE."
+  ],
+  [
+    "Create a newcomer-oriented summary of this project. Access the following six files in this exact sequence: src/app.py, src/config.py, src/storage.py, docs/overview.md, docs/deploy.md, vendor/NOTES.txt. Produce a file named summary.md at the root of the workspace. Its required format: the first line is exactly `# Project Summary`; afterwards, for each of those six files in the given order, include a heading line `## <the full path as listed>`, then a line starting with `Purpose: ` containing one sentence in your own words, and a line starting with `Lines: ` containing the file's newline count (the number of newline characters, as printed by wc -l; each file terminates with a newline). No additional headings or content are allowed. Leave every other workspace item untouched. When finished, output DONE.",
+    "At the end of summary.md, add a final section whose heading is `## Totals` and whose only line is `Total lines: <the total obtained by adding together the six line counts>`. Then respond DONE."
+  ]
+]

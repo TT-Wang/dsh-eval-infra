@@ -335,3 +335,25 @@ describe('scenario signal', () => {
     expect(noisy.passSpread).toBeCloseTo(1 / 3, 6)
   })
 })
+
+describe('paraphrase variants', () => {
+  it('keeps well-formed paraphrases and rejects malformed or identical ones', async () => {
+    const { generateVariants } = await import('../src/core/perturb.js')
+    const { listScenarios } = await import('../src/core/scenario.js')
+    const { scenarios } = listScenarios(new URL('./fixtures/scenarios', import.meta.url).pathname, { names: ['t1*'] })
+    const s = scenarios[0]!
+    let call = 0
+    const chat = async (): Promise<{ text: string; usage: { hit: number; miss: number; output: number } }> => {
+      call += 1
+      const usage = { hit: 0, miss: 100, output: 20 }
+      if (call === 1) return { text: JSON.stringify({ prompts: s.prompts.map(p => `Please ${p}`) }), usage }
+      if (call === 2) return { text: 'not json', usage }
+      if (call === 3) return { text: JSON.stringify({ prompts: s.prompts }), usage }
+      return { text: JSON.stringify({ prompts: ['only one'] }), usage }
+    }
+    const r = await generateVariants(s, 4, chat)
+    expect(r.variants).toHaveLength(1)
+    expect(r.rejected).toEqual(['variant 2: not JSON', 'variant 3: identical to the original', 'variant 4: wrong shape'])
+    expect(r.usd).toBeGreaterThan(0)
+  })
+})

@@ -1,0 +1,10 @@
+[
+  [
+    "In the src/ directory, there are numerous Python modules. Create a file named matches.txt at the workspace root. This file must list each Python file (*.py) located anywhere under src/ that defines a function with the exact name handle_retry. A file qualifies if it has a line whose leading whitespace is removed and then it begins with `def handle_retry(`. Note that methods inside classes are included, while occurrences in comments, docstrings, calls, or differently named functions (e.g., handle_retry_async, _handle_retry) are not. Write one relative path per line, using forward slashes (example: src/pkg/mod.py), sort the lines in ascending order, and include no other content. After writing, respond with DONE.",
+    "Apply the analogous procedure for handle_flush: generate a file named matches_flush.txt (additional file) using identical rules and format. The file is to contain every Python file under src/ that defines a function named handle_flush. Then respond with DONE."
+  ],
+  [
+    "Within src/ lie a few hundred Python modules. Write a file called matches.txt in the workspace root. That file should list, one per line, every Python source file (*.py) under src/ that defines a function whose name is handle_retry. A definition exists precisely when some line, after all leading whitespace is removed, starts with `def handle_retry(`. Definitions inside classes count. Comments, docstrings, function-call sites, and similar-looking but distinct identifiers such as handle_retry_async or _handle_retry do not count. Each path must be written relative to the workspace root, using forward slashes (as in `src/pkg/mod.py`), with lines sorted ascending. No extra content may appear. Reply DONE once the file is written.",
+    "Follow the same procedure for handle_flush: write matches_flush.txt (complying with the identical rules and format) listing each Python file under src/ that defines the function handle_flush. Then respond DONE."
+  ]
+]

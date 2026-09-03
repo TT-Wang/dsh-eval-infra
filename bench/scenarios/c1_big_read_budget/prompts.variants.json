@@ -1,0 +1,8 @@
+[
+  [
+    "Read the complete export at data/catalog.json (do not use the sample version), then place answer.json in the workspace root. That file must contain a JSON object having only these four keys: schema_version = the string from meta.schema_version; item_count = the number of elements in the items array; price = the price found for the item with id SKU-102401; optics_count = the number of items whose category is \"optics\". Once the file has been written, reply DONE."
+  ],
+  [
+    "Take the complete export at data/catalog.json (do not use the sample file). In the workspace root, create answer.json as a JSON object with exactly these four properties: schema_version must be the string from meta.schema_version, item_count must be the count of elements in the items array, price must be the price of the item having id SKU-102401, and optics_count must be the number of items whose category is \"optics\". After writing the file, respond with DONE."
+  ]
+]

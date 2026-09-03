@@ -1,0 +1,10 @@
+[
+  [
+    "The CI build has failed, and the entire log can be found at logs/build.log. Open it, then create answer.txt in the workspace root whose contents consist solely of these two lines: first `test: <the node id of the failing test exactly as pytest prints it, e.g. tests/test_x.py::test_y>`, second `line: <the line number in that test file to which the failure traceback points>`. Leave every other file in the workspace untouched. Once done, answer DONE.",
+    "Add a third line to answer.txt with `passed: <the count of tests that the final summary line from pytest reports as having passed>`. When finished, answer DONE."
+  ],
+  [
+    "The CI run is failing, and its complete log can be found at logs/build.log. Please inspect that log and then create answer.txt in the workspace root, containing exactly two lines. The first line must be `test: <the node id of the failing test exactly as pytest displays it, for example tests/test_x.py::test_y>` and the second line must be `line: <the line number within that test file which the failure traceback points to>`. Do not modify any other file in the workspace. Once answer.txt is saved, respond with DONE.",
+    "Now add a third line to answer.txt, reading `passed: <the count of tests reported as passed in the final pytest summary line>`. Then reply DONE."
+  ]
+]
