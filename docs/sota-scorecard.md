@@ -66,15 +66,15 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 
 | capability | best reference | dsh-eval-infra | status |
 |---|---|---|---|
-| blinded pairwise judge with swap-and-tie and calibration | MT-Bench, position-bias study, Reliability-without-Validity | `dsh-eval judge`: no arm/model names, random first position, both orders, disagreement → tie, order-disagreement rate reported, κ against human annotations when present; single judge model (no panel) | **met** (single judge; panel is a documented gap) |
-| prediction-powered inference (judge + human labels) | PPI / PPI++ | not implemented; judge–human agreement is reported instead | missing (deliberate: PPI needs a labelled set larger than most plugin projects have) |
+| blinded pairwise judge with swap-and-tie, panel, calibration | MT-Bench, position-bias study, PoLL, Reliability-without-Validity | `dsh-eval judge`: no arm/model names, random first position, both orders, disagreement → tie, order-disagreement rate; `--model` repeated forms a panel with strict-majority aggregation and a unanimity rate; κ against human annotations; cross-family endpoints configurable | **met** |
+| prediction-powered inference (judge + human labels) | PPI / PPI++ | `judge --mode absolute`: per-trial grades, per-arm pass rate rectified with the run's human annotations (λ̂, SE reported; uncalibrated when no labels) | **met** |
 | human review / override with audit trail | promptfoo, Braintrust, Langfuse annotation | per-trial annotations, applied to the report | **met** |
 
 ## F. Execution and safety
 
 | capability | best reference | dsh-eval-infra | status |
 |---|---|---|---|
-| workspace confinement of agent shell | Harbor / Inspect containers | dsh workspace-write sandbox (Seatbelt / bwrap / Landlock), escape-probed | *partial* (same-world, not a container) |
+| workspace confinement of agent shell | Harbor / Inspect containers | host mode: dsh workspace-write sandbox, escape-probed; `--sandbox docker`: one container per trial with only the checkout (ro), plugins (ro), eval home and workspace mounted, verified with a real paired run inside containers | **met** |
 | network off by default, opt-in per scenario | ABC T.5 | implemented | **met** |
 | budget cap and cancel with usable partial results | claude plugin eval `--max-cost-usd`, Inspect incremental | `--max-usd`, cancel keeps ledgers, `--resume` | **met** |
 | CI exit codes and workflow sample | promptfoo, plugin eval | 0/1/2 + docs/ci | **met** |
@@ -94,7 +94,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | static single-file export | Inspect `view bundle`, claude-tap | `export --html` | **met** |
 | ATIF interchange | Harbor | per-trial ATIF with observations | **met** |
 | side-by-side final outputs with text diff | LangSmith Diff, Braintrust | line diff of the final assistant message per repeat in the expanded row | **met** |
-| virtualized tables for very large runs | Braintrust "10x faster" | plain tables | *partial* |
+| virtualized tables for very large runs | Braintrust "10x faster" | windowed rendering above 150 rows (paired table, matrix) and 200 steps (trace) | **met** |
 | dark mode, density | — | dark via prefers-color-scheme; compact/comfortable toggle persisted per browser | **met** |
 
 ## Verdict (2026-09-04, after the second sweep)

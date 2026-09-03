@@ -15,7 +15,8 @@ English | [中文](README.zh.md) · [design](docs/design.md) · [results](docs/r
 - **Guard rails**: `selfcheck --strict` mutates every oracle output to catch verifiers that ignore it; `--max-usd` caps spend; dsh's workspace-write sandbox confines every trial's shell to its own workspace; scenarios marked `"holdout": true` stay sealed until `--include-holdout`, and the report shows the dev–holdout gap; with several candidates the intervals are read at α/m (Bonferroni); a directional cost call is withheld when its interval reaches into the A/A noise band.
 - **Human review**: mark any trial pass/fail with a note from the trace page; the report applies the override and says so.
 - **Sequential mode** (`--sequential`): scenarios run in a seeded random order and the run stops as soon as an anytime-valid confidence sequence (asymptotic on paired cost, betting on pass difference) decides the comparison; the report then reads the sequence, which stays valid under early stopping, instead of the fixed-sample bootstrap.
-- **Blinded pairwise judge** (`dsh-eval judge <run>`): for scenarios that declare a rubric and artifacts, a judge model that never sees arm or model names compares the baseline's and the candidate's files in both orders; disagreement between orders counts as a tie, the order-disagreement rate is reported, and agreement (κ) with human annotations is shown when they exist.
+- **Blinded judge** (`dsh-eval judge <run>`): for scenarios that declare a rubric and artifacts, judge models that never see arm or model names compare the baseline's and the candidate's files in both orders; disagreement between orders counts as a tie, several `--model` flags form a panel decided by a strict majority, the order-disagreement and unanimity rates are reported, and `--mode absolute` grades each trial and rectifies pass rates with the run's human annotations (PPI++).
+- **Container isolation** (`--sandbox docker`): each trial's dsh runtime runs in its own container with only the read-only dsh checkout and plugins, the eval home and the trial workspace mounted.
 - **Web UI** (`dsh-eval ui`, or `/eval` inside the dsh web app): new-run wizard with the live diff and an archive-based cost estimate, live trial matrix, verdict banner with a forest strip (intervals, ±10% band, MDE lines, A/A floor), regressions-first paired table with flaky/failure filters, per-scenario history with cost sparklines, trace viewer with folded tool results, keyboard navigation, and side-by-side compare with a first-divergence marker; self-contained HTML and ATIF export.
 - **CLI exit codes for CI**: 0 no regressions, 1 regressions, 2 incomplete or errors.
 
@@ -113,8 +114,8 @@ Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, Lang
 
 Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys and states, narrowly, where it leads and where it does not. Known limits, stated rather than hidden:
 
-- Confinement is dsh's same-world sandbox, not a container; scenarios that need a hostile environment belong in Harbor-style containers.
-- The judge is one model from the same family as the arms; no prediction-powered inference over human labels.
+- Host mode confines through dsh's own sandbox; container mode isolates through Docker mounts (the container is the boundary, dsh's in-process sandbox is off inside it).
+- Judge panels across provider families need endpoints you configure; the default panel is DeepSeek-only.
 - DeepSeek prices only; other providers are recorded with cost 0 and flagged.
 - Intervals below ten scenarios are Student-t; the bootstrap is used from ten. With fewer than five comparable scenarios the tool refuses to state a direction, by design.
 - Tables are not virtualized; runs with thousands of trials will render slowly.

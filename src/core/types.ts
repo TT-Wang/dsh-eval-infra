@@ -245,4 +245,5 @@ export interface RunIndexEntry {
   completed: number
   total: number
   usd: number
+  sandbox?: 'host' | 'docker'
 }

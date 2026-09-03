@@ -123,6 +123,7 @@ export function listRuns(root: string): RunIndexEntry[] {
         usd: progress?.usd ?? 0,
       }
       if (plan.label !== undefined) entry.label = plan.label
+      if (plan.sandbox === 'docker') entry.sandbox = 'docker'
       out.push(entry)
     } catch { /* unreadable run */ }
   }

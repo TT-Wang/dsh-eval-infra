@@ -35,7 +35,7 @@ export function RunsView() {
               <tr key={r.id}>
                 <td><a href={`#/run/${r.id}`}><code>{r.id}</code></a><div class="muted small">{fmt.time(r.createdAt)}</div></td>
                 <td><span class={`status ${r.status}`}>{r.status}</span></td>
-                <td>{r.arms.join(' vs ')}</td>
+                <td>{r.arms.join(' vs ')}{r.sandbox === 'docker' ? <span class="tag">docker</span> : null}</td>
                 <td class="num">{r.scenarios}</td>
                 <td class="num">{r.repeats}</td>
                 <td class="num">{r.completed}/{r.total}</td>
