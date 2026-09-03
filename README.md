@@ -111,7 +111,7 @@ Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, Lang
 
 ## Status and limitations
 
-Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys. Known limits, stated rather than hidden:
+Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys and states, narrowly, where it leads and where it does not. Known limits, stated rather than hidden:
 
 - Confinement is dsh's same-world sandbox, not a container; scenarios that need a hostile environment belong in Harbor-style containers.
 - The judge is one model from the same family as the arms; no prediction-powered inference over human labels.

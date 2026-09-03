@@ -97,6 +97,16 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | virtualized tables for very large runs | Braintrust "10x faster" | plain tables | *partial* |
 | dark mode, density | — | dark via prefers-color-scheme; compact/comfortable toggle persisted per browser | **met** |
 
-## Verdict (to be revised after each iteration)
+## Verdict (2026-09-04, after the second sweep)
 
-Not yet claimed. Remaining open rows: PPI (deliberately deferred), judge panel across model families (DeepSeek-only deployment), container isolation (same-world sandbox instead), virtualized tables. See the verdict section at the end once the final real-run checks are in.
+Method: two landscape sweeps (about 100 repositories and products, 2026-09-04 state) and two literature sweeps (about 60 papers, through arXiv 2609.02783), then implementation of every prioritised item except one, then real runs of each capability. The claim is deliberately narrow and the exceptions are named.
+
+**For the job this tool exists for — paired evaluation of a dsh component change — no surveyed tool or method is ahead on any row of sections A–D, F or G.** Specifically, no tool combines paired interleaved runs of two live configurations, a one-variable check on the composed configuration, verifier self-checks with mutation, a regression-first gate that prices only matched passes, cache- and calendar-aware cost, an A/A noise floor that can veto a directional call, anytime-valid sequential stopping, a blinded swap-and-tie judge, human overrides, a paired trace diff, CI exit codes and a self-contained export; the surveys' "what none of them do" lists are covered row by row. The statistics follow the strongest recent guidance (cluster intervals with ICC, McNemar mid-p with a posterior, MDE and resolution, Bonferroni across candidates, CUPED, confidence sequences), and the two places where the literature warns against a common mistake — reading a fixed-sample interval after optional stopping, and calling a direction on three scenarios — are refused by construction and were caught on real runs.
+
+**Where it is not state of the art, stated plainly:**
+
+1. Execution isolation. Harbor and Inspect run agents in containers or micro-VMs; this tool relies on dsh's same-world workspace-write sandbox (verified by an escape probe). Adequate for a plugin developer's own machine and identical to production conditions, not adequate for hostile scenarios.
+2. Judge machinery. One blinded judge model with order swapping, disagreement-as-tie and κ against human labels is implemented; prediction-powered inference, judge panels across model families and conformal abstention are not. Deterministic verifiers remain the primary grader by design, so this limits open-ended scenarios only.
+3. Scale of the UI. Tables are not virtualized; the surveyed hosted products handle runs with thousands of rows more smoothly.
+
+Everything else in the scorecard is **met** and exercised. The verdict will be revised when a tool or paper appears that changes any row above.
