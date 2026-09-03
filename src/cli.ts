@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -223,7 +223,7 @@ async function cmdJudge(project: Project, args: Args): Promise<number> {
   try {
     const models = list(args.flags['model'])
     const mode = args.flags['mode'] === 'absolute' ? 'absolute' as const : args.flags['mode'] === 'both' ? 'both' as const : 'pairwise' as const
-    const reports = await runJudge(project, id, { ...(models.length ? { models } : {}), mode, ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}), log: out })
+    const reports = await runJudge(project, id, { ...(models.length ? { models } : {}), mode, ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}), ...(args.flags['allow-same-family'] === true ? { allowSameFamily: true } : {}), log: out })
     for (const r of reports) out(`${r.candidate} vs ${r.baseline} · judge ${(r.models ?? [r.model]).join(' + ')}: ${r.wins} candidate / ${r.losses} baseline / ${r.ties} ties · mid-p ${r.midP.toFixed(2)} · P(candidate wins a decided pair) ${(r.pWin * 100).toFixed(0)}% · order disagreement ${(r.inconsistentShare * 100).toFixed(0)}% of votes · panel unanimous ${((r.panelAgreement ?? 1) * 100).toFixed(0)}% · ${fmtUsd(r.usd)}${r.humanAgreement ? ` · human agreement ${(r.humanAgreement.agree * 100).toFixed(0)}% on ${r.humanAgreement.n}` : ''}`)
     return 0
   } catch (error) {
@@ -344,7 +344,8 @@ function help(): number {
       [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
       [--sandbox docker [--docker-image IMG]]   run every trial's dsh runtime inside a container (only the workspace, eval home and read-only dsh checkout are mounted)
   report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
-  judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N]
+  judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N] [--allow-same-family]
+  run … [--no-meter] [--fault-rate P] [--fault-seed N]   usage meter (on by default) and provider fault injection
                                       blinded judge over scenarios that declare meta.judge: several --model form a panel; absolute mode grades
                                       each trial and rectifies pass rates with human annotations (PPI++)
   runs                                list runs

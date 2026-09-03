@@ -43,6 +43,11 @@ export interface RunRequest {
   sequential?: boolean
   /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
   sandbox?: 'host' | 'docker'
+  /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
+  meter?: boolean
+  /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
+  faultRate?: number
+  faultSeed?: number
   /** Container image for docker mode (default node:22-bookworm-slim). */
   dockerImage?: string
   /** Seed for the sequential shuffle (default 42). */
@@ -228,13 +233,21 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
   if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
   if (request.keepWorkdirs) deps.keepWorkdirs = true
+  const meterOn = request.meter ?? driverFactory === undefined
+  if (meterOn) {
+    deps.meter = {
+      upstream: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
+      ...(sandbox === 'docker' ? { exposed: true, hostFromContainer: 'host.docker.internal' } : {}),
+      ...(request.faultRate !== undefined && request.faultRate > 0 ? { faults: { rate: request.faultRate, seed: request.faultSeed ?? 7 } } : {}),
+    }
+  }
   if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
   if (request.resume !== undefined) deps.resume = true
   if (request.maxUsd !== undefined) deps.maxUsd = request.maxUsd
   if (baseOverlayRows.length > 0) deps.baseOverlayRows = baseOverlayRows
-  const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
+  const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; ratio: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
   if (request.sequential) {
-    deps.sequential = { seed: request.seed ?? 42, onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost Δ% ${d.cost ? `${d.cost.mean.toFixed(1)} [${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
+    deps.sequential = { seed: request.seed ?? 42, onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost ratio betting CS ${d.ratio ? `${d.ratio.mean.toFixed(2)} [${d.ratio.lo.toFixed(2)}, ${d.ratio.hi.toFixed(2)}]` : '—'} · Δ% asymptotic ${d.cost ? `[${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
     log('sequential mode: scenarios in seeded random order; the run stops once the anytime-valid sequences decide the comparison')
   }
 
@@ -299,6 +312,22 @@ export interface JudgeOptions {
   log?: (line: string) => void
   /** Test seam: replace the chat calls (one per model). */
   chats?: Record<string, import('./judge.js').ChatCall>
+  /** Allow judges from the same model family as the arms (refused by default: self-preference and preference leakage). */
+  allowSameFamily?: boolean
+}
+
+/** Model family from a model id or a configured `family` (deepseek-* → deepseek, gpt-* → openai, claude-* → anthropic, gemini-* → google). */
+export function modelFamily(model: string, configured?: string): string {
+  if (configured) return configured.toLowerCase()
+  const m = model.toLowerCase()
+  if (m.startsWith('deepseek')) return 'deepseek'
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'openai'
+  if (m.startsWith('claude')) return 'anthropic'
+  if (m.startsWith('gemini')) return 'google'
+  if (m.startsWith('qwen')) return 'alibaba'
+  if (m.startsWith('llama')) return 'meta'
+  if (m.startsWith('mistral') || m.startsWith('mixtral')) return 'mistral'
+  return m.split(/[-_/:]/)[0] ?? m
 }
 
 function resolveJudgeModels(project: Project, models: string[] | undefined, chats: Record<string, import('./judge.js').ChatCall> | undefined, deepseekChat: (c: { model: string; baseUrl?: string; apiKey: string }) => import('./judge.js').ChatCall): import('./judge.js').JudgeModel[] {
@@ -332,6 +361,11 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
   for (const s of scenarios) if (s.meta.judge) specs[s.name] = s.meta.judge
   if (Object.keys(specs).length === 0) throw new LaunchError('no scenario in this run declares meta.judge', 'usage')
   const judges = resolveJudgeModels(project, options.models, options.chats, deepseekChat)
+  const armFamilies = new Set([plan.baseline, ...plan.candidates].map(a => modelFamily(a.model ?? 'deepseek-v4-flash')))
+  const sameFamily = judges.filter(j => armFamilies.has(modelFamily(j.model, (project.config.judges ?? []).find(c => c.model === j.model || c.name === j.model)?.family)))
+  if (sameFamily.length > 0 && !options.allowSameFamily) {
+    throw new LaunchError(`judge ${sameFamily.map(j => j.model).join(', ')} shares a model family with the arms (${[...armFamilies].join(', ')}); self-preference and preference leakage bias such judgments. Configure a judge from another family in .dsh-eval/config.json (judges: [{model, baseUrl, apiKeyEnv, family}]) or pass --allow-same-family to proceed with the bias stated in the report.`, 'usage')
+  }
   const annotations = readAnnotations(paths)
   const mode = options.mode ?? 'pairwise'
   const out: import('./judge.js').JudgeReport[] = []
@@ -339,7 +373,7 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
   if (mode === 'pairwise' || mode === 'both') {
     for (const cand of plan.candidates.filter(c => options.candidate === undefined || c.name === options.candidate)) {
       const report = await judgeRun({ plan, candidate: cand.name, ledgers, specs, artifactDir, judges, ...(options.seed !== undefined ? { seed: options.seed } : {}), annotations, ...(options.log !== undefined ? { log: options.log } : {}) })
-      writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), report)
+      writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), { ...report, sameFamilyAsArms: sameFamily.length > 0 })
       out.push(report)
     }
   }
@@ -363,10 +397,12 @@ export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: R
   const file = join(paths.dir, 'sequential.json')
   if (!existsSync(file)) return {}
   try {
-    const seqFile = JSON.parse(readFileSync(file, 'utf8')) as { candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null }> }
+    const seqFile = JSON.parse(readFileSync(file, 'utf8')) as { candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; ratio?: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null }> }
     const last = seqFile.decisions.at(-1)
     if (!last || !seqFile.candidate) return {}
-    return { sequences: { [seqFile.candidate]: { cost: last.cost, pass: last.pass, scenarios: last.scenarios } } }
+    // The finite-sample ratio sequence decides; it is expressed as Δ% for the report. Older files without it fall back to the asymptotic one.
+    const cost = last.ratio ? { mean: (last.ratio.mean - 1) * 100, lo: (last.ratio.lo - 1) * 100, hi: (last.ratio.hi - 1) * 100 } : last.cost
+    return { sequences: { [seqFile.candidate]: { cost, pass: last.pass, scenarios: last.scenarios } } }
   } catch { return {} }
 }
 
@@ -424,15 +460,17 @@ export function rebuildReport(project: Project, id: string): Report {
     const j = judges[c.arm]
     if (j) {
       const models = j.models ?? [j.model]
-      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement }
-      report.notes.push(`${c.arm}: blinded pairwise judge${models.length > 1 ? ` panel (${models.join(', ')}; majority of decided votes, panel unanimous on ${(j.panelAgreement * 100).toFixed(0)}% of pairs)` : ` (${models[0]})`}, both orders, inconsistent orders count as ties: prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}% of votes${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}.`)
+      const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null }
+      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null }
+      report.notes.push(`${c.arm}: blinded pairwise judge${models.length > 1 ? ` panel (${models.join(', ')}; majority of decided votes, panel unanimous on ${(j.panelAgreement * 100).toFixed(0)}% of pairs${jj.interJudgeKappa !== null && jj.interJudgeKappa !== undefined ? `, inter-judge κ ${jj.interJudgeKappa.toFixed(2)}` : ''})` : ` (${models[0]})`}, both orders, inconsistent orders count as ties: prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}% of votes${jj.longerWinsShare !== null && jj.longerWinsShare !== undefined ? `; the longer submission won ${(jj.longerWinsShare * 100).toFixed(0)}% of decided pairs` : ''}${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}${jj.sameFamilyAsArms ? '. WARNING: the judge shares a model family with the arms; self-preference bias applies' : ''}.`)
     }
     if (absolute) {
       const b = absolute.arms[plan.baseline.name]
       const a = absolute.arms[c.arm]
       if (b && a) {
-        c.absolute = { baseline: b, candidate: a, diff: a.estimate - b.estimate, diffSe: Math.sqrt(a.se * a.se + b.se * b.se), models: absolute.models }
-        report.notes.push(`${c.arm}: absolute judge grades (${absolute.models.join(' + ')}) give pass rates ${(b.estimate * 100).toFixed(0)}% → ${(a.estimate * 100).toFixed(0)}% (${b.n + a.n > 0 ? `PPI++ rectified with ${b.n}/${a.n} human labels, λ ${b.lambda.toFixed(2)}/${a.lambda.toFixed(2)}` : 'judge only, no human labels — uncalibrated'}), Δ ${((a.estimate - b.estimate) * 100).toFixed(0)} pp ± ${(Math.sqrt(a.se * a.se + b.se * b.se) * 100).toFixed(0)} (1 SE).`)
+        const cal = (absolute as typeof absolute & { calibration?: { labelled: number; tpr: number | null; tnr: number | null } }).calibration
+        c.absolute = { baseline: b, candidate: a, diff: a.estimate - b.estimate, diffSe: Math.sqrt(a.se * a.se + b.se * b.se), models: absolute.models, ...(cal ? { calibration: cal } : {}) }
+        report.notes.push(`${c.arm}: absolute judge grades (${absolute.models.join(' + ')}) give pass rates ${(b.estimate * 100).toFixed(0)}% → ${(a.estimate * 100).toFixed(0)}% (${b.n + a.n > 0 ? `PPI++ rectified with ${b.n}/${a.n} human labels, λ ${b.lambda.toFixed(2)}/${a.lambda.toFixed(2)}${cal ? `; judge TPR ${cal.tpr === null ? '—' : (cal.tpr * 100).toFixed(0) + '%'} / TNR ${cal.tnr === null ? '—' : (cal.tnr * 100).toFixed(0) + '%'} on ${cal.labelled} labels` : ''}` : 'judge only, no human labels — uncalibrated'}), Δ ${((a.estimate - b.estimate) * 100).toFixed(0)} pp ± ${(Math.sqrt(a.se * a.se + b.se * b.se) * 100).toFixed(0)} (1 SE).`)
       }
     }
   }

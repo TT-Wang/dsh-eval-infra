@@ -113,6 +113,8 @@ export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: s
   args.push('-w', realpathSync(input.workdir))
   args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`)
   args.push('-e', 'DSH_TELEMETRY_DISABLED=1')
+  // Lets the runtime inside the container reach a usage meter listening on the host.
+  args.push('--add-host', 'host.docker.internal:host-gateway')
   args.push('-e', 'NODE_OPTIONS=--max-old-space-size=2048')
   for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) args.push('-e', k)
   for (const [k, v] of Object.entries(input.arm.env ?? {})) args.push('-e', `${k}=${v}`)

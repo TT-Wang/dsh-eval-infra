@@ -192,8 +192,8 @@ describe('runner + ledger + report', () => {
   it('sequential mode stops early once the paired sequences decide, and reports unrun scenarios as not run', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
     const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
-    // eight copies of the same scenario under different names → a pool where the candidate is always 40% cheaper
-    const pool = Array.from({ length: 8 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
+    // sixteen copies of the same scenario under different names → a pool where the candidate is always 40% cheaper
+    const pool = Array.from({ length: 16 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
     const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: pool.map(s => s.name) })
     const paths = runPaths(root, plan.id)
     writeJsonAtomic(paths.plan, plan)
@@ -206,10 +206,10 @@ describe('runner + ledger + report', () => {
     })
     expect(progress.status).toBe('done')
     expect(progress.stoppedEarly).toBeDefined()
-    expect(progress.stoppedEarly!.after).toBeLessThan(8)
+    expect(progress.stoppedEarly!.after).toBeLessThan(16)
     expect(progress.stoppedEarly!.after).toBeGreaterThanOrEqual(3)
     const report = buildReport(plan, readLedgers(paths))
-    expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(8 - progress.stoppedEarly!.after)
+    expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(16 - progress.stoppedEarly!.after)
     expect(report.candidates[0]!.gate).toBe('pass')
   })
 
@@ -265,5 +265,39 @@ describe('runner + ledger + report', () => {
     expect(second.status).toBe('done')
     expect(readLedgers(paths)).toHaveLength(4)
     expect(runs).toBe(2 + (4 - before))
+  })
+})
+
+describe('usage provenance', () => {
+  it('labels self-reported usage, and withholds cost calls when the runtime disagrees with the wire meter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    const pool = Array.from({ length: 5 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
+    const plan = makePlan(root, { repeats: 1, concurrency: 2, scenarios: pool.map(s => s.name) })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    const plain = await executeRun(plan, pool, arms, { driverFactory: scriptedDriverFactory({ costScale: { cand: 0.6 } }), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work') })
+    expect(plain.status).toBe('done')
+    const plainLedgers = readLedgers(paths)
+    expect(plainLedgers.every(l => l.usageProvenance?.source === 'self-reported')).toBe(true)
+    const plainReport = buildReport(plan, plainLedgers)
+    expect(plainReport.notes.some(n => n.startsWith('Usage provenance: self-reported'))).toBe(true)
+    expect(plainReport.candidates[0]!.costReading).toBe('cheaper')
+
+    // Same run through the meter: the scripted driver never calls the provider, so the meter sees nothing while the ledger reports tokens.
+    const plan2 = makePlan(root, { repeats: 1, concurrency: 2, scenarios: pool.map(s => s.name) })
+    const paths2 = runPaths(root, plan2.id)
+    writeJsonAtomic(paths2.plan, plan2)
+    const arms2 = [resolveArm(plan2.baseline, paths2.arms), ...plan2.candidates.map(c => resolveArm(c, paths2.arms))]
+    const metered = await executeRun(plan2, pool, arms2, { driverFactory: scriptedDriverFactory({ costScale: { cand: 0.6 } }), evalHome: join(root, 'home'), paths: paths2, env: {}, workRoot: join(root, 'work'), meter: { upstream: 'http://127.0.0.1:9' } })
+    expect(metered.status).toBe('done')
+    const ledgers = readLedgers(paths2)
+    expect(ledgers.every(l => l.usageProvenance?.source === 'meter' && l.usageProvenance.reconciled === false)).toBe(true)
+    expect(ledgers[0]!.usageProvenance!.meterFile).toMatch(/^meter\//)
+    const report = buildReport(plan2, ledgers)
+    expect(report.candidates[0]!.costReading).toBe('inconclusive')
+    expect(report.candidates[0]!.verdict).toContain('withheld')
+    expect(report.notes.some(n => n.includes('NOT reconciled'))).toBe(true)
   })
 })

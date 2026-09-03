@@ -40,6 +40,10 @@ export interface Judgment {
         baseline: string;
         candidate: string;
     };
+    lengths?: {
+        baseline: number;
+        candidate: number;
+    };
 }
 export interface JudgeReport {
     schema: 'dsh-eval-judge/1';
@@ -68,6 +72,10 @@ export interface JudgeReport {
         agree: number;
         kappa: number | null;
     } | null;
+    /** Share of decided pairs in which the preferred artifact set was the longer one (verbosity bias check; 0.5 ≈ none). */
+    longerWinsShare: number | null;
+    /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
+    interJudgeKappa: number | null;
 }
 /** Read the captured artifacts of one trial into a single text block (deterministic order). */
 export declare function readArtifacts(dir: string, maxChars: number): {
@@ -148,6 +156,12 @@ export interface AbsoluteReport {
         N: number;
         judgeOnly: number;
     }>;
+    /** Judge vs human labels over all labelled trials: true-positive and true-negative rates, reported separately because agreement alone misleads. */
+    calibration: {
+        labelled: number;
+        tpr: number | null;
+        tnr: number | null;
+    };
     usd: number;
 }
 export interface AbsoluteInput {

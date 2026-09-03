@@ -206,6 +206,9 @@ export interface CandidateReport {
             agree: number;
             kappa: number | null;
         } | null;
+        sameFamilyAsArms?: boolean;
+        longerWinsShare?: number | null;
+        interJudgeKappa?: number | null;
     };
     /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
     absolute?: {
@@ -228,6 +231,11 @@ export interface CandidateReport {
         diff: number;
         diffSe: number;
         models: string[];
+        calibration?: {
+            labelled: number;
+            tpr: number | null;
+            tnr: number | null;
+        };
     };
     verdict: string;
 }

@@ -103,6 +103,16 @@ export interface RunDeps {
   baseOverlayRows?: Array<Record<string, unknown>>
   /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
   maxUsd?: number
+  /** Independent usage meter: one local proxy per trial between the runtime and the provider; the ledger is reconciled against it. */
+  meter?: {
+    upstream: string
+    exposed?: boolean
+    /** Host name the runtime uses to reach the meter (container mode: host.docker.internal). */
+    hostFromContainer?: string
+    faults?: { rate: number; seed?: number; kinds?: Array<'429' | 'stall'>; stallMs?: number }
+    /** Reconciliation tolerance in percent of the metered total (default 1%). */
+    tolerancePct?: number
+  }
   /**
    * Anytime-valid sequential mode: scenarios run in a seeded random order; after
    * each scenario's repeats finish on all arms, the stop rule is evaluated on the
@@ -114,8 +124,10 @@ export interface RunDeps {
 export interface SequentialDecision {
   /** Scenarios completed on every arm so far. */
   scenarios: number
-  /** Cost Δ% confidence sequence (candidate − baseline) over per-scenario paired means. */
+  /** Cost Δ% asymptotic confidence sequence (screening only). */
   cost: { mean: number; lo: number; hi: number } | null
+  /** Hedged betting (finite-sample) confidence sequence on the per-scenario cost ratio candidate/baseline, winsorized at 2; this one decides. */
+  ratio: { mean: number; lo: number; hi: number } | null
   /** Pass-difference confidence sequence over per-scenario x = (Δpass + 1) / 2; 0.5 is "no difference". */
   pass: { lo: number; hi: number } | null
   decided: boolean
@@ -196,14 +208,16 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
     const cand = arms[1]!.name
     const done = ordered.filter(s => perScenarioDone(s.name))
     const costDiffs: number[] = []
+    const ratios: number[] = []
     const passX: number[] = []
+    const RATIO_CAP = 2
     for (const s of done) {
       const rows = finished.get(s.name) ?? []
       const b = rows.filter(r => r.arm === baseline)
       const c = rows.filter(r => r.arm === cand)
       const pct: number[] = []
       for (const rb of b) { const rc = c.find(x => x.rep === rb.rep); if (rc && rb.verdict?.ok && rc.verdict?.ok && rb.totals.usd > 0) pct.push((rc.totals.usd - rb.totals.usd) / rb.totals.usd * 100) }
-      if (pct.length) costDiffs.push(mean(pct))
+      if (pct.length) { costDiffs.push(mean(pct)); ratios.push(Math.min(RATIO_CAP, 1 + mean(pct) / 100) / RATIO_CAP) }
       const pb = b.length ? b.filter(r => r.verdict?.ok && r.error === undefined).length / b.length : 0
       const pc = c.length ? c.filter(r => r.verdict?.ok && r.error === undefined).length / c.length : 0
       passX.push(((pc - pb) + 1) / 2)
@@ -212,17 +226,21 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
     const minS = deps.sequential.minScenarios ?? 3
     const sesoi = deps.sequential.sesoiPct ?? 10
     const cost = costDiffs.length >= 2 ? asympCS(costDiffs, alpha, ordered.length) : null
+    // Deciding sequence: hedged betting CS on the winsorized ratio (exact at every t); "1" (equal cost) is the point 1/RATIO_CAP on the scaled axis.
+    const bet = ratios.length >= 2 ? bettingCS(ratios, alpha) : null
+    const ratio = bet ? { mean: mean(ratios) * RATIO_CAP, lo: bet.lo * RATIO_CAP, hi: bet.hi * RATIO_CAP } : null
     const pass = passX.length >= 2 ? bettingCS(passX, alpha) : null
     let decided = false
     let reason = 'undecided'
-    if (done.length >= minS && cost !== null) {
+    if (done.length >= minS && ratio !== null) {
       const passDecided = pass !== null && (pass.lo > 0.5 || pass.hi < 0.5)
       const passNull = pass !== null && pass.lo <= 0.5 && pass.hi >= 0.5
+      const band = sesoi / 100
       if (passDecided) { decided = true; reason = pass.lo > 0.5 ? 'candidate passes more scenarios (pass-difference sequence excludes 0)' : 'candidate passes fewer scenarios (pass-difference sequence excludes 0)' }
-      else if (passNull && (cost.lo > 0 || cost.hi < 0)) { decided = true; reason = `${cost.hi < 0 ? 'cheaper' : 'more expensive'}: cost Δ% sequence excludes 0 (${cost.lo.toFixed(1)} to ${cost.hi.toFixed(1)})` }
-      else if (passNull && cost.lo > -sesoi && cost.hi < sesoi) { decided = true; reason = `equivalent within ±${sesoi}%: cost Δ% sequence inside the band (${cost.lo.toFixed(1)} to ${cost.hi.toFixed(1)})` }
+      else if (passNull && (ratio.lo > 1 || ratio.hi < 1)) { decided = true; reason = `${ratio.hi < 1 ? 'cheaper' : 'more expensive'}: finite-sample cost-ratio sequence excludes 1 (${ratio.lo.toFixed(2)} to ${ratio.hi.toFixed(2)})` }
+      else if (passNull && ratio.lo > 1 - band && ratio.hi < 1 + band) { decided = true; reason = `equivalent within ±${sesoi}%: cost-ratio sequence inside the band (${ratio.lo.toFixed(2)} to ${ratio.hi.toFixed(2)})` }
     }
-    const decision: SequentialDecision = { scenarios: done.length, cost: cost ? { mean: cost.mean, lo: cost.lo, hi: cost.hi } : null, pass: pass ? { lo: pass.lo, hi: pass.hi } : null, decided, reason }
+    const decision: SequentialDecision = { scenarios: done.length, cost: cost ? { mean: cost.mean, lo: cost.lo, hi: cost.hi } : null, ratio, pass: pass ? { lo: pass.lo, hi: pass.hi } : null, decided, reason }
     deps.sequential.onDecision?.(decision)
     if (decided) decidedEarly = decision
   }
@@ -289,10 +307,24 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   let verdict: Verdict | null = null
   const timeoutMs = deps.turnTimeoutMs ?? (scenario.meta.turn_timeout_s !== undefined ? scenario.meta.turn_timeout_s * 1000 : DEFAULT_TURN_TIMEOUT_MS)
   let restoreTruth: (() => void) | undefined
+  let meter: import('./meter.js').Meter | undefined
+  let meterFile: string | undefined
   try {
     await scenarioSetup(scenario, workdir)
     restoreTruth = stashTruth(workdir, join(workRoot, '.truth-stash'))
     const overlays = [scenario.meta.network ? base.network : base.noNetwork, ...armOverlays(arm)]
+    if (deps.meter) {
+      const { startMeter } = await import('./meter.js')
+      const meterDir = join(deps.paths.dir, 'meter', scenario.name, arm.name)
+      mkdirSync(meterDir, { recursive: true })
+      meterFile = join('meter', scenario.name, arm.name, `rep${job.rep}.jsonl`)
+      const faultSeed = deps.meter.faults ? (deps.meter.faults.seed ?? 7) * 1000003 + job.order : undefined
+      meter = await startMeter({ upstream: deps.meter.upstream, ledgerFile: join(deps.paths.dir, meterFile), ...(deps.meter.exposed ? { exposed: true } : {}), ...(deps.meter.faults ? { faults: { ...deps.meter.faults, ...(faultSeed !== undefined ? { seed: faultSeed } : {}) } } : {}) })
+      const host = deps.meter.hostFromContainer ?? '127.0.0.1'
+      const overlay = join(deps.paths.arms, `_meter-${meter.port}.patch.yml`)
+      writeFileSync(overlay, `# per-trial usage meter (dsh-eval); identical role in every arm\n` + yaml.dump([{ id: 'llm-deepseek', config: { baseURL: `http://${host}:${meter.port}` } }]))
+      overlays.push(overlay)
+    }
     const breaks = new Set(scenario.meta.new_session_before_turns ?? [])
     const makeDriver = (): Driver => deps.driverFactory({ arm, scenario, workdir, evalHome: deps.evalHome, overlays, env: { ...deps.env, ...(arm.env ?? {}) } })
     let driver = makeDriver()
@@ -361,6 +393,19 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     ...(error !== undefined ? { error } : {}),
   }
   const { ledger, trace } = buildLedger(input)
+  if (meter) {
+    await meter.close()
+    const totals = meter.totals()
+    const ledgerTokens = ledger.totals.hit + ledger.totals.miss + ledger.totals.output
+    const meterTokens = totals.hit + totals.miss + totals.output
+    const deviationPct = meterTokens > 0 ? (Math.abs(ledgerTokens - meterTokens) / meterTokens) * 100 : null
+    const tolerance = deps.meter?.tolerancePct ?? 1
+    const reconciled = meterTokens > 0 ? deviationPct! <= tolerance : ledgerTokens === 0
+    ledger.usageProvenance = { source: 'meter', meter: totals, ledgerTokens, meterTokens, deviationPct, reconciled, ...(meterFile !== undefined ? { meterFile } : {}) }
+    try { rmSync(join(deps.paths.arms, `_meter-${meter.port}.patch.yml`), { force: true }) } catch { /* best effort */ }
+  } else {
+    ledger.usageProvenance = { source: 'self-reported' }
+  }
   mkdirSync(join(deps.paths.dir, 'ledgers', scenario.name, arm.name), { recursive: true })
   writeFileSync(join(deps.paths.dir, eventsFile), events.map(e => JSON.stringify(e)).join('\n') + (events.length ? '\n' : ''))
   writeFileSync(join(deps.paths.dir, traceFile), trace.map(t => JSON.stringify(t)).join('\n') + (trace.length ? '\n' : ''))

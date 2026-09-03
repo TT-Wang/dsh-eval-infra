@@ -31,6 +31,11 @@ export interface RunRequest {
     sequential?: boolean;
     /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
     sandbox?: 'host' | 'docker';
+    /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
+    meter?: boolean;
+    /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
+    faultRate?: number;
+    faultSeed?: number;
     /** Container image for docker mode (default node:22-bookworm-slim). */
     dockerImage?: string;
     /** Seed for the sequential shuffle (default 42). */
@@ -86,7 +91,11 @@ export interface JudgeOptions {
     log?: (line: string) => void;
     /** Test seam: replace the chat calls (one per model). */
     chats?: Record<string, import('./judge.js').ChatCall>;
+    /** Allow judges from the same model family as the arms (refused by default: self-preference and preference leakage). */
+    allowSameFamily?: boolean;
 }
+/** Model family from a model id or a configured `family` (deepseek-* → deepseek, gpt-* → openai, claude-* → anthropic, gemini-* → google). */
+export declare function modelFamily(model: string, configured?: string): string;
 /**
  * Run the blinded pairwise judge over every scenario of a finished run that
  * declares `meta.judge`. Writes `judge-<candidate>.json` next to the report and

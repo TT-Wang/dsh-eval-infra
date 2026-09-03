@@ -137,9 +137,9 @@ export interface CandidateReport {
   /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
   cuped: { theta: number; varianceRemoved: number; ci: BootstrapCI; n: number } | null
   /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
-  judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null }
+  judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null; sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null }
   /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
-  absolute?: { baseline: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; candidate: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; diff: number; diffSe: number; models: string[] }
+  absolute?: { baseline: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; candidate: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; diff: number; diffSe: number; models: string[]; calibration?: { labelled: number; tpr: number | null; tnr: number | null } }
   verdict: string
 }
 
@@ -417,6 +417,11 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       else if (costPctCI.lo > -sesoi && costPctCI.hi < sesoi) costReading = 'equivalent'
       else costReading = 'inconclusive'
     }
+    // Usage provenance: a directional or equivalence cost call needs the runtime's usage figures to match the independent wire meter on every comparable trial.
+    const pairLedgers = ledgers.filter(l => (l.arm === plan.baseline.name || l.arm === cand.name) && comparable.some(c => c.scenario === l.scenario))
+    const unreconciled = pairLedgers.filter(l => l.usageProvenance?.source === 'meter' && l.usageProvenance.reconciled === false)
+    let provenanceBlocked = false
+    if (unreconciled.length > 0 && costReading !== 'none' && costReading !== 'inconclusive') { costReading = 'inconclusive'; provenanceBlocked = true }
     let grade: Grade
     if (gate === 'regressions') grade = 'regression'
     else if (gate === 'incomplete') grade = 'inconclusive'
@@ -432,6 +437,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     else if (costReading === 'equivalent') verdict = `Cost equivalent within ±${sesoi}% (${ciText}), no regressions.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < 2) verdict = `Single comparable scenario: ${fmtPct(costPctCI.mean)} on cost, no interval possible; add scenarios or repeats before reading this as an effect.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < minScenarios) verdict = `Only ${comparable.length} comparable scenarios (${ciText}); fewer than ${minScenarios} scenarios cannot support a direction — add scenarios before reading this as an effect.${gains}`
+    else if (costReading === 'inconclusive' && provenanceBlocked) verdict = `Cost figures withheld: on ${unreconciled.length} trial${unreconciled.length === 1 ? '' : 's'} the runtime's usage report disagrees with the independent wire meter beyond tolerance (${ciText} as self-reported); inspect the meter ledgers before reading any cost difference.${gains}`
     else if (costReading === 'inconclusive' && insideNoise) verdict = `Cost interval (${ciText}) reaches into the A/A noise band of ±${noiseFloor!.meanAbsPct.toFixed(1)}% measured on this baseline; not read as a real difference.${gains}`
     else if (costReading === 'inconclusive') verdict = `Cost difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${ciText}); more repeats or scenarios needed.${gains}`
     else verdict = `${costReading === 'cheaper' ? 'Cheaper' : 'More expensive'} by ${fmtPct(Math.abs(costPctCI.mean))} (${ciText}), no regressions.${gains}`
@@ -473,7 +479,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     }
   })
   if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline: intervals are read at α = ${alpha.toFixed(4)} (Bonferroni) so the family-wise error rate stays at 5%.`)
-  if (options.sequences) notes.push('Sequential mode: the cost interval is the final anytime-valid confidence sequence (valid under early stopping), which is wider than a fixed-sample bootstrap would be on the same data.')
+  if (options.sequences) notes.push('Sequential mode: the cost interval is the final hedged betting confidence sequence on the paired cost ratio winsorized at 2× (non-asymptotic, valid at every look and under early stopping), which is wider than a fixed-sample interval would be on the same data.')
   if (plan.sandbox === 'docker') notes.push('Trials ran inside Docker containers: the container is the confinement boundary (workspace and eval home mounted read-write, the dsh checkout and plugins read-only); dsh\'s in-process sandbox and permission presets were off inside the container.')
   for (const c of candidates) {
     if (c.holdoutGap !== null && c.holdoutGap.devScenarios > 0) {
@@ -491,6 +497,18 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   if (errors > 0) notes.push(`${errors} run(s) ended with a runtime error (timeout or crash); they count as failures.`)
   const overridden = ledgers.filter(l => l.overridden).length
   if (overridden > 0) notes.push(`${overridden} verdict(s) were overridden by a human annotation; the machine verdicts are kept in the ledgers.`)
+  {
+    const metered = ledgers.filter(l => l.usageProvenance?.source === 'meter')
+    const selfReported = ledgers.filter(l => !l.usageProvenance || l.usageProvenance.source === 'self-reported')
+    if (metered.length > 0) {
+      const bad = metered.filter(l => l.usageProvenance!.reconciled === false)
+      const devs = metered.map(l => l.usageProvenance!.deviationPct ?? 0)
+      const faults = metered.reduce((a, l) => a + (l.usageProvenance!.meter?.faults ?? 0), 0)
+      const requests = metered.reduce((a, l) => a + (l.usageProvenance!.meter?.requests ?? 0), 0)
+      notes.push(`Usage provenance: ${metered.length - bad.length}/${metered.length} trials reconciled against the independent wire meter (max deviation ${Math.max(0, ...devs).toFixed(2)}%, ${requests} provider requests${faults > 0 ? `, ${faults} injected faults` : ''})${bad.length > 0 ? `; ${bad.length} trial${bad.length === 1 ? '' : 's'} NOT reconciled — cost calls on those pairs are withheld` : ''}.`)
+    }
+    if (selfReported.length > 0 && metered.length === 0) notes.push('Usage provenance: self-reported — token counts come from the runtime that hosts the component under test (no wire meter); cost figures are as that process reported them.')
+  }
   if (plan.repeats < 3) notes.push(`repeats=${plan.repeats}: below the 3-repeat floor the literature recommends; single-run noise is around ±30% on cost, so treat every difference as indicative only.`)
   if (plan.candidates.some(c => c.name === `${plan.baseline.name}-aa`)) notes.push('A/A run: the candidate is a copy of the baseline; any difference reported here is the noise floor of this setup.')
   const bands = new Set(ledgers.flatMap(l => l.steps.map(s => s.band)))

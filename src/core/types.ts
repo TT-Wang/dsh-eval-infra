@@ -154,6 +154,19 @@ export interface Verdict {
 }
 
 /** The ledger of one run: one scenario × one arm × one repeat. */
+export interface UsageProvenance {
+  source: 'self-reported' | 'meter'
+  meter?: { requests: number; forwarded: number; faults: number; hit: number; miss: number; output: number; reasoning: number }
+  /** Total tokens (hit + miss + output) as the runtime reported them. */
+  ledgerTokens?: number
+  /** Total tokens as seen on the wire by the meter. */
+  meterTokens?: number
+  /** |ledger − meter| / meter, percent; null when the meter saw nothing. */
+  deviationPct?: number | null
+  reconciled?: boolean
+  meterFile?: string
+}
+
 export interface RunLedger {
   schema: 'dsh-eval-ledger/1'
   runId: string
@@ -193,6 +206,13 @@ export interface RunLedger {
   overridden?: boolean
   /** Accounting invariants the event stream violated (e.g. a usage sample seen twice); empty means the ledger is clean. */
   invariantViolations?: string[]
+  /**
+   * Where the usage numbers came from. `self-reported`: relayed by the runtime
+   * that hosts the component under test. `meter`: an independent local proxy
+   * recorded the provider's wire responses; `reconciled` says whether the
+   * runtime's figures matched them within tolerance.
+   */
+  usageProvenance?: UsageProvenance
   sessionId: string | null
   /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
   sessions: number

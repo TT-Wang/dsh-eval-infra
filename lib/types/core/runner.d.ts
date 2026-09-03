@@ -65,6 +65,21 @@ export interface RunDeps {
     baseOverlayRows?: Array<Record<string, unknown>>;
     /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
     maxUsd?: number;
+    /** Independent usage meter: one local proxy per trial between the runtime and the provider; the ledger is reconciled against it. */
+    meter?: {
+        upstream: string;
+        exposed?: boolean;
+        /** Host name the runtime uses to reach the meter (container mode: host.docker.internal). */
+        hostFromContainer?: string;
+        faults?: {
+            rate: number;
+            seed?: number;
+            kinds?: Array<'429' | 'stall'>;
+            stallMs?: number;
+        };
+        /** Reconciliation tolerance in percent of the metered total (default 1%). */
+        tolerancePct?: number;
+    };
     /**
      * Anytime-valid sequential mode: scenarios run in a seeded random order; after
      * each scenario's repeats finish on all arms, the stop rule is evaluated on the
@@ -81,8 +96,14 @@ export interface RunDeps {
 export interface SequentialDecision {
     /** Scenarios completed on every arm so far. */
     scenarios: number;
-    /** Cost Δ% confidence sequence (candidate − baseline) over per-scenario paired means. */
+    /** Cost Δ% asymptotic confidence sequence (screening only). */
     cost: {
+        mean: number;
+        lo: number;
+        hi: number;
+    } | null;
+    /** Hedged betting (finite-sample) confidence sequence on the per-scenario cost ratio candidate/baseline, winsorized at 2; this one decides. */
+    ratio: {
         mean: number;
         lo: number;
         hi: number;

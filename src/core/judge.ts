@@ -46,6 +46,7 @@ export interface Judgment {
   usd: number
   model: string
   artifactSha: { baseline: string; candidate: string }
+  lengths?: { baseline: number; candidate: number }
 }
 
 export interface JudgeReport {
@@ -71,6 +72,10 @@ export interface JudgeReport {
   usd: number
   /** Agreement with human annotations on the same trials, when any exist. */
   humanAgreement: { n: number; agree: number; kappa: number | null } | null
+  /** Share of decided pairs in which the preferred artifact set was the longer one (verbosity bias check; 0.5 ≈ none). */
+  longerWinsShare: number | null
+  /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
+  interJudgeKappa: number | null
 }
 
 /** Read the captured artifacts of one trial into a single text block (deterministic order). */
@@ -203,7 +208,7 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
       const half = votes.length / 2
       const preference: Judgment['preference'] = forC > forB && forC > half ? 'candidate' : forB > forC && forB > half ? 'baseline' : 'tie'
       const first = votes[0]!
-      judgments.push({ scenario, rep, preference, votes, answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha } })
+      judgments.push({ scenario, rep, preference, votes, answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha }, lengths: { baseline: artB.text.length, candidate: artC.text.length } })
       input.log?.(`judge ${scenario}#${rep}: ${preference} (${votes.map(v => `${v.model}: ${v.preference}`).join(', ')})`)
     }
   }
@@ -214,6 +219,10 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
   const totalVotes = judgments.reduce((a, j) => a + j.votes.length, 0)
   const unanimous = judgments.filter(j => new Set(j.votes.map(v => v.preference)).size <= 1).length
   const m = mcnemar(wins, losses)
+  const decided = judgments.filter(j => j.preference !== 'tie' && j.lengths && j.lengths.baseline !== j.lengths.candidate)
+  const longerWins = decided.filter(j => (j.preference === 'candidate') === (j.lengths!.candidate > j.lengths!.baseline)).length
+  const longerWinsShare = decided.length ? longerWins / decided.length : null
+  const interJudgeKappa = input.judges.length >= 2 ? kappa(judgments.map(j => [j.votes[0]!.preference, j.votes[1]!.preference] as [string, string])) : null
   let humanAgreement: JudgeReport['humanAgreement'] = null
   if (input.annotations) {
     const pairs: Array<[string, string]> = []
@@ -244,6 +253,8 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
     pWin: m.pWin,
     usd,
     humanAgreement,
+    longerWinsShare,
+    interJudgeKappa,
   }
 }
 
@@ -285,6 +296,8 @@ export interface AbsoluteReport {
   grades: AbsoluteGrade[]
   /** Per arm: judge-only pass rate, PPI++ estimate with SE using human annotations as labels, and how many labels were used. */
   arms: Record<string, { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }>
+  /** Judge vs human labels over all labelled trials: true-positive and true-negative rates, reported separately because agreement alone misleads. */
+  calibration: { labelled: number; tpr: number | null; tnr: number | null } 
   usd: number
 }
 
@@ -320,13 +333,16 @@ export async function absoluteJudge(input: AbsoluteInput): Promise<AbsoluteRepor
     }
   }
   const perArm: AbsoluteReport['arms'] = {}
+  let tp = 0, fn = 0, tn = 0, fp = 0
   for (const arm of arms) {
     const rows = grades.filter(g => g.arm === arm)
     const all = rows.map(g => (g.pass ? 1 : 0))
     const labelled = rows.flatMap((g) => { const v = input.annotations?.[`${g.scenario}|${arm}|${g.rep}`]?.verdict; return v === true || v === false ? [{ f: g.pass ? 1 : 0, y: v ? 1 : 0 }] : [] })
+    for (const l of labelled) { if (l.y === 1) { if (l.f === 1) tp += 1; else fn += 1 } else if (l.f === 0) tn += 1; else fp += 1 }
     perArm[arm] = ppiRate(all, labelled)
   }
-  return { schema: 'dsh-eval-judge-absolute/1', runId: input.plan.id, models: input.judges.map(j => j.model), generatedAt: new Date().toISOString(), grades, arms: perArm, usd }
+  const calibration = { labelled: tp + fn + tn + fp, tpr: tp + fn > 0 ? tp / (tp + fn) : null, tnr: tn + fp > 0 ? tn / (tn + fp) : null }
+  return { schema: 'dsh-eval-judge-absolute/1', runId: input.plan.id, models: input.judges.map(j => j.model), generatedAt: new Date().toISOString(), grades, arms: perArm, calibration, usd }
 }
 
 export { mean as _mean }

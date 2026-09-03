@@ -225,6 +225,26 @@ describe('anytime-valid sequences', () => {
   })
 })
 
+describe('hedged betting sequence', () => {
+  it('is two-sided, valid at every t, shrinks, and excludes the null for a clear bounded effect', async () => {
+    const { bettingCS } = await import('../src/core/stats.js')
+    const CAP = 2
+    const ratios = Array.from({ length: 12 }, (_, i) => (0.6 + (i % 3) * 0.02) / CAP)   // candidate at ~62% of baseline cost
+    const c = bettingCS(ratios)
+    expect(c.hi * CAP).toBeLessThan(1)
+    expect(c.lo * CAP).toBeGreaterThan(0.2)
+    const early = bettingCS(ratios.slice(0, 3))
+    expect(early.hi - early.lo).toBeGreaterThan(c.hi - c.lo)
+    const noisy = Array.from({ length: 10 }, (_, i) => (i % 2 ? 1.3 : 0.7) / CAP)
+    const n = bettingCS(noisy)
+    expect(n.lo * CAP).toBeLessThan(1)
+    expect(n.hi * CAP).toBeGreaterThan(1)
+    const expensive = Array.from({ length: 12 }, () => 1.6 / CAP)
+    expect(bettingCS(expensive).lo * CAP).toBeGreaterThan(1)
+    expect(bettingCS([]).t).toBe(0)
+  })
+})
+
 describe('hierarchical bootstrap and holdout', () => {
   it('hierarchical bootstrap widens the interval when repeats disagree and matches the scenario bootstrap with one value per scenario', async () => {
     const { bootstrapHierarchical, bootstrapMean } = await import('../src/core/stats.js')

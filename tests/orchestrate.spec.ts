@@ -109,3 +109,17 @@ describe('launchRun', () => {
     expect(created).toBe(4)
   })
 })
+
+describe('judge family rule', () => {
+  it('refuses a judge from the arms\' model family unless allowed', async () => {
+    const { modelFamily, runJudge } = await import('../src/core/orchestrate.js')
+    expect(modelFamily('deepseek-v4-pro')).toBe('deepseek')
+    expect(modelFamily('gpt-5.2')).toBe('openai')
+    expect(modelFamily('claude-fable-5')).toBe('anthropic')
+    expect(modelFamily('whatever-1', 'custom')).toBe('custom')
+    const p = project()
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await launched.done
+    await expect(runJudge(p, launched.id, { models: ['deepseek-v4-pro'], chats: { 'deepseek-v4-pro': async () => ({ text: '{}', usage: { hit: 0, miss: 0, output: 0 } }) } })).rejects.toMatchObject({ code: 'usage' })
+  })
+})

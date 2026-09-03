@@ -44,6 +44,8 @@ describe('blinded pairwise judge', () => {
     expect(report.ties).toBe(1)
     expect(report.inconsistentShare).toBeCloseTo(1 / 3, 6)
     expect(report.humanAgreement).toEqual({ n: 2, agree: 0.5, kappa: 0 })
+    expect(report.longerWinsShare).toBe(1)   // the GOOD artifact is longer and always wins
+    expect(report.interJudgeKappa).toBeNull()
     expect(report.usd).toBeGreaterThan(0)
     expect(readArtifacts(join(root, 'nope'), 100).sha).toBe('none')
 
@@ -55,6 +57,7 @@ describe('blinded pairwise judge', () => {
     expect(panel.judgments.every(j => j.votes.length === 2)).toBe(true)
     expect(panel.judgments.find(j => j.scenario === 's1')!.preference).toBe('tie')
     expect(panel.panelAgreement).toBeLessThan(1)
+    expect(panel.interJudgeKappa).not.toBeNull()
     // three judges, two good ones → strict majority → candidate
     const trio = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, judges: [{ model: 'a', chat }, { model: 'b', chat: biased }, { model: 'c', chat }], seed: 3 })
     expect(trio.judgments.find(j => j.scenario === 's1')!.preference).toBe('candidate')
@@ -77,6 +80,9 @@ describe('blinded pairwise judge', () => {
     expect(abs.arms['base']!.judgeOnly).toBeCloseTo(1 / 6, 6)
     expect(abs.arms['base']!.n).toBe(3)
     expect(abs.arms['base']!.estimate).toBeLessThan(abs.arms['base']!.judgeOnly + 1e-9)
+    expect(abs.calibration.labelled).toBe(5)
+    expect(abs.calibration.tnr).toBeCloseTo(2 / 3, 6)   // s1 base: judge pass, human fail → one false positive among three negatives
+    expect(abs.calibration.tpr).toBe(1)
     const r = ppiRate([1, 1, 0, 0, 1, 0, 1, 0], [{ f: 1, y: 1 }, { f: 0, y: 0 }, { f: 1, y: 1 }, { f: 0, y: 0 }])
     expect(r.lambda).toBeGreaterThan(0)
     expect(r.estimate).toBeCloseTo(0.5, 6)

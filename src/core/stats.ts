@@ -286,28 +286,39 @@ export function asympCS(values: number[], alpha = 0.05, plannedN = 10): { mean: 
  * is the point 1/2. Returns the set of means not rejected, on a grid.
  */
 export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number; t: number } {
+  // Hedged capital process (Waudby-Smith & Ramdas 2020, "betting" CS): for each
+  // candidate mean m, two capital processes bet that the truth is above (K+) and
+  // below (K−) m with a predictable plug-in bet from the running variance,
+  // truncated at c/m and c/(1−m) so wealth stays positive; m is rejected once
+  // max(K+, K−) ≥ 1/α. Non-asymptotic: valid at every t and under early stopping.
   const t = xs.length
   if (t === 0) return { lo: 0, hi: 1, t }
   const grid = 400
+  const c = 0.9
   let lo = 1
   let hi = 0
   for (let g = 0; g <= grid; g += 1) {
     const m = g / grid
-    let wealth = 1
+    let plus = 1
+    let minus = 1
     let sumX = 0
     let sumSq = 0
+    let rejected = false
     for (let i = 0; i < t; i += 1) {
-      // predictable bet: shrunken empirical-variance plug-in, capped to keep wealth non-negative
       const n = i
-      const mu = n ? sumX / n : 0.5
-      const varHat = n ? Math.max(sumSq / n - mu * mu, 1e-4) : 0.25
-      const lam = Math.max(-0.5 / Math.max(1 - m, 1e-9), Math.min(0.5 / Math.max(m, 1e-9), Math.sqrt(2 * Math.log(2 / alpha) / (varHat * (n + 1) * Math.log(n + 2)))))
-      wealth *= 1 + lam * (xs[i]! - m)
-      sumX += xs[i]!
-      sumSq += xs[i]! * xs[i]!
-      if (wealth >= 1 / alpha) break
+      const mu = n ? (0.5 + sumX) / (n + 1) : 0.5
+      const varHat = n ? Math.max((0.25 + sumSq) / (n + 1) - mu * mu, 1e-4) : 0.25
+      const lam = Math.sqrt(2 * Math.log(2 / alpha) / (varHat * (n + 1) * Math.log(n + 2)))
+      const lamPlus = Math.min(lam, c / Math.max(m, 1e-9))
+      const lamMinus = Math.min(lam, c / Math.max(1 - m, 1e-9))
+      const x = xs[i]!
+      plus *= 1 + lamPlus * (x - m)
+      minus *= 1 - lamMinus * (x - m)
+      sumX += x
+      sumSq += x * x
+      if (Math.max(plus, minus) >= 1 / alpha) { rejected = true; break }
     }
-    if (wealth < 1 / alpha) { lo = Math.min(lo, m); hi = Math.max(hi, m) }
+    if (!rejected) { lo = Math.min(lo, m); hi = Math.max(hi, m) }
   }
   if (lo > hi) return { lo: 0.5, hi: 0.5, t }
   return { lo, hi, t }
