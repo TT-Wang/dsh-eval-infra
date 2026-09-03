@@ -37,6 +37,17 @@ export interface ScenarioMeta {
     new_session_before_turns?: number[];
     /** Files the strict self-check must not mutate: side products of the scenario's own scripts that no prompt asks for. */
     strict_ignore?: string[];
+    /**
+     * Optional blinded pairwise judge for qualities code cannot verify: the listed
+     * workspace files are captured at the end of every trial and, after the run,
+     * `dsh-eval judge` shows the baseline's and the candidate's files to a judge
+     * model in both orders with this rubric.
+     */
+    judge?: {
+        rubric: string;
+        artifacts: string[];
+        maxChars?: number;
+    };
 }
 /** A loaded scenario. */
 export interface Scenario {
@@ -179,6 +190,8 @@ export interface RunLedger {
     /** Present when a human override replaced the machine verdict (the original is kept here). */
     machineVerdict?: Verdict | null;
     overridden?: boolean;
+    /** Accounting invariants the event stream violated (e.g. a usage sample seen twice); empty means the ledger is clean. */
+    invariantViolations?: string[];
     sessionId: string | null;
     /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
     sessions: number;

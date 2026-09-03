@@ -3,7 +3,7 @@ import type { Project } from './project.js';
 import { type NoiseFloor, type Report } from './report.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
-import { type Progress } from './store.js';
+import { runPaths, type Progress } from './store.js';
 import type { RunLedger, RunPlan, Scenario } from './types.js';
 export interface RunRequest {
     /** Arm file path, or a name resolved against the project's arms dir. */
@@ -27,6 +27,10 @@ export interface RunRequest {
     maxUsd?: number;
     /** Include sealed holdout scenarios (meta.holdout) in the run. */
     includeHoldout?: boolean;
+    /** Anytime-valid sequential mode: shuffled scenario order, early stop once the paired comparison is decided. */
+    sequential?: boolean;
+    /** Seed for the sequential shuffle (default 42). */
+    seed?: number;
 }
 export interface LaunchHooks {
     log?: (line: string) => void;
@@ -66,5 +70,37 @@ export declare function collectScenarios(project: Project, request: Pick<RunRequ
 export declare function launchRun(project: Project, request: RunRequest, hooks?: LaunchHooks): Promise<Launched>;
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
 export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
+export interface JudgeOptions {
+    model?: string;
+    candidate?: string;
+    seed?: number;
+    log?: (line: string) => void;
+    /** Test seam: replace the chat call. */
+    chat?: import('./judge.js').ChatCall;
+}
+/**
+ * Run the blinded pairwise judge over every scenario of a finished run that
+ * declares `meta.judge`. Writes `judge-<candidate>.json` next to the report and
+ * returns it. The judge model defaults to deepseek-v4-pro so it differs from
+ * the usual v4-flash arms (same family: a stated limitation).
+ */
+export declare function runJudge(project: Project, id: string, options?: JudgeOptions): Promise<import('./judge.js').JudgeReport[]>;
+/** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+export declare function sequencesOf(paths: ReturnType<typeof runPaths>): {
+    sequences?: Record<string, {
+        cost: {
+            mean: number;
+            lo: number;
+            hi: number;
+        } | null;
+        pass: {
+            lo: number;
+            hi: number;
+        } | null;
+        scenarios: number;
+    }>;
+};
+/** Judge reports stored with a run, keyed by candidate. */
+export declare function readJudgeReports(paths: ReturnType<typeof runPaths>): Record<string, import('./judge.js').JudgeReport>;
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 export declare function rebuildReport(project: Project, id: string): Report;

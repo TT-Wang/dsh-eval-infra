@@ -52,6 +52,12 @@ export interface History {
         label?: string;
         arms: string[];
     }>;
+    /** Scenarios that behave the same way for every arm across the archive: worth retiring or fixing rather than re-running. */
+    chronic: {
+        flaky: string[];
+        failing: string[];
+        saturated: string[];
+    };
 }
 /** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
 export declare function buildHistory(runsRoot: string): History;

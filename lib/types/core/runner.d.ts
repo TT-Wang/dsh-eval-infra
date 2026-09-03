@@ -63,10 +63,41 @@ export interface RunDeps {
     workRoot?: string;
     /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
     maxUsd?: number;
+    /**
+     * Anytime-valid sequential mode: scenarios run in a seeded random order; after
+     * each scenario's repeats finish on all arms, the stop rule is evaluated on the
+     * per-scenario paired differences and the run ends early once decided.
+     */
+    sequential?: {
+        alpha?: number;
+        seed?: number;
+        minScenarios?: number;
+        sesoiPct?: number;
+        onDecision?: (d: SequentialDecision) => void;
+    };
+}
+export interface SequentialDecision {
+    /** Scenarios completed on every arm so far. */
+    scenarios: number;
+    /** Cost Δ% confidence sequence (candidate − baseline) over per-scenario paired means. */
+    cost: {
+        mean: number;
+        lo: number;
+        hi: number;
+    } | null;
+    /** Pass-difference confidence sequence over per-scenario x = (Δpass + 1) / 2; 0.5 is "no difference". */
+    pass: {
+        lo: number;
+        hi: number;
+    } | null;
+    decided: boolean;
+    reason: string;
 }
 /** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
 export declare function writeBaseOverlays(armsDir: string): {
     noNetwork: string;
     network: string;
 };
+/** Seeded Fisher–Yates shuffle (mulberry32). */
+export declare function shuffled<T>(items: T[], seed: number): T[];
 export declare function executeRun(plan: RunPlan, scenarios: Scenario[], arms: ResolvedArm[], deps: RunDeps): Promise<Progress>;

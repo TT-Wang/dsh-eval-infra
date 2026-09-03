@@ -40,3 +40,65 @@ export declare function wilson(passes: number, n: number, z?: number): {
 export declare function stddev(xs: number[]): number;
 /** Two-sided 97.5% Student t quantile for small degrees of freedom (table up to 30, then normal). */
 export declare function tCritical(df: number): number;
+/**
+ * Intraclass correlation of repeat values within scenarios (one-way ANOVA
+ * estimator) and the design effect 1 + (k − 1)ρ that inflates the variance of
+ * a mean over n·k correlated trials relative to n·k independent ones.
+ */
+export declare function icc(groups: number[][]): {
+    rho: number;
+    designEffect: number;
+    k: number;
+};
+/**
+ * McNemar on discordant pairs: b = candidate passed where baseline failed,
+ * c = baseline passed where candidate failed. Returns the exact two-sided p,
+ * the mid-p (recommended by Fagerland et al. 2013), the posterior probability
+ * that the candidate wins a discordant pair (Beta(b+1, c+1)), and the share of
+ * that posterior inside a region of practical equivalence around 1/2.
+ */
+export declare function mcnemar(b: number, c: number, ropeHalfWidth?: number): {
+    b: number;
+    c: number;
+    exactP: number;
+    midP: number;
+    pWin: number;
+    inRope: number;
+};
+/**
+ * Resolution of a paired comparison: N* is the number of scenarios at which a
+ * paired t-test would reach 80% power at α = 0.05 for the observed mean
+ * difference and spread; q = n / N*. q ≥ 1 means the design could resolve
+ * an effect of the observed size; q ≪ 1 means "inconclusive" is about the
+ * design, not the effect.
+ */
+export declare function resolution(values: number[]): {
+    nStar: number | null;
+    q: number | null;
+};
+/** Normalized Levenshtein similarity of two sequences (1 = identical). */
+export declare function sequenceSimilarity(a: string[], b: string[]): number;
+/**
+ * Asymptotic confidence sequence (Waudby-Smith, Arbour, Sinha, Kennedy, Ramdas
+ * 2021, Theorem 2.2) for the running mean of a sequence: valid uniformly over
+ * time, so a run may be stopped the moment 0 leaves the interval without
+ * inflating the error rate. ρ tunes where the sequence is tightest; the
+ * paper's choice for a planned first look at m units is used.
+ */
+export declare function asympCS(values: number[], alpha?: number, plannedN?: number): {
+    mean: number;
+    lo: number;
+    hi: number;
+    t: number;
+};
+/**
+ * Betting confidence sequence for the mean of [0, 1] outcomes (Waudby-Smith &
+ * Ramdas 2020, predictable-plug-in bets). Used on x = (d + 1) / 2 where d is
+ * the per-scenario pass-rate difference in [−1, 1]; the null "no difference"
+ * is the point 1/2. Returns the set of means not rejected, on a grid.
+ */
+export declare function bettingCS(xs: number[], alpha?: number): {
+    lo: number;
+    hi: number;
+    t: number;
+};

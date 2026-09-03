@@ -44,7 +44,7 @@ export interface ArmScenarioStats {
         overridden?: boolean;
     }>;
 }
-export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete';
+export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun';
 export interface PairedScenario {
     scenario: string;
     baseline: ArmScenarioStats;
@@ -62,6 +62,12 @@ export interface PairedScenario {
             reason: string;
             n: number;
         }>;
+    };
+    /** Tool-sequence similarity (normalized Levenshtein over tool names): within each arm across repeats, and between the arms' paired repeats. 1 = identical. */
+    tss: {
+        baseline: number | null;
+        candidate: number | null;
+        between: number | null;
     };
     /** Repeat pairs where both arms passed (cost comparison base). */
     costPairs: number;
@@ -149,6 +155,26 @@ export interface CandidateReport {
     noiseFloor: NoiseFloor | null;
     /** Significance level used for the intervals after Bonferroni adjustment across candidates (0.05 / candidates). */
     alpha: number;
+    /** Intraclass correlation of repeat cost differences within scenarios and the design effect 1 + (k−1)ρ. */
+    icc: {
+        rho: number;
+        designEffect: number;
+        k: number;
+    };
+    /** Paired pass/fail: discordant counts, McNemar exact and mid-p, posterior P(candidate wins a discordant pair), posterior mass inside ±0.1 of 1/2. */
+    paired: {
+        b: number;
+        c: number;
+        exactP: number;
+        midP: number;
+        pWin: number;
+        inRope: number;
+    };
+    /** Resolution of the cost comparison: N* scenarios needed for 80% power at the observed effect, and q = n / N*. */
+    resolution: {
+        nStar: number | null;
+        q: number | null;
+    };
     /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
     holdoutGap: {
         dev: number;
@@ -156,6 +182,22 @@ export interface CandidateReport {
         devScenarios: number;
         holdoutScenarios: number;
     } | null;
+    /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
+    judge?: {
+        model: string;
+        wins: number;
+        losses: number;
+        ties: number;
+        midP: number;
+        pWin: number;
+        inconsistentShare: number;
+        usd: number;
+        humanAgreement: {
+            n: number;
+            agree: number;
+            kappa: number | null;
+        } | null;
+    };
     verdict: string;
 }
 export interface NoiseFloor {
@@ -176,6 +218,19 @@ export interface ReportOptions {
     noiseFloors?: Record<string, NoiseFloor>;
     /** Scenario names in the sealed holdout pool. */
     holdout?: Set<string>;
+    /** Final anytime-valid sequences of a sequential run, keyed by candidate; when present they replace the fixed-sample cost interval. */
+    sequences?: Record<string, {
+        cost: {
+            mean: number;
+            lo: number;
+            hi: number;
+        } | null;
+        pass: {
+            lo: number;
+            hi: number;
+        } | null;
+        scenarios: number;
+    }>;
 }
 /** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
 export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | null;

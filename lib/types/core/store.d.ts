@@ -46,6 +46,12 @@ export interface Progress {
         error?: string;
     }>;
     error?: string;
+    /** Set when the anytime-valid stop rule ended the run before every scenario ran. */
+    stoppedEarly?: {
+        after: number;
+        of: number;
+        reason: string;
+    };
 }
 export declare function listRuns(root: string): RunIndexEntry[];
 /** A human override of one trial's verdict (or a note without override). */
