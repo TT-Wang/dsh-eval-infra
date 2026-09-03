@@ -109,6 +109,16 @@ The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
 
 Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, LangSmith, Langfuse, Weave and Phoenix compare experiments after the fact; Inspect has epochs and bootstrap errors per log; Claude Code's `plugin eval` (early access) ablates its own plugins with and without. None of them pairs and interleaves two configurations in one run, enforces one variable, self-checks the verifier, gates on regressions, or prices with cache and calendar awareness. Details and sources: [docs/landscape.md](docs/landscape.md).
 
+## Status and limitations
+
+Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys. Known limits, stated rather than hidden:
+
+- Confinement is dsh's same-world sandbox, not a container; scenarios that need a hostile environment belong in Harbor-style containers.
+- The judge is one model from the same family as the arms; no prediction-powered inference over human labels.
+- DeepSeek prices only; other providers are recorded with cost 0 and flagged.
+- Intervals below ten scenarios are Student-t; the bootstrap is used from ten. With fewer than five comparable scenarios the tool refuses to state a direction, by design.
+- Tables are not virtualized; runs with thousands of trials will render slowly.
+
 ## Development
 
 ```bash

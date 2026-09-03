@@ -209,7 +209,9 @@ export class EvalApp {
         const report = existsSync(paths.report) ? readJson<Report>(paths.report) : null
         const env = readEnvironment(paths) ?? null
         const active = this.active.get(id)
-        json(res, 200, { plan, progress: active?.progress ?? progress, report, env, active: active !== undefined, logs: active?.logs ?? [] })
+        const seqFile = join(paths.dir, 'sequential.json')
+        const sequential = existsSync(seqFile) ? readJson<unknown>(seqFile) : null
+        json(res, 200, { plan, progress: active?.progress ?? progress, report, env, active: active !== undefined, logs: active?.logs ?? [], sequential })
         return
       }
       if (method === 'GET' && seg[2] === 'report') {

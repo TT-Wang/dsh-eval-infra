@@ -59,6 +59,9 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | one-word grade (improvement / regression / tradeoff / tie) | Braintrust comparison grade | implemented | **met** |
 | honest wording when underpowered | TOST literature | "inconclusive" default; single-scenario and <3-scenario wordings | **met** |
 
+| variance reduction with a pre-experiment covariate | CUPED (Deng et al. 2013) | archived baseline cost per scenario; adjusted interval and variance removed reported beside the raw one | **met** |
+| behaviour under drift: sequential decision trace stored and shown | AV-AIVAT stopping traces | `sequential.json` + run-page table | **met** |
+
 ## E. Graders beyond deterministic verifiers
 
 | capability | best reference | dsh-eval-infra | status |
@@ -85,7 +88,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | intervals drawn, not just points | tbench.ai whiskers, Phoenix box plots | forest strip with SESOI band, MDE lines, A/A floor | **met** |
 | one-variable diff at setup | none | implemented with warning | **met** |
 | live progress with cancel | Inspect | SSE matrix, active chips, cancel | **met** |
-| trace: steps, tokens with cache split, folded observations, reasoning, verdict, raw | claude-tap, AgentPrism, Harbor viewer | implemented, keyboard j/k/r/c/esc | **met** |
+| trace: steps, tokens with cache split, wall time per step, folded observations, reasoning, verdict, raw | claude-tap, AgentPrism, Harbor viewer, Braintrust timeline | implemented (prompt-size and duration bars per step), keyboard j/k/r/c/esc | **met** |
 | paired trace diff with first divergence | OrcaReplay | side-by-side with mirrored selection and divergence marker | **met** |
 | history across runs, chronic failures, cost trend | Braintrust trends | per-scenario history with pass/fail and cost sparklines | **met** |
 | static single-file export | Inspect `view bundle`, claude-tap | `export --html` | **met** |

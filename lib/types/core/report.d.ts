@@ -182,6 +182,13 @@ export interface CandidateReport {
         devScenarios: number;
         holdoutScenarios: number;
     } | null;
+    /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
+    cuped: {
+        theta: number;
+        varianceRemoved: number;
+        ci: BootstrapCI;
+        n: number;
+    } | null;
     /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
     judge?: {
         model: string;
@@ -218,6 +225,8 @@ export interface ReportOptions {
     noiseFloors?: Record<string, NoiseFloor>;
     /** Scenario names in the sealed holdout pool. */
     holdout?: Set<string>;
+    /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */
+    priorBaselineUsd?: Record<string, number>;
     /** Final anytime-valid sequences of a sequential run, keyed by candidate; when present they replace the fixed-sample cost interval. */
     sequences?: Record<string, {
         cost: {

@@ -119,6 +119,8 @@ export interface StepRow extends Usage {
     textChars: number;
     /** Characters of reasoning text. */
     reasoningChars: number;
+    /** Wall time of the step from step/start to step/end, when both events were seen. */
+    durationMs?: number;
 }
 /** Per-turn aggregate. */
 export interface TurnRow extends Usage {

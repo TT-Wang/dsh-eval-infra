@@ -219,7 +219,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
     if (request.sequential) writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, candidate: candidateSpecs[0]?.name ?? null, decisions })
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), ...sequencesOf(paths) })
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), ...sequencesOf(paths) })
     if (request.sequential) {
       const last = decisions.at(-1)
       if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
@@ -231,6 +231,23 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     return { progress, report }
   })()
   return { id, plan, diffs: prepared.diffs, scenarios, selfcheck, done }
+}
+
+/** Per-scenario mean cost of an arm across earlier runs (excluding `exceptRunId`) — the CUPED covariate. */
+export function archiveBaselineCosts(project: Project, arm: string, exceptRunId?: string): Record<string, number> {
+  const sums = new Map<string, { usd: number; n: number }>()
+  for (const r of listRuns(project.runsRoot)) {
+    if (r.id === exceptRunId) continue
+    const paths = runPaths(project.runsRoot, r.id)
+    for (const l of readLedgers(paths)) {
+      if (l.arm !== arm || l.error !== undefined) continue
+      const e = sums.get(l.scenario) ?? { usd: 0, n: 0 }
+      e.usd += l.totals.usd
+      e.n += 1
+      sums.set(l.scenario, e)
+    }
+  }
+  return Object.fromEntries([...sums.entries()].map(([k, v]) => [k, v.usd / v.n]))
 }
 
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
@@ -333,7 +350,7 @@ export function rebuildReport(project: Project, id: string): Report {
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout, ...sequencesOf(paths) })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, ...sequencesOf(paths) })
   const judges = readJudgeReports(paths)
   for (const c of report.candidates) {
     const j = judges[c.arm]

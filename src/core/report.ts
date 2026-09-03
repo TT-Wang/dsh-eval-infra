@@ -134,6 +134,8 @@ export interface CandidateReport {
   resolution: { nStar: number | null; q: number | null }
   /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
   holdoutGap: { dev: number; holdout: number; devScenarios: number; holdoutScenarios: number } | null
+  /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
+  cuped: { theta: number; varianceRemoved: number; ci: BootstrapCI; n: number } | null
   /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
   judge?: { model: string; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null }
   verdict: string
@@ -158,6 +160,8 @@ export interface ReportOptions {
   noiseFloors?: Record<string, NoiseFloor>
   /** Scenario names in the sealed holdout pool. */
   holdout?: Set<string>
+  /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */
+  priorBaselineUsd?: Record<string, number>
   /** Final anytime-valid sequences of a sequential run, keyed by candidate; when present they replace the fixed-sample cost interval. */
   sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; scenarios: number }>
 }
@@ -358,6 +362,26 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       costPctCI = { mean: seq.cost.mean, lo: seq.cost.lo, hi: seq.cost.hi, n: seq.scenarios, significant: seq.cost.lo > 0 || seq.cost.hi < 0 }
     }
     const iccStat = icc(comparable.map(p => p.costDiffPctPairs))
+    // CUPED (Deng et al. 2013): d̃_i = d_i − θ (x_i − x̄) with a pre-experiment covariate; variance falls by ρ².
+    let cuped: CandidateReport['cuped'] = null
+    if (options.priorBaselineUsd) {
+      const xs: number[] = []
+      const ds: number[] = []
+      for (const p of comparable) { const x = options.priorBaselineUsd[p.scenario]; if (x !== undefined && p.costDiffPct !== null) { xs.push(x); ds.push(p.costDiffPct) } }
+      if (xs.length >= 4) {
+        const mx = mean(xs)
+        const md = mean(ds)
+        const cov = xs.reduce((a, x, i) => a + (x - mx) * (ds[i]! - md), 0) / (xs.length - 1)
+        const vx = xs.reduce((a, x) => a + (x - mx) ** 2, 0) / (xs.length - 1)
+        const vd = ds.reduce((a, d) => a + (d - md) ** 2, 0) / (ds.length - 1)
+        if (vx > 0 && vd > 0) {
+          const theta = cov / vx
+          const adjusted = ds.map((d, i) => d - theta * (xs[i]! - mx))
+          const rho2 = Math.min(1, cov * cov / (vx * vd))
+          cuped = { theta, varianceRemoved: rho2, ci: smallSampleCI(adjusted, 2000, 42, alpha), n: xs.length }
+        }
+      }
+    }
     const pairedStat = mcnemar(wins, losses)
     const resolutionStat = resolution(comparable.map(p => p.costDiffPct!))
     const costPeakCI = smallSampleCI(comparable.map(p => p.costDiffPeakUsd ?? 0), 2000, 42, alpha)
@@ -442,6 +466,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       paired: pairedStat,
       resolution: resolutionStat,
       holdoutGap,
+      cuped,
       verdict,
     }
   })
@@ -457,6 +482,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     if (c.flaky.length > 0) notes.push(`${c.arm}: repeats disagree within an arm on ${c.flaky.join(', ')} — noisy scenarios for this setup; a regression there needs more repeats before it counts.`)
     if (c.mdePct !== null) notes.push(`${c.arm}: with ${c.scenarios.filter(p => p.costDiffUsd !== null).length} comparable scenarios this design can detect a cost effect of about ±${c.mdePct.toFixed(0)}% (95% confidence, 80% power); smaller effects will read inconclusive.`)
     if (c.noiseFloor !== null) notes.push(`${c.arm}: the A/A run ${c.noiseFloor.runId} on this baseline showed |Δ%| averaging ${c.noiseFloor.meanAbsPct.toFixed(1)}% (interval ${fmtPct(c.noiseFloor.lo)} to ${fmtPct(c.noiseFloor.hi)}) with no real change; treat differences inside that band as noise.`)
+    if (c.cuped !== null) notes.push(`${c.arm}: CUPED with each scenario's archived baseline cost as covariate removes ${(c.cuped.varianceRemoved * 100).toFixed(0)}% of the variance on ${c.cuped.n} scenarios; adjusted Δ% ${fmtPct(c.cuped.ci.mean)} (${fmtPct(c.cuped.ci.lo)} to ${fmtPct(c.cuped.ci.hi)}). Shown beside the raw interval, not instead of it.`)
   }
   const errors = ledgers.filter(l => l.error !== undefined).length
   if (errors > 0) notes.push(`${errors} run(s) ended with a runtime error (timeout or crash); they count as failures.`)

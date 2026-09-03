@@ -69,6 +69,9 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
   const { ledger, trace } = trial
   const t = ledger.totals
   const promptMax = Math.max(1, ...trace.map(r => (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)), ...(other?.trace.map(r => (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)) ?? []))
+  const durations = new Map(ledger.steps.map(st => [`${st.turn}/${st.step}`, st.durationMs ?? 0]))
+  const otherDurations = new Map((other?.ledger.steps ?? []).map(st => [`${st.turn}/${st.step}`, st.durationMs ?? 0]))
+  const durMax = Math.max(1, ...durations.values(), ...otherDurations.values())
   const row = trace[selected]
   const b = ledger.behaviour
 
@@ -97,13 +100,13 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
 
       <div class={`trace-grid ${compare && other ? 'compare' : ''}`}>
         <div class="card steps">
-          <h2>{arm} <span class="muted small">prompt size per step, green = cache hit</span></h2>
-          <StepList trace={trace} selected={selected} onSelect={setSelected} promptMax={promptMax} divergence={compare ? divergence : -1} />
+          <h2>{arm} <span class="muted small">bars: prompt size (green = cache hit) and wall time per step</span></h2>
+          <StepList trace={trace} selected={selected} onSelect={setSelected} promptMax={promptMax} divergence={compare ? divergence : -1} durations={durations} durMax={durMax} />
         </div>
         {compare && other && (
           <div class="card steps">
             <h2>{otherArm} <span class="muted small">{other.ledger.verdict?.ok ? 'pass' : 'fail'} · {fmt.usd(other.ledger.totals.usd)} · {other.ledger.totals.steps} steps{divergence >= 0 ? ` · diverges at step ${divergence + 1}` : ' · same tool sequence'}</span></h2>
-            <StepList trace={other.trace} selected={compare ? Math.min(selected, other.trace.length - 1) : -1} onSelect={() => { /* mirrors the main selection */ }} promptMax={promptMax} divergence={divergence} />
+            <StepList trace={other.trace} selected={compare ? Math.min(selected, other.trace.length - 1) : -1} onSelect={() => { /* mirrors the main selection */ }} promptMax={promptMax} divergence={divergence} durations={otherDurations} durMax={durMax} />
           </div>
         )}
         <div class="card detail">
@@ -162,7 +165,7 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
   )
 }
 
-function StepList({ trace, selected, onSelect, promptMax, divergence }: { trace: TraceRow[]; selected: number; onSelect: (i: number) => void; promptMax: number; divergence: number }) {
+function StepList({ trace, selected, onSelect, promptMax, divergence, durations, durMax }: { trace: TraceRow[]; selected: number; onSelect: (i: number) => void; promptMax: number; divergence: number; durations: Map<string, number>; durMax: number }) {
   let lastTurn = 0
   return (
     <ol class="steplist">
@@ -178,7 +181,7 @@ function StepList({ trace, selected, onSelect, promptMax, divergence }: { trace:
             <li class={`${i === selected ? 'sel' : ''} ${i === divergence ? 'diverge' : ''}`} onClick={() => onSelect(i)} ref={(el) => { if (i === selected) el?.scrollIntoView({ block: 'nearest' }) }}>
               <span class="step-no">{r.step}</span>
               <span class="step-calls">{r.calls.length ? r.calls.map(c => <code>{c.name}</code>) : <span class="muted">{r.text ? r.text.slice(0, 60) : '…'}</span>}{errs ? <span class="tag warn">{errs} err</span> : null}</span>
-              <span class="spark" title={`prompt ${fmt.k(prompt)} tokens, ${hitPct.toFixed(0)}% cache hit`}><i style={{ width: `${prompt / promptMax * 100}%` }}><b style={{ width: `${hitPct}%` }} /></i></span>
+              <span class="spark" title={`prompt ${fmt.k(prompt)} tokens, ${hitPct.toFixed(0)}% cache hit`}><i style={{ width: `${prompt / promptMax * 100}%` }}><b style={{ width: `${hitPct}%` }} /></i>{(durations.get(`${r.turn}/${r.step}`) ?? 0) > 0 && <em class="dur" title={`${((durations.get(`${r.turn}/${r.step}`) ?? 0) / 1000).toFixed(1)}s wall`} style={{ width: `${(durations.get(`${r.turn}/${r.step}`) ?? 0) / durMax * 100}%` }} />}</span>
               <span class="step-cost">{fmt.usd(r.usd)}</span>
             </li>
           </>

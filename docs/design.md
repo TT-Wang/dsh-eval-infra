@@ -104,9 +104,16 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 - Behaviour signature per arm: tool errors, consecutive repeated calls, no-action steps, characters of tool output the model was shown, compactions — the "failure fingerprint" view the Scaffold Effect paper asks for.
 - Notes appended automatically: runtime errors, repeats below 3, peak/off-peak straddling, more than one model or effort observed, multi-variable comparison, A/A.
 
+## 6b. Sequential mode, judge, and variance reduction
+
+- **Sequential mode** (`--sequential --seed N`): scenarios are shuffled with the seed and run one at a time on all arms. After each scenario, an asymptotic confidence sequence (Waudby-Smith et al. 2021) is updated on the per-scenario paired cost Δ% and a betting confidence sequence (Waudby-Smith & Ramdas 2020) on x = (Δpass + 1)/2. The run stops once, with at least three scenarios done, the pass sequence excludes 1/2, or the pass sequence contains 1/2 and the cost sequence excludes 0 or lies inside ±SESOI. The final report then uses the sequence as the cost interval, because only a time-uniform interval keeps its coverage under optional stopping; the fixed-sample bootstrap on the same data would be too narrow (`docs/results.md` shows a real run where the two disagree). The decision trace is stored in `sequential.json` and shown in the UI.
+- **Blinded pairwise judge** (`dsh-eval judge <run>`): scenarios may declare `meta.judge = { rubric, artifacts }`; the runner copies the artifacts out of every trial's workspace. The judge sees the rubric and the two artifact sets under the names "Submission 1/2", never an arm, model or scenario name; which arm is shown first is drawn from a seed; the judge is asked twice with the order swapped; answers that disagree count as a tie. The report carries wins/losses/ties, McNemar mid-p, the order-disagreement rate, cost, and Cohen's κ against human annotations when the same trials have been reviewed. A single judge model is used (default deepseek-v4-pro), so judge and arms share a model family — a stated limitation; a panel across families is the next step.
+- **CUPED**: when the archive holds earlier runs of the baseline arm, each scenario's historical baseline cost is a pre-experiment covariate; the adjusted per-scenario differences d̃ᵢ = dᵢ − θ(xᵢ − x̄) and the variance removed (ρ²) are reported beside the raw interval. Never used as the headline claim.
+- **Statistics summary**: cluster t/bootstrap intervals over scenarios with ICC and design effect; ≥5 comparable scenarios and no overlap with a measured A/A noise band before any direction; McNemar mid-p and a Beta posterior on discordant pairs; resolution q = n/N*; MDE; Bonferroni across candidates; holdout gap; tool-sequence similarity within and between arms.
+
 ## 7. What it does not do (yet)
 
-- No LLM judge. Verifiers are deterministic by design; scenarios that need judgment are out of scope until a blinded, calibrated judge exists (see methodology §A3).
+- The judge is a single model from the same family as the arms, without prediction-powered inference over human labels; agreement with human annotations is reported instead.
 - No sandboxing beyond a fresh directory and network tools off; scenarios run bash locally through dsh's own tools. Containers are a Harbor-shaped addition.
 - No cross-run trend view yet; runs are self-contained directories that can be compared by rebuilding reports.
 - DeepSeek pricing only; other providers price at zero and are reported as unknown.

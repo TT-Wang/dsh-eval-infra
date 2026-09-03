@@ -181,6 +181,28 @@ describe('paired statistics', () => {
   })
 })
 
+describe('cuped', () => {
+  it('removes variance explained by the archived baseline cost and reports the adjusted interval', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, usd: number) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const names = ['s1', 's2', 's3', 's4', 's5', 's6']
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: names, repeats: 1, concurrency: 1, scenarioRoot: '' }
+    // Δ% grows with the scenario's historical cost (expensive scenarios drift more), plus a constant −10% effect.
+    const prior = Object.fromEntries(names.map((n, i) => [n, 1 + i]))
+    const ledgers = names.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1 + (-0.10 + 0.05 * (i - 2.5)))])
+    const raw = buildReport(plan, ledgers)
+    const adj = buildReport(plan, ledgers, { priorBaselineUsd: prior })
+    expect(adj.candidates[0]!.cuped).not.toBeNull()
+    expect(adj.candidates[0]!.cuped!.varianceRemoved).toBeGreaterThan(0.9)
+    expect(adj.candidates[0]!.cuped!.ci.hi - adj.candidates[0]!.cuped!.ci.lo).toBeLessThan(raw.candidates[0]!.costPctCI.hi - raw.candidates[0]!.costPctCI.lo)
+    expect(adj.candidates[0]!.cuped!.ci.mean).toBeCloseTo(-10, 0)
+    expect(adj.notes.join(' ')).toMatch(/CUPED/)
+  })
+})
+
 describe('anytime-valid sequences', () => {
   it('asymptotic CS shrinks with t and excludes zero for a clear effect; betting CS keeps 1/2 under the null', async () => {
     const { asympCS, bettingCS } = await import('../src/core/stats.js')

@@ -112,6 +112,7 @@ describe('runner + ledger + report', () => {
     expect(base.tools).toEqual(['read', 'write'])
     expect(base.toolHistogram).toEqual({ read: 2, write: 1 })
     expect(base.turns.map(t => t.end)).toEqual(['completed', 'completed'])
+    expect(base.steps.every(st => typeof st.durationMs === 'number')).toBe(true)
     expect(existsSync(join(paths.dir, base.eventsFile))).toBe(true)
     expect(readFileSync(join(paths.dir, base.traceFile), 'utf8').split('\n').filter(Boolean)).toHaveLength(5)
     // the overlay written for the candidate carries its patch rows

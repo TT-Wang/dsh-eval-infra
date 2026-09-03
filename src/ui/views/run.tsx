@@ -73,6 +73,14 @@ export function RunView({ id }: { id: string }) {
       )}
 
       {report && report.candidates.map(c => <Verdict key={c.arm} c={c} baseline={report.baseline} />)}
+      {detail.sequential && detail.sequential.decisions.length > 0 && (
+        <div class="card">
+          <h2>Sequential decisions <span class="muted small">seed {detail.sequential.seed} · anytime-valid sequences after each scenario</span></h2>
+          <table class="data"><thead><tr><th class="num">scenarios</th><th>cost Δ% sequence</th><th>pass sequence (0.5 = even)</th><th>decision</th></tr></thead>
+            <tbody>{detail.sequential.decisions.map(d => <tr><td class="num">{d.scenarios}</td><td>{d.cost ? `${fmt.pct(d.cost.mean)} [${fmt.pct(d.cost.lo)}, ${fmt.pct(d.cost.hi)}]` : '—'}</td><td>{d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'}</td><td>{d.decided ? <b>{d.reason}</b> : 'continue'}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
 
       <div class="card">
         <h2>Trials <span class="muted small">● pass ● fail ● error ○ queued · click a pip for its trace</span></h2>
@@ -216,6 +224,7 @@ function Verdict({ c, baseline }: { c: CandidateReport; baseline: string }) {
           <Stat label="flaky scenarios" a={String(c.flaky.length)} b={c.flaky.slice(0, 2).join(', ') || '—'} />
           <Stat label="paired pass/fail" a={`${c.paired.b} won · ${c.paired.c} lost`} b={`mid-p ${c.paired.midP.toFixed(2)} · P(win) ${(c.paired.pWin * 100).toFixed(0)}%`} />
           <Stat label="design" a={`ICC ${c.icc.rho.toFixed(2)} · DE ${c.icc.designEffect.toFixed(2)}`} b={c.resolution.q === null ? 'q —' : `q = ${c.resolution.q.toFixed(2)} (N* ${c.resolution.nStar})`} />
+          {c.cuped && <Stat label="CUPED-adjusted Δ cost" a={`${fmt.pct(c.cuped.ci.mean)} [${fmt.pct(c.cuped.ci.lo)}, ${fmt.pct(c.cuped.ci.hi)}]`} b={`${(c.cuped.varianceRemoved * 100).toFixed(0)}% variance removed`} />}
           {c.judge && <Stat label={`judge (${c.judge.model})`} a={`${c.judge.wins} / ${c.judge.losses} / ${c.judge.ties}`} b={`mid-p ${c.judge.midP.toFixed(2)} · orders disagree ${(c.judge.inconsistentShare * 100).toFixed(0)}%${c.judge.humanAgreement ? ` · κ ${c.judge.humanAgreement.kappa === null ? '—' : c.judge.humanAgreement.kappa.toFixed(2)}` : ''}`} />}
         </div>
         <div class="forest-wrap"><Forest c={c} /><div class="muted small">grey band ±10% (smallest effect of interest) · dashed lines: minimum detectable effect for this design</div></div>

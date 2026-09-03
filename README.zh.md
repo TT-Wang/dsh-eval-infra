@@ -109,6 +109,16 @@ bench/scenarios/<name>/
 
 Harbor 在容器里跑整个 agent 的任务集;promptfoo、Braintrust、LangSmith、Langfuse、Weave、Phoenix 事后比较实验;Inspect 有 epoch 和单份日志的 bootstrap 误差;Claude Code 的 `plugin eval`(早期访问)对自己的插件做装/不装消融。它们都不在一次运行里配对交替地跑两套配置、不强制单变量、不验卷子、不按退化设闸门、不按缓存和时段计价。细节与出处见 [docs/landscape.md](docs/landscape.md)。
 
+## 状态与边界
+
+上面每一项能力都有不需要 key 的测试,并且至少在真实 DeepSeek 运行时上跑过一次([docs/results.md](docs/results.md));[docs/sota-scorecard.md](docs/sota-scorecard.md) 逐行对照两次调研里的工具与论文打分。明说的边界:
+
+- 隔离是 dsh 自带的同世界沙箱,不是容器;需要敌对环境的场景应放进 Harbor 式容器。
+- 判卷是与臂同家族的单一模型;没有基于人工标注的预测驱动推断(PPI)。
+- 只有 DeepSeek 价目;其他厂商记为 0 并标注。
+- 场景少于十个时用 t 区间,十个起用 bootstrap;可比场景少于五个时,工具按设计拒绝给出方向。
+- 表格未虚拟化;上千次试验的运行会渲染得慢。
+
 ## 开发
 
 ```bash

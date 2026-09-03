@@ -27,10 +27,13 @@ export function scriptedDriverFactory(b: ScriptedBehaviour = {}): DriverFactory 
         const events: EventLike[] = []
         const push = (type: string, data: unknown): void => { events.push({ type, seq: events.length + 1, time: time + turn * 1000 + events.length, data }) }
         push('turn/start', { turn })
+        const stepsPlanned = turn === 1 ? 3 : 2
+        void stepsPlanned
         push('request/header', { header: { config: { provider: input.arm.provider, model: input.arm.model, reasoningEffort: input.arm.effort ?? 'high' }, system: `system prompt for ${input.arm.name}`, tools: [{ name: 'read' }, { name: 'write' }] }, reason: 'initial' })
         const steps = turn === 1 ? 3 : 2
         for (let step = 1; step <= steps; step += 1) {
           const last = step === steps
+          push('step/start', { turn, step })
           push('assistant/message', {
             turn,
             step,
@@ -41,6 +44,7 @@ export function scriptedDriverFactory(b: ScriptedBehaviour = {}): DriverFactory 
             push('tool/call', { turn, step, callId: `c${turn}-${step}`, name: step === 1 ? 'read' : 'write', arguments: '{}' })
             push('tool/result', { turn, step, message: { role: 'user', content: [] } })
           }
+          push('step/end', { turn, step })
         }
         push('turn/end', { turn, reason: { kind: 'completed' } })
         if (!b.failing?.includes(input.arm.name)) {

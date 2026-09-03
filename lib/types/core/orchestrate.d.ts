@@ -68,6 +68,8 @@ export declare function collectScenarios(project: Project, request: Pick<RunRequ
 };
 /** Prepare everything, then start the run in the background; `done` resolves with the report. */
 export declare function launchRun(project: Project, request: RunRequest, hooks?: LaunchHooks): Promise<Launched>;
+/** Per-scenario mean cost of an arm across earlier runs (excluding `exceptRunId`) — the CUPED covariate. */
+export declare function archiveBaselineCosts(project: Project, arm: string, exceptRunId?: string): Record<string, number>;
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
 export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
 export interface JudgeOptions {

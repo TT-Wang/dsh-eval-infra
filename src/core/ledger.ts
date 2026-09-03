@@ -85,11 +85,19 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
   let usdOffpeak = 0
   const seenSteps = new Set<string>()
   const invariants: string[] = []
+  const stepStart = new Map<string, number>()
 
   for (const e of input.events) {
     eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1
     const d = (e.data ?? {}) as Record<string, unknown>
-    if (e.type === 'request/header' && header === undefined) {
+    if (e.type === 'step/start') {
+      stepStart.set(`${Number(d['turn'] ?? 0)}/${Number(d['step'] ?? 0)}`, e.time ?? 0)
+    } else if (e.type === 'step/end') {
+      const key = `${Number(d['turn'] ?? 0)}/${Number(d['step'] ?? 0)}`
+      const start = stepStart.get(key)
+      const row = steps.find(st => `${st.turn}/${st.step}` === key)
+      if (start !== undefined && row !== undefined && e.time !== undefined) row.durationMs = Math.max(0, e.time - start)
+    } else if (e.type === 'request/header' && header === undefined) {
       header = (d['header'] ?? undefined) as typeof header
     } else if (e.type === 'tool/call') {
       const name = String(d['name'] ?? '?')
