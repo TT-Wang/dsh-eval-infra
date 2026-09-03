@@ -15,7 +15,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | A/A noise-floor run | Kohavi A/A tests, Noise Floor Audit | `--aa`; floor quoted in later reports and drawn in the forest strip | **met** |
 | fresh environment per trial | ABC checklist T.4/T.6, StableToolBench | fresh workspace and runtime process per trial, isolated `DSH_HOME` | **met** |
 | provider conditions held constant | Epoch "why benchmarking is hard" | same model route recorded from the request header; bands recorded | **met** |
-| sequential / adaptive repeats (stop when decided) | anytime-valid A/B literature | not implemented | missing |
+| sequential / adaptive stopping (stop when decided) | AV-AIVAT (2608.06362), asymptotic CS (2103.06476), betting CS (2010.09686) | `--sequential`: seeded scenario order, asymptotic CS on paired cost Δ%, betting CS on pass difference, stop once decided; the final report reads the sequence, not the bootstrap | **met** (asymptotic sequence; exercised on a real run that correctly stayed undecided) |
 | holdout / sealed scenario pools with a dev–sealed gap | AI Agents That Matter, ARC | `meta.holdout` scenarios excluded unless `--include-holdout`; dev vs sealed Δpass and gap warning in the report | **met** |
 
 ## B. Verifier validity
@@ -36,7 +36,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | cache-split token accounting | Inspect ModelUsage, promptfoo TokenUsage | hit / miss / output / reasoning per step | **met** |
 | cost at the tariff of the minute plus fixed-band re-pricing | none | DeepSeek peak/off-peak calendar | **met** |
 | tokens and $ per solved task | Scaffold Effect, HAL | per arm | **met** |
-| behaviour signature (tool errors, repeats, no-action, observation volume, compactions) | Scaffold Effect failure fingerprints, MAST | per trial and per arm | **met** |
+| behaviour signature (tool errors, repeats, no-action, observation volume, compactions) and tool-sequence similarity | Scaffold Effect failure fingerprints, MAST, TSS (2605.28840) | per trial and per arm; TSS within arm and between arms per scenario | **met** |
 | what the model saw (observations) in traces | ATIF, claude-tap | folded per call, truncated at 4 KB | **met** |
 | exact tokenizer counts | provider tokenizers | usage taken from provider responses (exact); no local tokenizer needed | n/a |
 | other providers' prices | — | DeepSeek only; others price at zero and are flagged | *partial* |
@@ -50,12 +50,12 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | bootstrap CI over scenarios for cost and pass difference | Scaffold Effect, Adding Error Bars | percentile bootstrap, B=2000, seeded | **met** |
 | equivalence reading (TOST-like band) | Lakens TOST | ±10% SESOI band; "equivalent" only inside it with ≥3 scenarios | **met** |
 | minimum sample before a directional claim | Adding Error Bars power analysis | ≥3 comparable scenarios | **met** |
-| minimum detectable effect reported | Adding Error Bars | MDE from observed spread, in notes and forest strip | **met** |
+| minimum detectable effect and resolution reported | Adding Error Bars; Resolution Diagnostics (2605.30315) | MDE from observed spread; N* and q = n/N* next to every cost verdict | **met** |
 | pass^k / pass@k | τ-bench, Inspect reducers | per arm | **met** |
-| paired binary test | McNemar / sign test | exact sign test on discordant pairs | **met** |
+| paired binary test | McNemar mid-p (Fagerland 2013) | exact and mid-p on discordant pairs, Beta(b+1,c+1) posterior P(win) and ROPE mass | **met** |
 | multiple-comparison control across candidates | Bonferroni / Holm / BH | intervals read at α/m across candidates, stated in the notes | **met** (per-scenario claims are not made, so no per-scenario correction is needed) |
-| hierarchical bootstrap (scenarios and repeats) | Scaffold Effects on GAIA | scenarios then repeat pairs for the cost Δ% interval | **met** |
-| Bayesian pass-rate difference with ROPE | — | not implemented | missing |
+| cluster bootstrap carrying all repeats, with ICC and design effect | Indeed 2026 (nominal coverage), Scaffold Effects on GAIA | scenario-cluster bootstrap; ρ̂ and 1+(k−1)ρ̂ in the report | **met** |
+| Bayesian pass-rate difference with ROPE | Kruschke HDI+ROPE | posterior P(candidate wins a discordant pair) and share within ±0.1 of even | **met** |
 | one-word grade (improvement / regression / tradeoff / tie) | Braintrust comparison grade | implemented | **met** |
 | honest wording when underpowered | TOST literature | "inconclusive" default; single-scenario and <3-scenario wordings | **met** |
 
@@ -63,8 +63,8 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 
 | capability | best reference | dsh-eval-infra | status |
 |---|---|---|---|
-| blinded LLM judge with swap-and-tie, panel, calibration | MT-Bench, position-bias study, PoLL | not implemented | missing |
-| prediction-powered inference (judge + human labels) | PPI / PPI++ | not implemented | missing |
+| blinded pairwise judge with swap-and-tie and calibration | MT-Bench, position-bias study, Reliability-without-Validity | `dsh-eval judge`: no arm/model names, random first position, both orders, disagreement → tie, order-disagreement rate reported, κ against human annotations when present; single judge model (no panel) | **met** (single judge; panel is a documented gap) |
+| prediction-powered inference (judge + human labels) | PPI / PPI++ | not implemented; judge–human agreement is reported instead | missing (deliberate: PPI needs a labelled set larger than most plugin projects have) |
 | human review / override with audit trail | promptfoo, Braintrust, Langfuse annotation | per-trial annotations, applied to the report | **met** |
 
 ## F. Execution and safety
@@ -96,4 +96,4 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 
 ## Verdict (to be revised after each iteration)
 
-Not yet claimed. Open rows that block the claim: sequential / adaptive repeats, blinded judge (and PPI), automatic flaky-task retirement, virtualized tables for very large runs. Rows marked n/a or same-world sandbox are documented limitations, not blockers, as long as they are stated plainly in the README.
+Not yet claimed. Remaining open rows: PPI (deliberately deferred), judge panel across model families (DeepSeek-only deployment), container isolation (same-world sandbox instead), virtualized tables. See the verdict section at the end once the final real-run checks are in.

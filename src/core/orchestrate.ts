@@ -218,9 +218,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
 
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)) })
+    if (request.sequential) writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, candidate: candidateSpecs[0]?.name ?? null, decisions })
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), ...sequencesOf(paths) })
     if (request.sequential) {
-      writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, decisions })
       const last = decisions.at(-1)
       if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
       else if (last) report.notes.unshift(`Sequential mode ran every scenario without an early decision (last sequence: cost Δ% ${last.cost ? `[${last.cost.lo.toFixed(1)}, ${last.cost.hi.toFixed(1)}]` : '—'}).`)
@@ -304,6 +304,18 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
   return out
 }
 
+/** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; scenarios: number }> } {
+  const file = join(paths.dir, 'sequential.json')
+  if (!existsSync(file)) return {}
+  try {
+    const seqFile = JSON.parse(readFileSync(file, 'utf8')) as { candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null }> }
+    const last = seqFile.decisions.at(-1)
+    if (!last || !seqFile.candidate) return {}
+    return { sequences: { [seqFile.candidate]: { cost: last.cost, pass: last.pass, scenarios: last.scenarios } } }
+  } catch { return {} }
+}
+
 /** Judge reports stored with a run, keyed by candidate. */
 export function readJudgeReports(paths: ReturnType<typeof runPaths>): Record<string, import('./judge.js').JudgeReport> {
   const out: Record<string, import('./judge.js').JudgeReport> = {}
@@ -322,7 +334,7 @@ export function rebuildReport(project: Project, id: string): Report {
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout, ...sequencesOf(paths) })
   const judges = readJudgeReports(paths)
   for (const c of report.candidates) {
     const j = judges[c.arm]

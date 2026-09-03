@@ -158,6 +158,8 @@ export interface ReportOptions {
   noiseFloors?: Record<string, NoiseFloor>
   /** Scenario names in the sealed holdout pool. */
   holdout?: Set<string>
+  /** Final anytime-valid sequences of a sequential run, keyed by candidate; when present they replace the fixed-sample cost interval. */
+  sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; scenarios: number }>
 }
 
 function behaviourMean(rows: RunLedger[]): BehaviourMean {
@@ -348,7 +350,12 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const incomplete = pairs.filter(p => p.class === 'incomplete').map(p => p.scenario)
     const costCI = bootstrapMean(comparable.map(p => p.costDiffUsd!), 2000, 42, alpha)
     // Cluster bootstrap: scenarios are the resampling unit and carry all their repeat pairs (per-scenario means); Indeed 2026 measured nominal coverage for this design.
-    const costPctCI = bootstrapMean(comparable.map(p => p.costDiffPct!), 2000, 42, alpha)
+    let costPctCI = bootstrapMean(comparable.map(p => p.costDiffPct!), 2000, 42, alpha)
+    const seq = options.sequences?.[cand.name]
+    if (seq?.cost) {
+      // Under optional stopping only the time-uniform sequence keeps its coverage; the bootstrap interval would be too narrow.
+      costPctCI = { mean: seq.cost.mean, lo: seq.cost.lo, hi: seq.cost.hi, n: seq.scenarios, significant: seq.cost.lo > 0 || seq.cost.hi < 0 }
+    }
     const iccStat = icc(comparable.map(p => p.costDiffPctPairs))
     const pairedStat = mcnemar(wins, losses)
     const resolutionStat = resolution(comparable.map(p => p.costDiffPct!))
@@ -432,6 +439,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     }
   })
   if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline: intervals are read at α = ${alpha.toFixed(4)} (Bonferroni) so the family-wise error rate stays at 5%.`)
+  if (options.sequences) notes.push('Sequential mode: the cost interval is the final anytime-valid confidence sequence (valid under early stopping), which is wider than a fixed-sample bootstrap would be on the same data.')
   for (const c of candidates) {
     if (c.holdoutGap !== null && c.holdoutGap.devScenarios > 0) {
       const gap = c.holdoutGap.dev - c.holdoutGap.holdout

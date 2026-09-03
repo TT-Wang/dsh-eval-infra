@@ -14,6 +14,8 @@ English | [中文](README.zh.md) · [design](docs/design.md) · [results](docs/r
 - **Report**: regressions first, cost compared only on repeat-pairs both arms passed, bootstrap intervals over scenarios for cost and pass rate, a one-word grade (improvement / regression / tradeoff / tie / inconclusive), pass^k, tokens and dollars per solved task, cache-hit share, flaky-scenario flags, grouped failure reasons, behaviour signatures (tool errors, repeated calls, no-action steps), the minimum detectable effect of the design, and the A/A noise floor when one exists. Markdown and JSON.
 - **Guard rails**: `selfcheck --strict` mutates every oracle output to catch verifiers that ignore it; `--max-usd` caps spend; dsh's workspace-write sandbox confines every trial's shell to its own workspace; scenarios marked `"holdout": true` stay sealed until `--include-holdout`, and the report shows the dev–holdout gap; with several candidates the intervals are read at α/m (Bonferroni).
 - **Human review**: mark any trial pass/fail with a note from the trace page; the report applies the override and says so.
+- **Sequential mode** (`--sequential`): scenarios run in a seeded random order and the run stops as soon as an anytime-valid confidence sequence (asymptotic on paired cost, betting on pass difference) decides the comparison; the report then reads the sequence, which stays valid under early stopping, instead of the fixed-sample bootstrap.
+- **Blinded pairwise judge** (`dsh-eval judge <run>`): for scenarios that declare a rubric and artifacts, a judge model that never sees arm or model names compares the baseline's and the candidate's files in both orders; disagreement between orders counts as a tie, the order-disagreement rate is reported, and agreement (κ) with human annotations is shown when they exist.
 - **Web UI** (`dsh-eval ui`, or `/eval` inside the dsh web app): new-run wizard with the live diff and an archive-based cost estimate, live trial matrix, verdict banner with a forest strip (intervals, ±10% band, MDE lines, A/A floor), regressions-first paired table with flaky/failure filters, per-scenario history with cost sparklines, trace viewer with folded tool results, keyboard navigation, and side-by-side compare with a first-divergence marker; self-contained HTML and ATIF export.
 - **CLI exit codes for CI**: 0 no regressions, 1 regressions, 2 incomplete or errors.
 
@@ -69,7 +71,7 @@ bench/scenarios/<name>/
 
 1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no cost summary is offered.
 2. **Cost pairs.** Only repeat-pairs where both arms passed count. Δ$ and Δ% are per-scenario means over those pairs.
-3. **Interval.** The per-scenario Δ% is bootstrapped hierarchically (scenarios, then repeat pairs; B=2000, seeded). *Cheaper* / *more expensive* need at least three comparable scenarios and an interval that excludes zero; *equivalent* needs three scenarios and an interval inside ±10%; anything else is *inconclusive*, which is the honest default with few scenarios. The notes state the minimum detectable effect of the design and, when an A/A run exists, its noise floor.
+3. **Interval.** The per-scenario Δ% is bootstrapped over scenarios as clusters (each carrying all its repeat pairs; B=2000, seeded), with the intraclass correlation and design effect of the repeats reported. *Cheaper* / *more expensive* need at least three comparable scenarios and an interval that excludes zero; *equivalent* needs three scenarios and an interval inside ±10%; anything else is *inconclusive*, which is the honest default with few scenarios. The notes state the minimum detectable effect of the design, the resolution q = n/N* of the observed effect, and, when an A/A run exists, its noise floor. Paired pass/fail is tested with McNemar's mid-p on discordant pairs and read as a posterior P(candidate wins).
 4. **Bands.** Runs straddling the DeepSeek peak/off-peak boundary get a note; use the fixed-band columns.
 5. **Repeats.** Three is the floor; five is recommended for binary outcomes; run `--aa` first to see what "no change" looks like on your setup.
 
@@ -96,8 +98,9 @@ The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
 | `scenarios [globs] [--category c]` | list scenarios |
 | `selfcheck [globs]` | oracle must pass, untouched workspace must fail |
 | `diff <baseline> <candidate>…` | composed-tree diff and variable count |
-| `run --baseline a --arm b [--arm c] [globs] [--repeats N] [--concurrency N] [--label L] [--aa] [--allow-multi] [--resume id] [--turn-timeout S] [--keep-workdirs]` | the paired run; prints the report |
+| `run --baseline a --arm b [--arm c] [globs] [--repeats N] [--concurrency N] [--label L] [--aa] [--allow-multi] [--resume id] [--turn-timeout S] [--keep-workdirs] [--max-usd N] [--sequential --seed N] [--include-holdout]` | the paired run; prints the report |
 | `report <id> [--json]` | rebuild the report from the ledgers |
+| `judge <id> [--model M] [--arm A] [--seed N]` | blinded pairwise judge over scenarios with `meta.judge` |
 | `runs` | list runs |
 | `ui [--port 4177] [--open]` | local web UI |
 | `export <id> [--out dir]` | ATIF v1.8 trajectories of every trial |

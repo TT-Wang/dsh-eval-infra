@@ -68,3 +68,18 @@ The agent answered c1 with targeted reads rather than a whole-file read, so noth
 | m1_cross_session_recall | 0/2 | 0/2 | both fail |
 
 Every trial's verdict detail reads `handoff.md missing/wrong: ['codename'] (6/7 recalled)`: the six facts written to disk in turn 1 came back after the restart, the codename that lived only in the previous session's conversation did not. That is the discriminating signal a memory plugin has to beat — a candidate that recalls 7/7 turns this row into an *improvement*.
+
+
+## 2026-09-04 · sequential-check · baseline vs `fold`, anytime-valid mode
+
+6 fast scenarios (x1, f6, p1, t1, x2, c1) × 1 repeat, `--sequential --seed 7`, 12 trials, 3.5 min, $0.055. The seeded shuffle ran x1, f6, p1, t1, x2, c1 in that order; after every scenario the asymptotic confidence sequence on the paired cost Δ% was:
+
+| after scenarios | cost Δ% sequence | pass sequence (0.5 = even) | decision |
+|---|---|---|---|
+| 2 | 0.7 [−33.9, 35.3] | [0.06, 1.00] | continue |
+| 3 | 3.0 [−17.4, 23.4] | [0.12, 1.00] | continue |
+| 4 | 8.4 [−13.7, 30.6] | [0.15, 1.00] | continue |
+| 5 | 10.1 [−7.6, 27.8] | [0.19, 1.00] | continue |
+| 6 | 9.6 [−4.8, 24.0] | [0.22, 1.00] | no decision |
+
+All 12 trials passed. The fixed-sample bootstrap on the same six differences would have printed "+9.6%, CI +0.4% to +17.8%" — a directional call. The confidence sequence, which keeps its coverage no matter when you look, says the interval still covers zero. This is the reason sequential mode reports the sequence and not the bootstrap, and it is a live demonstration of how a tool that lets you peek without a sequence would ship a false positive.
