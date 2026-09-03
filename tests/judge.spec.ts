@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { judgeRun, readArtifacts, type ChatCall } from '../src/core/judge.js'
+import { judgeRun, readArtifacts, absoluteJudge, ppiRate, type ChatCall } from '../src/core/judge.js'
 import type { RunLedger, RunPlan } from '../src/core/types.js'
 import { listScenarios } from '../src/core/scenario.js'
 import { resolveArm } from '../src/core/arms.js'
@@ -34,7 +34,7 @@ describe('blinded pairwise judge', () => {
     const plan: RunPlan = { id: 'r', createdAt: '', baseline: { name: 'base' }, candidates: [{ name: 'cand' }], scenarios: ['s1', 's2', 's3'], repeats: 1, concurrency: 1, scenarioRoot: '' }
     const ledgers = ['s1', 's2', 's3'].flatMap(s => [ledger(s, 'base', 1), ledger(s, 'cand', 1)])
     const specs = Object.fromEntries(['s1', 's2', 's3'].map(s => [s, { rubric: 'good beats meh', artifacts: ['out.md'] }]))
-    const report = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, chat, model: 'deepseek-v4-pro', seed: 3, annotations: { 's1|cand|1': { verdict: true }, 's1|base|1': { verdict: false }, 's2|cand|1': { verdict: true }, 's2|base|1': { verdict: true } } })
+    const report = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, judges: [{ model: 'deepseek-v4-pro', chat }], seed: 3, annotations: { 's1|cand|1': { verdict: true }, 's1|base|1': { verdict: false }, 's2|cand|1': { verdict: true }, 's2|base|1': { verdict: true } } })
     const byS = Object.fromEntries(report.judgments.map(j => [j.scenario, j]))
     expect(byS['s1']!.preference).toBe('candidate')
     expect(byS['s2']!.preference).toBe('candidate')
@@ -46,6 +46,41 @@ describe('blinded pairwise judge', () => {
     expect(report.humanAgreement).toEqual({ n: 2, agree: 0.5, kappa: 0 })
     expect(report.usd).toBeGreaterThan(0)
     expect(readArtifacts(join(root, 'nope'), 100).sha).toBe('none')
+
+    // A panel: a second judge that always says "2" (position-biased) ties every pair by itself; the panel then has one decided vote
+    // out of two, which is not a strict majority, so the pair is a tie — a lone judge cannot carry the panel.
+    const biased: ChatCall = async () => ({ text: JSON.stringify({ winner: '2', reason: 'second' }), usage: { hit: 0, miss: 10, output: 5 } })
+    const panel = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, judges: [{ model: 'a', chat }, { model: 'b', chat: biased }], seed: 3 })
+    expect(panel.models).toEqual(['a', 'b'])
+    expect(panel.judgments.every(j => j.votes.length === 2)).toBe(true)
+    expect(panel.judgments.find(j => j.scenario === 's1')!.preference).toBe('tie')
+    expect(panel.panelAgreement).toBeLessThan(1)
+    // three judges, two good ones → strict majority → candidate
+    const trio = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, judges: [{ model: 'a', chat }, { model: 'b', chat: biased }, { model: 'c', chat }], seed: 3 })
+    expect(trio.judgments.find(j => j.scenario === 's1')!.preference).toBe('candidate')
+  })
+
+  it('absolute mode grades trials and PPI++ rectifies the pass rate with human labels', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-judge-abs-')); tmp.push(root)
+    const dir = (s: string, a: string, r: number): string => join(root, s, a, `rep${r}`)
+    const names = ['s1', 's2', 's3', 's4', 's5', 's6']
+    for (const s of names) for (const a of ['base', 'cand']) { mkdirSync(dir(s, a, 1), { recursive: true }); writeFileSync(join(dir(s, a, 1), 'out.md'), `${s} ${a} ${a === 'cand' || s === 's1' ? 'GOOD' : 'meh'}`) }
+    const chat: ChatCall = async (messages) => ({ text: JSON.stringify({ pass: messages[1]!.content.includes('GOOD'), score: messages[1]!.content.includes('GOOD') ? 0.9 : 0.2, reason: 'r' }), usage: { hit: 0, miss: 50, output: 5 } })
+    const plan: RunPlan = { id: 'r', createdAt: '', baseline: { name: 'base' }, candidates: [{ name: 'cand' }], scenarios: names, repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const ledgers = names.flatMap(s => [ledger(s, 'base', 1), ledger(s, 'cand', 1)])
+    const specs = Object.fromEntries(names.map(s => [s, { rubric: 'good beats meh', artifacts: ['out.md'] }]))
+    // humans disagree with the judge on s1 (judge says GOOD/pass, human says fail) and agree elsewhere
+    const annotations = { 's1|base|1': { verdict: false }, 's2|base|1': { verdict: false }, 's3|base|1': { verdict: false }, 's1|cand|1': { verdict: true }, 's2|cand|1': { verdict: true } }
+    const abs = await absoluteJudge({ plan, ledgers, specs, artifactDir: dir, judges: [{ model: 'j', chat }], annotations })
+    expect(abs.grades).toHaveLength(12)
+    expect(abs.arms['cand']!.judgeOnly).toBe(1)
+    expect(abs.arms['base']!.judgeOnly).toBeCloseTo(1 / 6, 6)
+    expect(abs.arms['base']!.n).toBe(3)
+    expect(abs.arms['base']!.estimate).toBeLessThan(abs.arms['base']!.judgeOnly + 1e-9)
+    const r = ppiRate([1, 1, 0, 0, 1, 0, 1, 0], [{ f: 1, y: 1 }, { f: 0, y: 0 }, { f: 1, y: 1 }, { f: 0, y: 0 }])
+    expect(r.lambda).toBeGreaterThan(0)
+    expect(r.estimate).toBeCloseTo(0.5, 6)
+    expect(ppiRate([], []).estimate).toBe(0)
   })
 
   it('captures judge artifacts at the end of each trial', async () => {

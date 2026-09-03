@@ -221,8 +221,10 @@ async function cmdJudge(project: Project, args: Args): Promise<number> {
   const id = args.positional[0]
   if (id === undefined) { err('usage: dsh-eval judge <runId> [--model deepseek-v4-pro] [--arm <candidate>] [--seed N]'); return 3 }
   try {
-    const reports = await runJudge(project, id, { ...(typeof args.flags['model'] === 'string' ? { model: args.flags['model'] } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}), log: out })
-    for (const r of reports) out(`${r.candidate} vs ${r.baseline} · judge ${r.model}: ${r.wins} candidate / ${r.losses} baseline / ${r.ties} ties · mid-p ${r.midP.toFixed(2)} · P(candidate wins a decided pair) ${(r.pWin * 100).toFixed(0)}% · order disagreement ${(r.inconsistentShare * 100).toFixed(0)}% · ${fmtUsd(r.usd)}${r.humanAgreement ? ` · human agreement ${(r.humanAgreement.agree * 100).toFixed(0)}% on ${r.humanAgreement.n}` : ''}`)
+    const models = list(args.flags['model'])
+    const mode = args.flags['mode'] === 'absolute' ? 'absolute' as const : args.flags['mode'] === 'both' ? 'both' as const : 'pairwise' as const
+    const reports = await runJudge(project, id, { ...(models.length ? { models } : {}), mode, ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}), log: out })
+    for (const r of reports) out(`${r.candidate} vs ${r.baseline} · judge ${(r.models ?? [r.model]).join(' + ')}: ${r.wins} candidate / ${r.losses} baseline / ${r.ties} ties · mid-p ${r.midP.toFixed(2)} · P(candidate wins a decided pair) ${(r.pWin * 100).toFixed(0)}% · order disagreement ${(r.inconsistentShare * 100).toFixed(0)}% of votes · panel unanimous ${((r.panelAgreement ?? 1) * 100).toFixed(0)}% · ${fmtUsd(r.usd)}${r.humanAgreement ? ` · human agreement ${(r.humanAgreement.agree * 100).toFixed(0)}% on ${r.humanAgreement.n}` : ''}`)
     return 0
   } catch (error) {
     if (error instanceof LaunchError) { err(`error: ${error.message}`); return 3 }
@@ -342,7 +344,9 @@ function help(): number {
       [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
       [--sandbox docker [--docker-image IMG]]   run every trial's dsh runtime inside a container (only the workspace, eval home and read-only dsh checkout are mounted)
   report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
-  judge <runId> [--model M] [--arm A] blinded pairwise judge over scenarios that declare meta.judge (both orders, ties on disagreement)
+  judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N]
+                                      blinded judge over scenarios that declare meta.judge: several --model form a panel; absolute mode grades
+                                      each trial and rectifies pass rates with human annotations (PPI++)
   runs                                list runs
   ui [--port 4177] [--open]           local web UI
   export <runId> [--out dir]          ATIF v1.8 trajectories

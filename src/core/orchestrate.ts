@@ -290,12 +290,29 @@ export function archiveNoiseFloors(project: Project, exceptRunId?: string): Reco
 }
 
 export interface JudgeOptions {
-  model?: string
+  /** Judge models; several form a panel. Each may be `model` or `model@baseUrl` with the key from `<NAME>_API_KEY` env, or a name from project config `judges`. */
+  models?: string[]
   candidate?: string
   seed?: number
+  /** pairwise (default), absolute (per-trial grades + PPI++), or both. */
+  mode?: 'pairwise' | 'absolute' | 'both'
   log?: (line: string) => void
-  /** Test seam: replace the chat call. */
-  chat?: import('./judge.js').ChatCall
+  /** Test seam: replace the chat calls (one per model). */
+  chats?: Record<string, import('./judge.js').ChatCall>
+}
+
+function resolveJudgeModels(project: Project, models: string[] | undefined, chats: Record<string, import('./judge.js').ChatCall> | undefined, deepseekChat: (c: { model: string; baseUrl?: string; apiKey: string }) => import('./judge.js').ChatCall): import('./judge.js').JudgeModel[] {
+  const names = models && models.length ? models : ['deepseek-v4-pro']
+  return names.map((spec) => {
+    if (chats?.[spec]) return { model: spec, chat: chats[spec]! }
+    const configured = (project.config.judges ?? []).find(j => j.model === spec || j.name === spec)
+    const model = configured?.model ?? spec.split('@')[0]!
+    const baseUrl = configured?.baseUrl ?? (spec.includes('@') ? spec.slice(spec.indexOf('@') + 1) : undefined)
+    const keyEnv = configured?.apiKeyEnv
+    const apiKey = keyEnv !== undefined ? process.env[keyEnv] : baseUrl === undefined ? resolveApiKey() : process.env['JUDGE_API_KEY'] ?? resolveApiKey()
+    if (apiKey === undefined) throw new LaunchError(`no API key for judge ${spec} (set ${keyEnv ?? 'DEEPSEEK_API_KEY or JUDGE_API_KEY'})`, 'env')
+    return { model, chat: deepseekChat({ model, apiKey, ...(baseUrl !== undefined ? { baseUrl } : {}) }) }
+  })
 }
 
 /**
@@ -305,7 +322,7 @@ export interface JudgeOptions {
  * the usual v4-flash arms (same family: a stated limitation).
  */
 export async function runJudge(project: Project, id: string, options: JudgeOptions = {}): Promise<import('./judge.js').JudgeReport[]> {
-  const { judgeRun, deepseekChat } = await import('./judge.js')
+  const { judgeRun, deepseekChat, absoluteJudge } = await import('./judge.js')
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
@@ -314,33 +331,31 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
   const specs: Record<string, import('./judge.js').JudgeSpec> = {}
   for (const s of scenarios) if (s.meta.judge) specs[s.name] = s.meta.judge
   if (Object.keys(specs).length === 0) throw new LaunchError('no scenario in this run declares meta.judge', 'usage')
-  const model = options.model ?? 'deepseek-v4-pro'
-  let chat = options.chat
-  if (chat === undefined) {
-    const apiKey = resolveApiKey()
-    if (apiKey === undefined) throw new LaunchError('DEEPSEEK_API_KEY not found for the judge', 'env')
-    chat = deepseekChat({ model, apiKey, ...(options.seed !== undefined ? { seed: options.seed } : {}) })
-  }
+  const judges = resolveJudgeModels(project, options.models, options.chats, deepseekChat)
   const annotations = readAnnotations(paths)
+  const mode = options.mode ?? 'pairwise'
   const out: import('./judge.js').JudgeReport[] = []
-  for (const cand of plan.candidates.filter(c => options.candidate === undefined || c.name === options.candidate)) {
-    const report = await judgeRun({
-      plan,
-      candidate: cand.name,
-      ledgers,
-      specs,
-      artifactDir: (scenario, arm, rep) => join(paths.ledgers, scenario, arm, `rep${rep}.artifacts`),
-      chat,
-      model,
-      ...(options.seed !== undefined ? { seed: options.seed } : {}),
-      annotations,
-      ...(options.log !== undefined ? { log: options.log } : {}),
-    })
-    writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), report)
-    out.push(report)
+  const artifactDir = (scenario: string, arm: string, rep: number): string => join(paths.ledgers, scenario, arm, `rep${rep}.artifacts`)
+  if (mode === 'pairwise' || mode === 'both') {
+    for (const cand of plan.candidates.filter(c => options.candidate === undefined || c.name === options.candidate)) {
+      const report = await judgeRun({ plan, candidate: cand.name, ledgers, specs, artifactDir, judges, ...(options.seed !== undefined ? { seed: options.seed } : {}), annotations, ...(options.log !== undefined ? { log: options.log } : {}) })
+      writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), report)
+      out.push(report)
+    }
+  }
+  if (mode === 'absolute' || mode === 'both') {
+    const abs = await absoluteJudge({ plan, ledgers, specs, artifactDir, judges, annotations, ...(options.log !== undefined ? { log: options.log } : {}) })
+    writeJsonAtomic(join(paths.dir, 'judge-absolute.json'), abs)
   }
   rebuildReport(project, id)
   return out
+}
+
+/** Absolute judge report stored with a run, if any. */
+export function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('./judge.js').AbsoluteReport | null {
+  const file = join(paths.dir, 'judge-absolute.json')
+  if (!existsSync(file)) return null
+  try { return JSON.parse(readFileSync(file, 'utf8')) as import('./judge.js').AbsoluteReport } catch { return null }
 }
 
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
@@ -404,11 +419,22 @@ export function rebuildReport(project: Project, id: string): Report {
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
   const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, ...sequencesOf(paths) })
   const judges = readJudgeReports(paths)
+  const absolute = readAbsoluteJudge(paths)
   for (const c of report.candidates) {
     const j = judges[c.arm]
-    if (!j) continue
-    c.judge = { model: j.model, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement }
-    report.notes.push(`${c.arm}: blinded pairwise judge (${j.model}, both orders, inconsistent answers count as ties) prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}%${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}.`)
+    if (j) {
+      const models = j.models ?? [j.model]
+      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement }
+      report.notes.push(`${c.arm}: blinded pairwise judge${models.length > 1 ? ` panel (${models.join(', ')}; majority of decided votes, panel unanimous on ${(j.panelAgreement * 100).toFixed(0)}% of pairs)` : ` (${models[0]})`}, both orders, inconsistent orders count as ties: prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}% of votes${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}.`)
+    }
+    if (absolute) {
+      const b = absolute.arms[plan.baseline.name]
+      const a = absolute.arms[c.arm]
+      if (b && a) {
+        c.absolute = { baseline: b, candidate: a, diff: a.estimate - b.estimate, diffSe: Math.sqrt(a.se * a.se + b.se * b.se), models: absolute.models }
+        report.notes.push(`${c.arm}: absolute judge grades (${absolute.models.join(' + ')}) give pass rates ${(b.estimate * 100).toFixed(0)}% → ${(a.estimate * 100).toFixed(0)}% (${b.n + a.n > 0 ? `PPI++ rectified with ${b.n}/${a.n} human labels, λ ${b.lambda.toFixed(2)}/${a.lambda.toFixed(2)}` : 'judge only, no human labels — uncalibrated'}), Δ ${((a.estimate - b.estimate) * 100).toFixed(0)} pp ± ${(Math.sqrt(a.se * a.se + b.se * b.se) * 100).toFixed(0)} (1 SE).`)
+      }
+    }
   }
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))

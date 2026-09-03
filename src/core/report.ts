@@ -137,7 +137,9 @@ export interface CandidateReport {
   /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
   cuped: { theta: number; varianceRemoved: number; ci: BootstrapCI; n: number } | null
   /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
-  judge?: { model: string; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null }
+  judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null }
+  /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
+  absolute?: { baseline: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; candidate: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; diff: number; diffSe: number; models: string[] }
   verdict: string
 }
 

@@ -34,8 +34,10 @@ export interface JudgeConfig {
 export interface Judgment {
   scenario: string
   rep: number
-  /** Preference after both orders: 'candidate', 'baseline', or 'tie' (including inconsistent answers). */
+  /** Panel preference: majority of decided votes when it is a strict majority of the panel; otherwise 'tie'. */
   preference: 'candidate' | 'baseline' | 'tie'
+  /** One vote per judge model, each already order-swapped (inconsistent orders → tie). */
+  votes: Array<{ model: string; preference: 'candidate' | 'baseline' | 'tie'; answers: [string, string]; reasons: [string, string]; usd: number }>
   /** The two raw answers as seen by the judge ('first' | 'second' | 'tie'), for the two presentation orders. */
   answers: [string, string]
   /** Which artifact was shown first in the first call ('baseline' | 'candidate'). */
@@ -51,7 +53,12 @@ export interface JudgeReport {
   runId: string
   candidate: string
   baseline: string
+  /** Panel models (one entry = single judge). */
+  models: string[]
+  /** Kept for readers of older reports; the first panel model. */
   model: string
+  /** Share of pairs on which every judge agreed (1 for a single judge). */
+  panelAgreement: number
   generatedAt: string
   judgments: Judgment[]
   wins: number
@@ -143,6 +150,8 @@ function kappa(pairs: Array<[string, string]>): number | null {
   return pe === 1 ? 1 : (po - pe) / (1 - pe)
 }
 
+export interface JudgeModel { model: string; chat: ChatCall }
+
 export interface JudgeInput {
   plan: RunPlan
   candidate: string
@@ -151,8 +160,8 @@ export interface JudgeInput {
   specs: Record<string, JudgeSpec>
   /** Artifact directory for a trial. */
   artifactDir: (scenario: string, arm: string, rep: number) => string
-  chat: ChatCall
-  model: string
+  /** The judge panel: one or more models; each is asked in both orders. */
+  judges: JudgeModel[]
   seed?: number
   /** Human annotations keyed "scenario|arm|rep" → verdict boolean, for agreement. */
   annotations?: Record<string, { verdict: boolean | null }>
@@ -174,24 +183,36 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
       const artC = readArtifacts(input.artifactDir(scenario, input.candidate, rep), maxChars)
       const firstShown: 'baseline' | 'candidate' = rnd() < 0.5 ? 'baseline' : 'candidate'
       const [x, y] = firstShown === 'baseline' ? [artB.text, artC.text] : [artC.text, artB.text]
-      const r1 = await input.chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt(spec.rubric, x, y) }])
-      const r2 = await input.chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt(spec.rubric, y, x) }])
-      const p1 = parseWinner(r1.text)
-      const p2 = parseWinner(r2.text)
-      for (const r of [r1, r2]) usd += priceUsage(input.model, bandAt(Date.now()), { hit: r.usage.hit, miss: r.usage.miss, output: r.usage.output, reasoning: 0 })
-      // Map answers back to arms: in call 1 "1" = firstShown; in call 2 "1" = the other arm.
       const other: 'baseline' | 'candidate' = firstShown === 'baseline' ? 'candidate' : 'baseline'
-      const pick1 = p1.winner === '1' ? firstShown : p1.winner === '2' ? other : 'tie'
-      const pick2 = p2.winner === '1' ? other : p2.winner === '2' ? firstShown : 'tie'
-      const preference: Judgment['preference'] = pick1 === pick2 ? pick1 : 'tie'
-      judgments.push({ scenario, rep, preference, answers: [p1.winner, p2.winner], firstShown, reasons: [p1.reason, p2.reason], usd: 0, model: input.model, artifactSha: { baseline: artB.sha, candidate: artC.sha } })
-      input.log?.(`judge ${scenario}#${rep}: ${preference}${pick1 !== pick2 ? ' (orders disagreed → tie)' : ''}`)
+      const votes: Judgment['votes'] = []
+      for (const judge of input.judges) {
+        const r1 = await judge.chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt(spec.rubric, x, y) }])
+        const r2 = await judge.chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt(spec.rubric, y, x) }])
+        const p1 = parseWinner(r1.text)
+        const p2 = parseWinner(r2.text)
+        let cost = 0
+        for (const r of [r1, r2]) cost += priceUsage(judge.model, bandAt(Date.now()), { hit: r.usage.hit, miss: r.usage.miss, output: r.usage.output, reasoning: 0 })
+        usd += cost
+        // Map answers back to arms: in call 1 "1" = firstShown; in call 2 "1" = the other arm.
+        const pick1 = p1.winner === '1' ? firstShown : p1.winner === '2' ? other : 'tie'
+        const pick2 = p2.winner === '1' ? other : p2.winner === '2' ? firstShown : 'tie'
+        votes.push({ model: judge.model, preference: pick1 === pick2 ? pick1 : 'tie', answers: [p1.winner, p2.winner], reasons: [p1.reason, p2.reason], usd: cost })
+      }
+      const forC = votes.filter(v => v.preference === 'candidate').length
+      const forB = votes.filter(v => v.preference === 'baseline').length
+      const half = votes.length / 2
+      const preference: Judgment['preference'] = forC > forB && forC > half ? 'candidate' : forB > forC && forB > half ? 'baseline' : 'tie'
+      const first = votes[0]!
+      judgments.push({ scenario, rep, preference, votes, answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha } })
+      input.log?.(`judge ${scenario}#${rep}: ${preference} (${votes.map(v => `${v.model}: ${v.preference}`).join(', ')})`)
     }
   }
   const wins = judgments.filter(j => j.preference === 'candidate').length
   const losses = judgments.filter(j => j.preference === 'baseline').length
   const ties = judgments.length - wins - losses
-  const inconsistent = judgments.filter(j => { const a = j.answers[0]; const b = j.answers[1]; return !(a === 'tie' && b === 'tie') && !((a === '1' && b === '2') || (a === '2' && b === '1')) }).length
+  const inconsistentVotes = judgments.flatMap(j => j.votes).filter(v => { const a = v.answers[0]; const b = v.answers[1]; return !(a === 'tie' && b === 'tie') && !((a === '1' && b === '2') || (a === '2' && b === '1')) }).length
+  const totalVotes = judgments.reduce((a, j) => a + j.votes.length, 0)
+  const unanimous = judgments.filter(j => new Set(j.votes.map(v => v.preference)).size <= 1).length
   const m = mcnemar(wins, losses)
   let humanAgreement: JudgeReport['humanAgreement'] = null
   if (input.annotations) {
@@ -210,18 +231,102 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
     runId: input.plan.id,
     candidate: input.candidate,
     baseline: input.plan.baseline.name,
-    model: input.model,
+    models: input.judges.map(j => j.model),
+    model: input.judges[0]?.model ?? 'none',
+    panelAgreement: judgments.length ? unanimous / judgments.length : 1,
     generatedAt: new Date().toISOString(),
     judgments,
     wins,
     losses,
     ties,
-    inconsistentShare: judgments.length ? inconsistent / judgments.length : 0,
+    inconsistentShare: totalVotes ? inconsistentVotes / totalVotes : 0,
     midP: m.midP,
     pWin: m.pWin,
     usd,
     humanAgreement,
   }
+}
+
+const ABS_SYSTEM = 'You are a strict, impartial grader. You see a rubric and one anonymous submission; you know nothing about who produced it. Decide whether the submission satisfies the rubric. Reply with a single JSON object.'
+
+function absPrompt(rubric: string, submission: string): string {
+  return `Rubric:\n${rubric}\n\n### Submission\n${submission}\n\nDoes the submission satisfy the rubric? Answer with JSON: {"pass": true | false, "score": <0 to 1>, "reason": "<one or two sentences citing concrete evidence>"}.`
+}
+
+export interface AbsoluteGrade { scenario: string; arm: string; rep: number; pass: boolean; score: number; reason: string; model: string; usd: number }
+
+/** PPI++ (Angelopoulos, Duchi, Zrnic 2023) estimate of a pass rate from judge grades f on all trials and human labels Y on a labelled subset. */
+export function ppiRate(all: number[], labelled: Array<{ f: number; y: number }>): { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number } {
+  const N = all.length
+  const n = labelled.length
+  const judgeOnly = N ? mean(all) : 0
+  if (n === 0) return { estimate: judgeOnly, se: N ? Math.sqrt(judgeOnly * (1 - judgeOnly) / Math.max(1, N)) : 0, lambda: 1, n, N, judgeOnly }
+  const y = labelled.map(l => l.y)
+  const fl = labelled.map(l => l.f)
+  const my = mean(y)
+  const mf = mean(fl)
+  const cov = n > 1 ? labelled.reduce((a, l) => a + (l.y - my) * (l.f - mf), 0) / (n - 1) : 0
+  const varF = N > 1 ? all.reduce((a, v) => a + (v - judgeOnly) ** 2, 0) / (N - 1) : 0
+  const lambdaRaw = varF > 0 ? cov / ((1 + n / N) * varF) : 0
+  const lambda = Math.max(0, Math.min(1, lambdaRaw))
+  const estimate = my + lambda * (judgeOnly - mf)
+  const resid = labelled.map(l => l.y - lambda * l.f)
+  const mr = mean(resid)
+  const varResid = n > 1 ? resid.reduce((a, r) => a + (r - mr) ** 2, 0) / (n - 1) : 0
+  const se = Math.sqrt(varResid / n + (lambda * lambda * varF) / Math.max(1, N))
+  return { estimate: Math.max(0, Math.min(1, estimate)), se, lambda, n, N, judgeOnly }
+}
+
+export interface AbsoluteReport {
+  schema: 'dsh-eval-judge-absolute/1'
+  runId: string
+  models: string[]
+  generatedAt: string
+  grades: AbsoluteGrade[]
+  /** Per arm: judge-only pass rate, PPI++ estimate with SE using human annotations as labels, and how many labels were used. */
+  arms: Record<string, { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }>
+  usd: number
+}
+
+export interface AbsoluteInput {
+  plan: RunPlan
+  ledgers: RunLedger[]
+  specs: Record<string, JudgeSpec>
+  artifactDir: (scenario: string, arm: string, rep: number) => string
+  judges: JudgeModel[]
+  annotations?: Record<string, { verdict: boolean | null }>
+  log?: (line: string) => void
+}
+
+/** Grade every trial of every judged scenario on its own (no pairing), then rectify per-arm pass rates with human labels via PPI++. */
+export async function absoluteJudge(input: AbsoluteInput): Promise<AbsoluteReport> {
+  const grades: AbsoluteGrade[] = []
+  let usd = 0
+  const arms = [input.plan.baseline.name, ...input.plan.candidates.map(c => c.name)]
+  for (const [scenario, spec] of Object.entries(input.specs)) {
+    for (const l of input.ledgers.filter(x => x.scenario === scenario)) {
+      const art = readArtifacts(input.artifactDir(scenario, l.arm, l.rep), spec.maxChars ?? 12_000)
+      const votes: Array<{ pass: boolean; score: number; reason: string }> = []
+      for (const judge of input.judges) {
+        const r = await judge.chat([{ role: 'system', content: ABS_SYSTEM }, { role: 'user', content: absPrompt(spec.rubric, art.text) }])
+        usd += priceUsage(judge.model, bandAt(Date.now()), { hit: r.usage.hit, miss: r.usage.miss, output: r.usage.output, reasoning: 0 })
+        let parsed: { pass?: unknown; score?: unknown; reason?: unknown } = {}
+        try { parsed = JSON.parse(r.text) as typeof parsed } catch { /* keep defaults */ }
+        votes.push({ pass: parsed.pass === true, score: typeof parsed.score === 'number' ? Math.max(0, Math.min(1, parsed.score)) : parsed.pass === true ? 1 : 0, reason: String(parsed.reason ?? '').slice(0, 400) })
+      }
+      const passVotes = votes.filter(v => v.pass).length
+      grades.push({ scenario, arm: l.arm, rep: l.rep, pass: passVotes > votes.length / 2, score: mean(votes.map(v => v.score)), reason: votes[0]?.reason ?? '', model: input.judges.map(j => j.model).join('+'), usd: 0 })
+      input.log?.(`grade ${scenario}/${l.arm}#${l.rep}: ${passVotes > votes.length / 2 ? 'pass' : 'fail'} (${passVotes}/${votes.length} judges)`)
+    }
+  }
+  const perArm: AbsoluteReport['arms'] = {}
+  for (const arm of arms) {
+    const rows = grades.filter(g => g.arm === arm)
+    const all = rows.map(g => (g.pass ? 1 : 0))
+    const labelled = rows.flatMap((g) => { const v = input.annotations?.[`${g.scenario}|${arm}|${g.rep}`]?.verdict; return v === true || v === false ? [{ f: g.pass ? 1 : 0, y: v ? 1 : 0 }] : [] })
+    perArm[arm] = ppiRate(all, labelled)
+  }
+  return { schema: 'dsh-eval-judge-absolute/1', runId: input.plan.id, models: input.judges.map(j => j.model), generatedAt: new Date().toISOString(), grades, arms: perArm, usd }
 }
 
 export { mean as _mean }
