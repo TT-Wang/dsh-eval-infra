@@ -8,7 +8,7 @@
 
 - **臂(arm)** 就是 dsh 的 patch 覆盖层(`bench/arms/*.yml`),与 `dsh --patch` 接受的行完全一样:插入你的插件、禁用某一行、改某个配置字段、换模型或思考档位。
 - **只差一处检查**:每个臂都经 `dsh --dump-config` 合成后逐行 diff;差异超过一行会被拒绝,除非显式允许(报告会标"多变量")。
-- **场景**自带确定性判卷器和标准答案;**selfcheck** 证明每个判卷器"空工作区不过、标准答案能过"。`bench/scenarios` 内置 26 个场景(context、tools、coding、prompt、memory、safety、cost、verification)。
+- **场景**自带确定性判卷器和标准答案;**selfcheck** 证明每个判卷器"空工作区不过、标准答案能过"。`bench/scenarios` 内置 35 个场景(context、tools、coding、prompt、memory、safety、cost、verification),见 [docs/scenarios.md](docs/scenarios.md)。
 - **配对、交替、重复**:场景 → 重复 → 臂,奇数次 A 后 B、偶数次 B 后 A,每次试验独立工作区、独立运行时进程、隔离的 `DSH_HOME`。A/A 模式测噪声地板。
 - **账本**:每步的缓存命中/未命中/输出/推理 token,按当时分钟的峰或谷价计费并同时给出两个固定档位的重算价,工具直方图,会话事件,带推理原文的逐步 trace。
 - **报告**:退化优先;成本只在两臂都通过的重复对上比较;按场景 bootstrap 置信区间;pass^k;每解一题的 token 与美元;缓存命中占比;一句话结论,区间跨零就写"不确定"。Markdown 与 JSON。

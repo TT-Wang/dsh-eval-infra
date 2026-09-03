@@ -8,7 +8,7 @@ English | [中文](README.zh.md) · [design](docs/design.md) · [results](docs/r
 
 - **Arms** are dsh patch overlays (`bench/arms/*.yml`): the same rows `dsh --patch` accepts. Insert your plugin, disable a row, change a config field, change the model or reasoning effort.
 - **One-variable check**: each arm is composed through `dsh --dump-config` and diffed row by row; more than one differing row is refused unless you ask for it.
-- **Scenarios** with deterministic verifiers and an oracle; **selfcheck** proves every verifier rejects an untouched workspace and accepts the reference answer. 26 scenarios ship in `bench/scenarios` (context, tools, coding, prompt, memory, safety, cost, verification).
+- **Scenarios** with deterministic verifiers and an oracle; **selfcheck** proves every verifier rejects an untouched workspace and accepts the reference answer. 35 scenarios ship in `bench/scenarios` (context, tools, coding, prompt, memory, safety, cost, verification) — see [docs/scenarios.md](docs/scenarios.md).
 - **Paired, interleaved, repeated runs**: scenario → repeat → arm, A B on odd repeats and B A on even ones, each trial in a fresh workspace and a fresh runtime process under an isolated `DSH_HOME`. A/A mode measures the noise floor.
 - **Ledgers**: per-step cache-hit / cache-miss / output / reasoning tokens, price at the DeepSeek peak or off-peak rate of that minute plus both fixed-band re-pricings, tool histogram, session events, per-step trace with reasoning text.
 - **Report**: regressions first, cost compared only on repeat-pairs both arms passed, bootstrap interval over scenarios, pass^k, tokens and dollars per solved task, cache-hit share, a one-sentence verdict that says *inconclusive* when the interval covers zero. Markdown and JSON.

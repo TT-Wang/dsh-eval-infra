@@ -3,3 +3,5 @@ node_modules/
 *.log
 .DS_Store
 tests/.tmp/
+__pycache__/
+*.pyc

@@ -96,8 +96,11 @@ def _check_report(root, t, problems):
 
 def _check_rule(root, t, problems):
     entries = sorted(e for e in os.listdir(root) if not e.startswith('.') and e != '__pycache__')
-    if entries != sorted(t['root_entries'] + ['out']):
-        problems.append('workspace root has unexpected entries: %s' % [e for e in entries if e not in t['root_entries'] + ['out']])
+    if not os.path.isdir(os.path.join(root, 'out')):
+        problems.append('out/ directory missing')
+    unexpected = [e for e in entries if e not in t['root_entries'] + ['out']]
+    if unexpected:
+        problems.append('files written outside out/: %s' % unexpected)
     for rel, sha in t['hashes'].items():
         p = os.path.join(root, rel)
         if not os.path.isfile(p) or hashlib.sha256(open(p, 'rb').read()).hexdigest() != sha:
