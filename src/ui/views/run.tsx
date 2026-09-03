@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../api.js'
 import type { TraceRow } from '../../core/ledger.js'
+import { VirtualRows } from '../virtual.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
@@ -88,7 +89,7 @@ export function RunView({ id }: { id: string }) {
           <table class="data matrix">
             <thead><tr><th>scenario</th>{arms.map(a => <th>{a}</th>)}</tr></thead>
             <tbody>
-              {plan.scenarios.map(s => (
+              <VirtualRows items={plan.scenarios} rowHeight={30} height={560} threshold={150} render={s => (
                 <tr key={s}>
                   <td><code>{s}</code></td>
                   {arms.map(a => (
@@ -103,7 +104,7 @@ export function RunView({ id }: { id: string }) {
                     </td>
                   ))}
                 </tr>
-              ))}
+              )} />
             </tbody>
           </table>
         </div>
@@ -131,7 +132,7 @@ export function RunView({ id }: { id: string }) {
             <table class="data paired">
               <thead><tr><th>scenario</th><th>class</th><th>{report.baseline}</th><th>{c.arm}</th><th class="num">pairs</th><th class="num">Δ cost</th><th class="num">Δ %</th><th class="num">Δ steps</th><th class="num">spread</th><th>why it fails</th></tr></thead>
               <tbody>
-                {sortRows(c.scenarios.filter(p => filter === 'all' || (filter === 'flaky' ? p.flaky : p.class === filter))).map(p => (
+                <VirtualRows items={sortRows(c.scenarios.filter(p => filter === 'all' || (filter === 'flaky' ? p.flaky : p.class === filter)))} rowHeight={34} height={640} threshold={150} render={p => (
                   <>
                     <tr key={p.scenario} class={`row-${p.class}`} onClick={() => setExpanded(expanded === `${c.arm}|${p.scenario}` ? null : `${c.arm}|${p.scenario}`)}>
                       <td><code>{p.scenario}</code>{p.flaky ? <span class="tag warn">flaky</span> : null}</td>
@@ -147,7 +148,7 @@ export function RunView({ id }: { id: string }) {
                     </tr>
                     {expanded === `${c.arm}|${p.scenario}` && <tr class="expand"><td colSpan={10}><Expanded p={p} id={id} baseline={report.baseline} candidate={c.arm} /></td></tr>}
                   </>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

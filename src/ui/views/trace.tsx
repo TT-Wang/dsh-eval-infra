@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api, fmt } from '../api.js'
+import { VirtualRows } from '../virtual.js'
 import type { RunLedger } from '../../core/types.js'
 import type { TraceRow } from '../../core/ledger.js'
 
@@ -166,14 +167,15 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
 }
 
 function StepList({ trace, selected, onSelect, promptMax, divergence, durations, durMax }: { trace: TraceRow[]; selected: number; onSelect: (i: number) => void; promptMax: number; divergence: number; durations: Map<string, number>; durMax: number }) {
+  const turnStarts = new Set<number>()
   let lastTurn = 0
+  trace.forEach((r, i) => { if (r.turn !== lastTurn) { turnStarts.add(i); lastTurn = r.turn } })
   return (
     <ol class="steplist">
-      {trace.map((r, i) => {
+      <VirtualRows items={trace} rowHeight={28} height={560} threshold={200} render={(r, i) => {
         const prompt = (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)
         const hitPct = prompt > 0 ? (r.usage?.hit ?? 0) / prompt * 100 : 0
-        const turnStart = r.turn !== lastTurn
-        lastTurn = r.turn
+        const turnStart = turnStarts.has(i)
         const errs = (r.observations ?? []).filter(o => o.isError).length
         return (
           <>
@@ -186,7 +188,7 @@ function StepList({ trace, selected, onSelect, promptMax, divergence, durations,
             </li>
           </>
         )
-      })}
+      }} />
     </ol>
   )
 }
