@@ -28,7 +28,12 @@ export interface Judgment {
         answers: [string, string];
         reasons: [string, string];
         usd: number;
+        confidence?: number;
     }>;
+    /** Abstention score in [0, 1]: mean self-reported confidence of order-consistent votes, halved when the panel is not unanimous. */
+    score?: number;
+    /** True when the conformal abstention rule withholds this judgment (score below the calibrated threshold). */
+    abstained?: boolean;
     /** The two raw answers as seen by the judge ('first' | 'second' | 'tie'), for the two presentation orders. */
     answers: [string, string];
     /** Which artifact was shown first in the first call ('baseline' | 'candidate'). */
@@ -76,6 +81,24 @@ export interface JudgeReport {
     longerWinsShare: number | null;
     /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
     interJudgeKappa: number | null;
+    /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata (length-balanced, AlpacaEval-LC style); null without both strata. */
+    lengthBalancedWinRate: number | null;
+    /** Conformal abstention (SCOPE-style): threshold calibrated on human-labelled pairs so the error rate among kept judgments is at most alpha; null without labels. */
+    abstention: {
+        alpha: number;
+        tau: number;
+        calibratedOn: number;
+        abstained: number;
+        of: number;
+    } | null;
+    /** Anchor set: archived human-labelled trials re-graded by this panel; agreement with the humans and stability vs the previous judge run on the same anchors. */
+    anchors: {
+        n: number;
+        humanAgreement: number;
+        stability: number | null;
+        comparedWithPrevious: number;
+        attribution: 'none' | 'judge';
+    } | null;
 }
 /** Read the captured artifacts of one trial into a single text block (deterministic order). */
 export declare function readArtifacts(dir: string, maxChars: number): {
@@ -97,6 +120,23 @@ export interface ChatCall {
 }
 /** DeepSeek chat completions over HTTPS (OpenAI-compatible); no dsh runtime needed. */
 export declare function deepseekChat(config: JudgeConfig): ChatCall;
+/**
+ * Conformal risk control for abstention (Angelopoulos et al. 2022; SCOPE 2602.13110 applies it to judges):
+ * given labelled pairs with an abstention score and whether the judge was right, return the smallest
+ * score threshold whose kept-set error, with the finite-sample correction (n·R̂ + 1)/(n + 1), is ≤ alpha.
+ * The empirical risk is made monotone in the threshold by taking the running maximum as the threshold
+ * decreases (a kept set can only be riskier than the smaller kept sets above it), so the guarantee is
+ * conservative. Returns null when no threshold satisfies the bound.
+ */
+export declare function conformalAbstentionThreshold(labelled: Array<{
+    score: number;
+    correct: boolean;
+}>, alpha: number): number | null;
+export declare function abstentionScore(votes: Array<{
+    preference: string;
+    answers: [string, string];
+    confidence?: number;
+}>): number;
 export interface JudgeModel {
     model: string;
     chat: ChatCall;
@@ -116,9 +156,27 @@ export interface JudgeInput {
     annotations?: Record<string, {
         verdict: boolean | null;
     }>;
+    /** Error level for conformal abstention (default 0.1). */
+    abstentionAlpha?: number;
+    /** Archived human-labelled trials to re-grade as anchors (judge drift check). */
+    anchors?: Array<{
+        key: string;
+        rubric: string;
+        artifactDir: string;
+        humanPass: boolean;
+        previousJudgePass?: boolean;
+    }>;
     log?: (line: string) => void;
 }
-export declare function judgeRun(input: JudgeInput): Promise<JudgeReport>;
+/** Grade anchor trials in absolute mode; returns per-anchor judge answers for storage and the summary. */
+export declare function gradeAnchors(anchors: NonNullable<JudgeInput['anchors']>, judges: JudgeModel[], log?: (line: string) => void): Promise<{
+    answers: Record<string, boolean>;
+    summary: JudgeReport['anchors'];
+    usd: number;
+}>;
+export declare function judgeRun(input: JudgeInput): Promise<JudgeReport & {
+    anchorAnswers?: Record<string, boolean>;
+}>;
 export interface AbsoluteGrade {
     scenario: string;
     arm: string;

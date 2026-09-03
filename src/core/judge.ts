@@ -37,7 +37,11 @@ export interface Judgment {
   /** Panel preference: majority of decided votes when it is a strict majority of the panel; otherwise 'tie'. */
   preference: 'candidate' | 'baseline' | 'tie'
   /** One vote per judge model, each already order-swapped (inconsistent orders → tie). */
-  votes: Array<{ model: string; preference: 'candidate' | 'baseline' | 'tie'; answers: [string, string]; reasons: [string, string]; usd: number }>
+  votes: Array<{ model: string; preference: 'candidate' | 'baseline' | 'tie'; answers: [string, string]; reasons: [string, string]; usd: number; confidence?: number }>
+  /** Abstention score in [0, 1]: mean self-reported confidence of order-consistent votes, halved when the panel is not unanimous. */
+  score?: number
+  /** True when the conformal abstention rule withholds this judgment (score below the calibrated threshold). */
+  abstained?: boolean
   /** The two raw answers as seen by the judge ('first' | 'second' | 'tie'), for the two presentation orders. */
   answers: [string, string]
   /** Which artifact was shown first in the first call ('baseline' | 'candidate'). */
@@ -76,6 +80,12 @@ export interface JudgeReport {
   longerWinsShare: number | null
   /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
   interJudgeKappa: number | null
+  /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata (length-balanced, AlpacaEval-LC style); null without both strata. */
+  lengthBalancedWinRate: number | null
+  /** Conformal abstention (SCOPE-style): threshold calibrated on human-labelled pairs so the error rate among kept judgments is at most alpha; null without labels. */
+  abstention: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number } | null
+  /** Anchor set: archived human-labelled trials re-graded by this panel; agreement with the humans and stability vs the previous judge run on the same anchors. */
+  anchors: { n: number; humanAgreement: number; stability: number | null; comparedWithPrevious: number; attribution: 'none' | 'judge' } | null
 }
 
 /** Read the captured artifacts of one trial into a single text block (deterministic order). */
@@ -101,7 +111,7 @@ export function readArtifacts(dir: string, maxChars: number): { text: string; sh
 const SYSTEM = 'You are a strict, impartial grader comparing two anonymous submissions to the same task. You see only the rubric and the submissions; you know nothing about who or what produced them. Judge only what is on the page. Reply with a single JSON object.'
 
 function prompt(rubric: string, first: string, second: string): string {
-  return `Rubric (what a better submission does):\n${rubric}\n\n### Submission 1\n${first}\n\n### Submission 2\n${second}\n\nWhich submission better satisfies the rubric? Answer with JSON: {"winner": "1" | "2" | "tie", "reason": "<one or two sentences citing concrete evidence>"}. Use "tie" when they are equally good or the difference is not material to the rubric.`
+  return `Rubric (what a better submission does):\n${rubric}\n\n### Submission 1\n${first}\n\n### Submission 2\n${second}\n\nWhich submission better satisfies the rubric? Answer with JSON: {"winner": "1" | "2" | "tie", "confidence": <0 to 1, how sure you are of the winner>, "reason": "<one or two sentences citing concrete evidence>"}. Use "tie" when they are equally good or the difference is not material to the rubric.`
 }
 
 export interface ChatCall {
@@ -129,15 +139,49 @@ export function deepseekChat(config: JudgeConfig): ChatCall {
   }
 }
 
-function parseWinner(text: string): { winner: '1' | '2' | 'tie'; reason: string } {
+function parseWinner(text: string): { winner: '1' | '2' | 'tie'; reason: string; confidence: number } {
   try {
-    const j = JSON.parse(text) as { winner?: unknown; reason?: unknown }
+    const j = JSON.parse(text) as { winner?: unknown; reason?: unknown; confidence?: unknown }
     const w = String(j.winner ?? 'tie').trim()
-    return { winner: w === '1' || w === '2' ? w : 'tie', reason: String(j.reason ?? '').slice(0, 500) }
+    const c = typeof j.confidence === 'number' ? Math.max(0, Math.min(1, j.confidence)) : 0.5
+    return { winner: w === '1' || w === '2' ? w : 'tie', reason: String(j.reason ?? '').slice(0, 500), confidence: c }
   } catch {
     const m = /"winner"\s*:\s*"?(1|2|tie)"?/.exec(text)
-    return { winner: (m?.[1] as '1' | '2' | 'tie' | undefined) ?? 'tie', reason: text.slice(0, 300) }
+    return { winner: (m?.[1] as '1' | '2' | 'tie' | undefined) ?? 'tie', reason: text.slice(0, 300), confidence: 0.5 }
   }
+}
+
+/**
+ * Conformal risk control for abstention (Angelopoulos et al. 2022; SCOPE 2602.13110 applies it to judges):
+ * given labelled pairs with an abstention score and whether the judge was right, return the smallest
+ * score threshold whose kept-set error, with the finite-sample correction (n·R̂ + 1)/(n + 1), is ≤ alpha.
+ * The empirical risk is made monotone in the threshold by taking the running maximum as the threshold
+ * decreases (a kept set can only be riskier than the smaller kept sets above it), so the guarantee is
+ * conservative. Returns null when no threshold satisfies the bound.
+ */
+export function conformalAbstentionThreshold(labelled: Array<{ score: number; correct: boolean }>, alpha: number): number | null {
+  const n = labelled.length
+  if (n === 0) return null
+  const taus = [...new Set(labelled.map(l => l.score))].sort((a, b) => b - a)   // high → low
+  let best: number | null = null
+  let runningMax = 0
+  for (const tau of taus) {
+    const kept = labelled.filter(l => l.score >= tau)
+    const risk = kept.filter(l => !l.correct).length / kept.length
+    runningMax = Math.max(runningMax, risk)
+    const bound = (n * runningMax + 1) / (n + 1)
+    if (bound <= alpha) best = tau
+    else break
+  }
+  return best
+}
+
+export function abstentionScore(votes: Array<{ preference: string; answers: [string, string]; confidence?: number }>): number {
+  if (votes.length === 0) return 0
+  const consistent = votes.filter(v => v.preference !== 'tie' || (v.answers[0] === 'tie' && v.answers[1] === 'tie'))
+  const conf = consistent.length ? consistent.reduce((a, v) => a + (v.confidence ?? 0.5), 0) / votes.length : 0
+  const unanimous = new Set(votes.map(v => v.preference)).size <= 1
+  return unanimous ? conf : conf / 2
 }
 
 function seeded(seed: number): () => number {
@@ -170,10 +214,44 @@ export interface JudgeInput {
   seed?: number
   /** Human annotations keyed "scenario|arm|rep" → verdict boolean, for agreement. */
   annotations?: Record<string, { verdict: boolean | null }>
+  /** Error level for conformal abstention (default 0.1). */
+  abstentionAlpha?: number
+  /** Archived human-labelled trials to re-grade as anchors (judge drift check). */
+  anchors?: Array<{ key: string; rubric: string; artifactDir: string; humanPass: boolean; previousJudgePass?: boolean }>
   log?: (line: string) => void
 }
 
-export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
+/** Grade anchor trials in absolute mode; returns per-anchor judge answers for storage and the summary. */
+export async function gradeAnchors(anchors: NonNullable<JudgeInput['anchors']>, judges: JudgeModel[], log?: (line: string) => void): Promise<{ answers: Record<string, boolean>; summary: JudgeReport['anchors']; usd: number }> {
+  const answers: Record<string, boolean> = {}
+  let usd = 0
+  let agree = 0
+  let stableN = 0
+  let stable = 0
+  for (const a of anchors) {
+    const art = readArtifacts(a.artifactDir, 12_000)
+    let passVotes = 0
+    for (const judge of judges) {
+      const r = await judge.chat([{ role: 'system', content: ABS_SYSTEM }, { role: 'user', content: absPrompt(a.rubric, art.text) }])
+      usd += priceUsage(judge.model, bandAt(Date.now()), { hit: r.usage.hit, miss: r.usage.miss, output: r.usage.output, reasoning: 0 })
+      let parsed: { pass?: unknown } = {}
+      try { parsed = JSON.parse(r.text) as typeof parsed } catch { /* keep */ }
+      if (parsed.pass === true) passVotes += 1
+    }
+    const pass = passVotes > judges.length / 2
+    answers[a.key] = pass
+    if (pass === a.humanPass) agree += 1
+    if (a.previousJudgePass !== undefined) { stableN += 1; if (a.previousJudgePass === pass) stable += 1 }
+    log?.(`anchor ${a.key}: judge ${pass ? 'pass' : 'fail'} · human ${a.humanPass ? 'pass' : 'fail'}${a.previousJudgePass !== undefined ? ` · previous judge ${a.previousJudgePass ? 'pass' : 'fail'}` : ''}`)
+  }
+  const n = anchors.length
+  const stability = stableN ? stable / stableN : null
+  const summary: JudgeReport['anchors'] = n ? { n, humanAgreement: agree / n, stability, comparedWithPrevious: stableN, attribution: stability !== null && stability < 0.8 ? 'judge' : 'none' } : null
+  return { answers, summary, usd }
+}
+
+export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { anchorAnswers?: Record<string, boolean> }> {
+  let anchorAnswers: Record<string, boolean> | undefined
   const rnd = seeded(input.seed ?? 42)
   const judgments: Judgment[] = []
   let usd = 0
@@ -201,14 +279,14 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
         // Map answers back to arms: in call 1 "1" = firstShown; in call 2 "1" = the other arm.
         const pick1 = p1.winner === '1' ? firstShown : p1.winner === '2' ? other : 'tie'
         const pick2 = p2.winner === '1' ? other : p2.winner === '2' ? firstShown : 'tie'
-        votes.push({ model: judge.model, preference: pick1 === pick2 ? pick1 : 'tie', answers: [p1.winner, p2.winner], reasons: [p1.reason, p2.reason], usd: cost })
+        votes.push({ model: judge.model, preference: pick1 === pick2 ? pick1 : 'tie', answers: [p1.winner, p2.winner], reasons: [p1.reason, p2.reason], usd: cost, confidence: (p1.confidence + p2.confidence) / 2 })
       }
       const forC = votes.filter(v => v.preference === 'candidate').length
       const forB = votes.filter(v => v.preference === 'baseline').length
       const half = votes.length / 2
       const preference: Judgment['preference'] = forC > forB && forC > half ? 'candidate' : forB > forC && forB > half ? 'baseline' : 'tie'
       const first = votes[0]!
-      judgments.push({ scenario, rep, preference, votes, answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha }, lengths: { baseline: artB.text.length, candidate: artC.text.length } })
+      judgments.push({ scenario, rep, preference, votes, score: abstentionScore(votes), answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha }, lengths: { baseline: artB.text.length, candidate: artC.text.length } })
       input.log?.(`judge ${scenario}#${rep}: ${preference} (${votes.map(v => `${v.model}: ${v.preference}`).join(', ')})`)
     }
   }
@@ -223,7 +301,13 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
   const longerWins = decided.filter(j => (j.preference === 'candidate') === (j.lengths!.candidate > j.lengths!.baseline)).length
   const longerWinsShare = decided.length ? longerWins / decided.length : null
   const interJudgeKappa = input.judges.length >= 2 ? kappa(judgments.map(j => [j.votes[0]!.preference, j.votes[1]!.preference] as [string, string])) : null
+  // Length-balanced win rate: the candidate's win share in the "candidate longer" and "candidate shorter" strata, averaged.
+  const longer = decided.filter(j => j.lengths!.candidate > j.lengths!.baseline)
+  const shorter = decided.filter(j => j.lengths!.candidate < j.lengths!.baseline)
+  const share = (xs: Judgment[]): number => xs.filter(j => j.preference === 'candidate').length / xs.length
+  const lengthBalancedWinRate = longer.length && shorter.length ? (share(longer) + share(shorter)) / 2 : null
   let humanAgreement: JudgeReport['humanAgreement'] = null
+  const labelledScores: Array<{ score: number; correct: boolean }> = []
   if (input.annotations) {
     const pairs: Array<[string, string]> = []
     for (const j of judgments) {
@@ -232,8 +316,29 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
       if (hb === undefined || hc === undefined || hb === null || hc === null) continue
       const human = hc && !hb ? 'candidate' : hb && !hc ? 'baseline' : 'tie'
       pairs.push([j.preference, human])
+      labelledScores.push({ score: j.score ?? 0, correct: j.preference === human })
     }
     if (pairs.length) humanAgreement = { n: pairs.length, agree: pairs.filter(([a, b]) => a === b).length / pairs.length, kappa: kappa(pairs) }
+  }
+  let abstention: JudgeReport['abstention'] = null
+  if (labelledScores.length > 0) {
+    const alpha = input.abstentionAlpha ?? 0.1
+    const tau = conformalAbstentionThreshold(labelledScores, alpha)
+    if (tau !== null) {
+      let abstained = 0
+      for (const j of judgments) { j.abstained = (j.score ?? 0) < tau; if (j.abstained) abstained += 1 }
+      abstention = { alpha, tau, calibratedOn: labelledScores.length, abstained, of: judgments.length }
+    } else {
+      for (const j of judgments) j.abstained = true
+      abstention = { alpha, tau: Infinity, calibratedOn: labelledScores.length, abstained: judgments.length, of: judgments.length }
+    }
+  }
+  let anchors: JudgeReport['anchors'] = null
+  if (input.anchors && input.anchors.length > 0) {
+    const g = await gradeAnchors(input.anchors, input.judges, input.log)
+    usd += g.usd
+    anchors = g.summary
+    anchorAnswers = g.answers
   }
   return {
     schema: 'dsh-eval-judge/1',
@@ -255,6 +360,10 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport> {
     humanAgreement,
     longerWinsShare,
     interJudgeKappa,
+    lengthBalancedWinRate,
+    abstention,
+    anchors,
+    ...(anchorAnswers ? { anchorAnswers } : {}),
   }
 }
 

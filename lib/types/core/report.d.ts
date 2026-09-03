@@ -217,6 +217,21 @@ export interface CandidateReport {
         sameFamilyAsArms?: boolean;
         longerWinsShare?: number | null;
         interJudgeKappa?: number | null;
+        lengthBalancedWinRate?: number | null;
+        abstention?: {
+            alpha: number;
+            tau: number;
+            calibratedOn: number;
+            abstained: number;
+            of: number;
+        } | null;
+        anchors?: {
+            n: number;
+            humanAgreement: number;
+            stability: number | null;
+            comparedWithPrevious: number;
+            attribution: 'none' | 'judge';
+        } | null;
     };
     /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
     absolute?: {
@@ -265,6 +280,8 @@ export interface ReportOptions {
     minScenarios?: number;
     /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
     noiseFloors?: Record<string, NoiseFloor>;
+    /** Behavioural drift check of the baseline arm against the archive (see drift.ts). */
+    drift?: import('./drift.js').DriftResult | null;
     /** Scenario names in the sealed holdout pool. */
     holdout?: Set<string>;
     /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */

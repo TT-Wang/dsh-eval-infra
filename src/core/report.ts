@@ -139,7 +139,7 @@ export interface CandidateReport {
   /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
   cuped: { theta: number; varianceRemoved: number; ci: BootstrapCI; n: number } | null
   /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
-  judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null; sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null }
+  judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null; sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; abstention?: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number } | null; anchors?: { n: number; humanAgreement: number; stability: number | null; comparedWithPrevious: number; attribution: 'none' | 'judge' } | null }
   /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
   absolute?: { baseline: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; candidate: { estimate: number; se: number; lambda: number; n: number; N: number; judgeOnly: number }; diff: number; diffSe: number; models: string[]; calibration?: { labelled: number; tpr: number | null; tnr: number | null } }
   verdict: string
@@ -164,6 +164,8 @@ export interface ReportOptions {
   minScenarios?: number
   /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
   noiseFloors?: Record<string, NoiseFloor>
+  /** Behavioural drift check of the baseline arm against the archive (see drift.ts). */
+  drift?: import('./drift.js').DriftResult | null
   /** Scenario names in the sealed holdout pool. */
   holdout?: Set<string>
   /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */
@@ -352,8 +354,9 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   const minScenarios = options.minScenarios ?? 5
   const scenarios = [...new Set([...plan.scenarios, ...ledgers.map(l => l.scenario)])]
   const notes: string[] = []
-  // Bonferroni across candidates: each candidate's intervals are read at alpha / m so the family-wise error stays at 5%.
-  const alpha = 0.05 / Math.max(1, plan.candidates.length)
+  // Joint bound across the planned claims: two claims per candidate (cost direction, pass-rate direction) for m candidates,
+  // so every interval is read at 0.05 / (2m) and the family-wise error over all planned claims stays at 5%.
+  const alpha = 0.05 / (2 * Math.max(1, plan.candidates.length))
   const holdoutSet = options.holdout ?? new Set<string>()
   const candidates: CandidateReport[] = plan.candidates.map((cand) => {
     const pairs = scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(cand.name, s, ledgers), plan.repeats, ledgers, holdoutSet.has(s)))
@@ -517,7 +520,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       verdict,
     }
   })
-  if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline: intervals are read at α = ${alpha.toFixed(4)} (Bonferroni) so the family-wise error rate stays at 5%.`)
+  if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline and each carries two planned claims (cost direction, pass-rate direction): intervals are read at α = ${alpha.toFixed(4)} (Bonferroni over ${2 * plan.candidates.length} claims) so the family-wise error rate stays at 5%.`)
   if (options.sequences) notes.push('Sequential mode: the cost interval is the final hedged betting confidence sequence on the paired cost ratio winsorized at 2× (non-asymptotic, valid at every look and under early stopping), which is wider than a fixed-sample interval would be on the same data.')
   if (plan.sandbox === 'docker') notes.push('Trials ran inside Docker containers: the container is the confinement boundary (workspace and eval home mounted read-write, the dsh checkout and plugins read-only); dsh\'s in-process sandbox and permission presets were off inside the container.')
   for (const c of candidates) {
@@ -537,7 +540,14 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   const overridden = ledgers.filter(l => l.overridden).length
   if (overridden > 0) notes.push(`${overridden} verdict(s) were overridden by a human annotation; the machine verdicts are kept in the ledgers.`)
   {
-    const metered = ledgers.filter(l => l.usageProvenance?.source === 'meter')
+    const replayed = ledgers.filter(l => l.usageProvenance?.source === 'replay')
+    if (replayed.length > 0) {
+      const src = replayed[0]!.usageProvenance!.replay!
+      const live = replayed.reduce((a, l) => a + (l.usageProvenance!.replay?.live ?? 0), 0)
+      const served = replayed.reduce((a, l) => a + (l.usageProvenance!.replay?.replayed ?? 0), 0)
+      notes.push(`Replay: ${replayed.length} trial${replayed.length === 1 ? '' : 's'} served ${served} recorded provider responses from run ${src.runId}${src.forkAt !== undefined ? ` and forked to live calls after ${src.forkAt} (${live} live responses)` : ' with no live calls (keyless)'}; usage and cost are the recorded figures re-priced, not new spend.`)
+    }
+    const metered = ledgers.filter(l => l.usageProvenance?.source === 'meter' || l.usageProvenance?.source === 'replay')
     const selfReported = ledgers.filter(l => !l.usageProvenance || l.usageProvenance.source === 'self-reported')
     if (metered.length > 0) {
       const bad = metered.filter(l => l.usageProvenance!.reconciled === false)
@@ -556,6 +566,11 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     }
     if (selfReported.length > 0 && metered.length === 0) notes.push('Usage provenance: self-reported — token counts come from the runtime that hosts the component under test (no wire meter); cost figures are as that process reported them.')
   }
+  if (options.drift && options.drift.verdict !== 'insufficient') {
+    const d = options.drift
+    notes.push(`Behavioural drift check: the baseline's tool-use distribution on ${d.scenarios} scenario${d.scenarios === 1 ? '' : 's'} vs ${d.archive} archived trials of the same arm and model: mean L1 distance ${d.distance.toFixed(2)}, permutation p = ${d.p.toFixed(2)} → ${d.verdict === 'drift' ? 'DRIFT: the baseline no longer behaves as it did in the archive (served model or harness may have changed); archived floors and CUPED covariates from before the drift are not comparable' : 'no drift'}.`)
+  }
+  if (plan.candidates.length === 1) notes.push(`Two planned claims (cost direction, pass-rate direction): intervals are read at α = ${alpha.toFixed(4)} so the family-wise error over both stays at 5%.`)
   if (plan.perturb) {
     const variants = ledgers.filter(l => (l.promptVariant ?? 0) > 0).length
     notes.push(`Prompt perturbation on: ${variants} of ${ledgers.length} trials ran a paraphrased prompt variant (repeats above 1; the same variant for every arm of a repeat), so the spread here includes prompt-wording sensitivity, not only rerun noise.`)

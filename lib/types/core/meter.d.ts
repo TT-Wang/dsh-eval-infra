@@ -16,6 +16,8 @@ export interface MeterEntry {
     requestSha: string;
     /** Fault injected by the meter instead of forwarding (null when forwarded). */
     fault: '429' | 'stall' | null;
+    /** True when the response came from a recording instead of the provider. */
+    replayed?: boolean;
     /** Hash chain: sha256(prev + canonical entry without `hash`). */
     prev: string;
     hash: string;
@@ -31,6 +33,15 @@ export interface MeterTotals {
     /** Distinct model ids and fingerprints seen in responses. */
     servedModels: string[];
     fingerprints: string[];
+    /** Responses served from a recording. */
+    replayed: number;
+}
+export interface RecordedResponse {
+    seq: number;
+    requestSha: string;
+    status: number;
+    contentType: string;
+    body: string;
 }
 export interface MeterOptions {
     /** Upstream base URL, e.g. https://api.deepseek.com */
@@ -45,6 +56,18 @@ export interface MeterOptions {
         seed?: number;
         kinds?: Array<'429' | 'stall'>;
         stallMs?: number;
+    };
+    /** Append every forwarded response (status, content type, body) here so the trial can be replayed keylessly. */
+    recordFile?: string;
+    /**
+     * Replay: serve these recorded responses in order instead of forwarding. Requests beyond the
+     * recording, or from `liveAfter` on (fork from that step), go to the upstream if `live` is set,
+     * otherwise get 503.
+     */
+    replay?: {
+        responses: RecordedResponse[];
+        liveAfter?: number;
+        live?: boolean;
     };
 }
 export interface Meter {
@@ -65,4 +88,6 @@ export interface ParsedResponse {
 /** Pull usage, the served model id and the system fingerprint out of a streamed (SSE) or plain JSON response body. */
 export declare function parseResponseBody(body: string, stream: boolean): ParsedResponse;
 export declare function usageFromBody(body: string, stream: boolean): Usage | null;
+/** Read a recording written through `recordFile`. */
+export declare function readRecording(file: string): RecordedResponse[];
 export declare function startMeter(options: MeterOptions): Promise<Meter>;

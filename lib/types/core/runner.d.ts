@@ -97,6 +97,15 @@ export interface RunDeps {
     perturb?: {
         seed: number;
     };
+    /** Per-trial spend cap in USD, checked on observed usage after every turn (scenario meta.max_usd_per_trial wins when lower). */
+    maxUsdPerTrial?: number;
+    /** Replay recorded provider responses (from another run's meter recordings) instead of calling the provider; forkAt = recorded responses to serve before going live. */
+    replay?: {
+        runId: string;
+        recordingFor: (scenario: string, arm: string, rep: number) => string | null;
+        forkAt?: number;
+        liveAllowed: boolean;
+    };
 }
 /** Deterministic variant choice for (scenario, rep): rep 1 always runs the original prompts. */
 export declare function pickVariant(seed: number, scenario: string, rep: number, variants: number): number;

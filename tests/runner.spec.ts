@@ -359,3 +359,45 @@ describe('prompt perturbation and explicit order', () => {
     expect(seen.length).toBe(3)
   })
 })
+
+describe('replay provenance and per-trial cap', () => {
+  it('labels trials served from a recording as replayed and refuses missing recordings without live calls', async () => {
+    const { writeFileSync, mkdirSync } = await import('node:fs')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: scenarios.map(s => s.name) })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    const recDir = join(root, 'rec'); mkdirSync(recDir, { recursive: true })
+    const recFile = join(recDir, 'rep1.responses.jsonl')
+    writeFileSync(recFile, JSON.stringify({ seq: 1, requestSha: 'x', status: 200, contentType: 'application/json', body: '{"usage":{"prompt_tokens":1,"completion_tokens":1}}' }) + '\n')
+    const progress = await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory(), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), meter: { upstream: 'http://127.0.0.1:9' }, replay: { runId: 'src-run', recordingFor: (_s, arm) => (arm === 'base' ? recFile : null), liveAllowed: false } })
+    expect(progress.status).toBe('done')
+    const ledgers = readLedgers(paths)
+    const base = ledgers.find(l => l.arm === 'base')!
+    const cand = ledgers.find(l => l.arm === 'cand')!
+    expect(base.usageProvenance?.source).toBe('replay')
+    expect(base.usageProvenance?.replay).toMatchObject({ runId: 'src-run', replayed: 0, live: 0 })
+    expect(cand.error).toContain('no recording')
+    const report = buildReport(plan, ledgers)
+    expect(report.notes.some(n => n.startsWith('Replay:'))).toBe(true)
+  })
+
+  it('stops a trial at the per-trial spend cap and grades it as a failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: scenarios.map(s => s.name) })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory({ costScale: { cand: 50 } }), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), maxUsdPerTrial: 0.0005 })
+    const ledgers = readLedgers(paths)
+    const cand = ledgers.find(l => l.arm === 'cand')!
+    expect(cand.capped).toBeDefined()
+    expect(cand.verdict?.ok).toBe(false)
+    expect(cand.verdict?.detail).toContain('spend cap')
+    const base = ledgers.find(l => l.arm === 'base')!
+    expect(base.capped ?? null).toBeNull()
+  })
+})

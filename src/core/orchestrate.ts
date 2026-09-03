@@ -12,6 +12,7 @@ import { projectPrices, type Project } from './project.js'
 import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
 import { fileSha, sealRun, verifyRun, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
+import { driftTest } from './drift.js'
 import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
@@ -49,6 +50,10 @@ export interface RunRequest {
   meter?: boolean
   /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
   perturb?: boolean
+  /** Replay another run's recorded provider responses (keyless); forkAt serves that many recorded responses per trial, then goes live. */
+  replay?: { runId: string; forkAt?: number }
+  /** Per-trial spend cap in USD (observed usage after each turn). */
+  maxUsdPerTrial?: number
   /** Sequential scenario order: seeded shuffle (default) or archive signal-to-noise, strongest first. */
   order?: 'seed' | 'signal'
   /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
@@ -122,7 +127,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (!evalProfileManifest(project.home, profile).exists) {
     throw new LaunchError(`eval profile "${profile}" is not initialised under ${project.home}; run: dsh-eval init [--plugin <path>]`, 'env')
   }
-  const apiKey = resolveApiKey()
+  const pureReplay = request.replay !== undefined && request.replay.forkAt === undefined
+  // A pure replay never reaches the provider: the meter serves recorded responses, so a placeholder credential satisfies the adapter.
+  const apiKey = resolveApiKey() ?? (pureReplay ? 'replay-no-key' : undefined)
   if (apiKey === undefined && hooks.driverFactory === undefined) {
     throw new LaunchError('DEEPSEEK_API_KEY not found (env, $DSH_HOME/.env or ~/.dsh/.env)', 'env')
   }
@@ -168,6 +175,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     if (request.label !== undefined) plan.label = request.label
     if (request.sandbox === 'docker') plan.sandbox = 'docker'
     if (request.perturb) plan.perturb = true
+    if (request.replay) plan.replay = request.replay
   }
   if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
 
@@ -243,6 +251,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   const prices = projectPrices(project.config)
   if (prices) deps.prices = prices
   if (request.perturb) deps.perturb = { seed: request.seed ?? 42 }
+  if (request.maxUsdPerTrial !== undefined) deps.maxUsdPerTrial = request.maxUsdPerTrial
   const meterOn = request.meter ?? driverFactory === undefined
   if (meterOn) {
     deps.meter = {
@@ -250,6 +259,12 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       ...(sandbox === 'docker' ? { exposed: true, hostFromContainer: 'host.docker.internal' } : {}),
       ...(request.faultRate !== undefined && request.faultRate > 0 ? { faults: { rate: request.faultRate, seed: request.faultSeed ?? 7 } } : {}),
     }
+  if (request.replay) {
+    const source = runPaths(project.runsRoot, request.replay.runId)
+    if (!existsSync(source.plan)) throw new LaunchError(`replay source run ${request.replay.runId} not found`, 'usage')
+    if (!meterOn) throw new LaunchError('replay needs the meter (do not pass --no-meter)', 'usage')
+    deps.replay = { runId: request.replay.runId, recordingFor: (sc, arm, rep) => join(source.dir, 'meter', sc, arm, `rep${rep}.responses.jsonl`), ...(request.replay.forkAt !== undefined ? { forkAt: request.replay.forkAt } : {}), liveAllowed: request.replay.forkAt !== undefined }
+  }
   }
   if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
   if (request.resume !== undefined) deps.resume = true
@@ -264,7 +279,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
     if (request.sequential) writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, candidate: candidateSpecs[0]?.name ?? null, decisions })
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), ...sequencesOf(paths) })
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), drift: baselineDrift(project, plan, readLedgers(paths)), ...sequencesOf(paths) })
     if (request.sequential) {
       const last = decisions.at(-1)
       if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
@@ -297,6 +312,21 @@ export function archiveBaselineCosts(project: Project, arm: string, exceptRunId?
 }
 
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
+/** Behavioural drift of this run's baseline arm against archived trials of the same arm name and model. */
+export function baselineDrift(project: Project, plan: RunPlan, ledgers: RunLedger[]): import('./drift.js').DriftResult | null {
+  const current = ledgers.filter(l => l.arm === plan.baseline.name && l.error === undefined)
+  if (current.length < 2) return null
+  const archive: RunLedger[] = []
+  for (const r of listRuns(project.runsRoot)) {
+    if (r.id === plan.id) continue
+    try {
+      for (const l of readLedgers(runPaths(project.runsRoot, r.id))) if (l.arm === plan.baseline.name && l.model === current[0]!.model && l.error === undefined) archive.push(l)
+    } catch { /* unreadable run */ }
+  }
+  if (archive.length < 2) return null
+  return driftTest(current, archive)
+}
+
 export function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor> {
   const out: Record<string, NoiseFloor> = {}
   for (const r of listRuns(project.runsRoot)) {
@@ -382,13 +412,17 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
     throw new LaunchError(`judge ${sameFamily.map(j => j.model).join(', ')} shares a model family with the arms (${[...armFamilies].join(', ')}); self-preference and preference leakage bias such judgments. Configure a judge from another family in .dsh-eval/config.json (judges: [{model, baseUrl, apiKeyEnv, family}]) or pass --allow-same-family to proceed with the bias stated in the report.`, 'usage')
   }
   const annotations = readAnnotations(paths)
+  const anchors = collectAnchors(project, id)
+  if (anchors.length) options.log?.(`judge anchors: ${anchors.length} archived human-labelled trial(s) will be re-graded for the drift check`)
   const mode = options.mode ?? 'pairwise'
   const out: import('./judge.js').JudgeReport[] = []
   const artifactDir = (scenario: string, arm: string, rep: number): string => join(paths.ledgers, scenario, arm, `rep${rep}.artifacts`)
   if (mode === 'pairwise' || mode === 'both') {
     for (const cand of plan.candidates.filter(c => options.candidate === undefined || c.name === options.candidate)) {
-      const report = await judgeRun({ plan, candidate: cand.name, ledgers, specs, artifactDir, judges, ...(options.seed !== undefined ? { seed: options.seed } : {}), annotations, ...(options.log !== undefined ? { log: options.log } : {}) })
-      writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), { ...report, sameFamilyAsArms: sameFamily.length > 0 })
+      const report = await judgeRun({ plan, candidate: cand.name, ledgers, specs, artifactDir, judges, ...(options.seed !== undefined ? { seed: options.seed } : {}), annotations, ...(anchors.length ? { anchors } : {}), ...(options.log !== undefined ? { log: options.log } : {}) })
+      const { anchorAnswers, ...stored } = report
+      if (anchorAnswers) rememberAnchorAnswers(project, anchorAnswers)
+      writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), { ...stored, sameFamilyAsArms: sameFamily.length > 0 })
       out.push(report)
     }
   }
@@ -470,15 +504,19 @@ export function deriveReport(project: Project, id: string): Report {
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, ...sequencesOf(paths) })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, drift: baselineDrift(project, plan, readLedgers(paths)), ...sequencesOf(paths) })
   const judges = readJudgeReports(paths)
   const absolute = readAbsoluteJudge(paths)
   for (const c of report.candidates) {
     const j = judges[c.arm]
     if (j) {
       const models = j.models ?? [j.model]
-      const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null }
-      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null }
+      const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; abstention?: NonNullable<Report['candidates'][number]['judge']>['abstention']; anchors?: NonNullable<Report['candidates'][number]['judge']>['anchors'] }
+      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null, lengthBalancedWinRate: jj.lengthBalancedWinRate ?? null, abstention: jj.abstention ?? null, anchors: jj.anchors ?? null }
+      if (jj.abstention) report.notes.push(`${c.arm}: conformal abstention at α = ${jj.abstention.alpha} calibrated on ${jj.abstention.calibratedOn} human-labelled pair${jj.abstention.calibratedOn === 1 ? '' : 's'}: ${Number.isFinite(jj.abstention.tau) ? `threshold ${jj.abstention.tau.toFixed(2)}, ${jj.abstention.abstained} of ${jj.abstention.of} judgments withheld` : `no threshold meets the bound, all ${jj.abstention.of} judgments withheld`}.`)
+      else report.notes.push(`${c.arm}: no human-labelled pairs on this run, so the judge cannot calibrate an abstention threshold; only order disagreement and panel splits abstain.`)
+      if (jj.anchors) report.notes.push(`${c.arm}: judge anchors — ${jj.anchors.n} archived human-labelled trials re-graded: agreement with humans ${(jj.anchors.humanAgreement * 100).toFixed(0)}%${jj.anchors.stability !== null ? `, stability vs the previous judge run ${(jj.anchors.stability * 100).toFixed(0)}% on ${jj.anchors.comparedWithPrevious}` : ' (first run on these anchors, no previous answers yet)'}${jj.anchors.attribution === 'judge' ? ' → JUDGE DRIFT: the judge changed its mind on the anchors, so differences against earlier judge runs are attributed to the judge, not the system' : ''}.`)
+      if (jj.lengthBalancedWinRate !== null && jj.lengthBalancedWinRate !== undefined) report.notes.push(`${c.arm}: length-balanced candidate win rate ${(jj.lengthBalancedWinRate * 100).toFixed(0)}% (average of the candidate-longer and candidate-shorter strata).`)
       report.notes.push(`${c.arm}: blinded pairwise judge${models.length > 1 ? ` panel (${models.join(', ')}; majority of decided votes, panel unanimous on ${(j.panelAgreement * 100).toFixed(0)}% of pairs${jj.interJudgeKappa !== null && jj.interJudgeKappa !== undefined ? `, inter-judge κ ${jj.interJudgeKappa.toFixed(2)}` : ''})` : ` (${models[0]})`}, both orders, inconsistent orders count as ties: prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}% of votes${jj.longerWinsShare !== null && jj.longerWinsShare !== undefined ? `; the longer submission won ${(jj.longerWinsShare * 100).toFixed(0)}% of decided pairs` : ''}${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}${jj.sameFamilyAsArms ? '. WARNING: the judge shares a model family with the arms; self-preference bias applies' : ''}.`)
     }
     if (absolute) {
@@ -514,6 +552,41 @@ export function verifyRunIntegrity(project: Project, id: string): VerifyResult {
     const stored = existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null
     return { fresh, stored }
   })
+}
+
+/** Archived human-labelled trials with judge artifacts, newest first, for the judge drift check. */
+export function collectAnchors(project: Project, exceptRunId: string, limit = 20): Array<{ key: string; rubric: string; artifactDir: string; humanPass: boolean; previousJudgePass?: boolean }> {
+  const anchorsFile = join(project.evalDir, 'judge-anchors.json')
+  const previous: Record<string, boolean> = existsSync(anchorsFile) ? (JSON.parse(readFileSync(anchorsFile, 'utf8')) as Record<string, boolean>) : {}
+  const out: ReturnType<typeof collectAnchors> = []
+  for (const r of listRuns(project.runsRoot)) {
+    if (r.id === exceptRunId) continue
+    const paths = runPaths(project.runsRoot, r.id)
+    if (!existsSync(paths.plan)) continue
+    let plan: RunPlan
+    try { plan = readPlan(paths) } catch { continue }
+    const annotations = readAnnotations(paths)
+    const keys = Object.keys(annotations).filter(k => typeof annotations[k]?.verdict === 'boolean')
+    if (keys.length === 0) continue
+    const specs = new Map(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.judge).map(s => [s.name, s.meta.judge!]))
+    for (const k of keys) {
+      const [scenario, arm, rep] = k.split('|')
+      const spec = scenario !== undefined ? specs.get(scenario) : undefined
+      if (!spec || scenario === undefined || arm === undefined || rep === undefined) continue
+      const dir = join(paths.dir, 'ledgers', scenario, arm, `rep${rep}.artifacts`)
+      if (!existsSync(dir)) continue
+      const key = `${r.id}|${k}`
+      out.push({ key, rubric: spec.rubric, artifactDir: dir, humanPass: annotations[k]!.verdict === true, ...(previous[key] !== undefined ? { previousJudgePass: previous[key]! } : {}) })
+      if (out.length >= limit) return out
+    }
+  }
+  return out
+}
+
+export function rememberAnchorAnswers(project: Project, answers: Record<string, boolean>): void {
+  const anchorsFile = join(project.evalDir, 'judge-anchors.json')
+  const previous: Record<string, boolean> = existsSync(anchorsFile) ? (JSON.parse(readFileSync(anchorsFile, 'utf8')) as Record<string, boolean>) : {}
+  writeJsonAtomic(anchorsFile, { ...previous, ...answers })
 }
 
 export interface RegradeResult {

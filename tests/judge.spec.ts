@@ -103,3 +103,36 @@ describe('blinded pairwise judge', () => {
     expect(existsSync(join(paths.ledgers, s.name, 'base', 'rep1.artifacts', 'missing.txt'))).toBe(false)
   })
 })
+
+describe('abstention, length balance and anchors', () => {
+  it('calibrates a conformal threshold on labelled pairs and abstains below it', async () => {
+    const { conformalAbstentionThreshold, abstentionScore } = await import('../src/core/judge.js')
+    // high-score pairs are right, low-score pairs are wrong: a threshold between them keeps the error at 0
+    const labelled = [
+      ...Array.from({ length: 12 }, () => ({ score: 0.9, correct: true })),
+      ...Array.from({ length: 6 }, () => ({ score: 0.3, correct: false })),
+    ]
+    const tau = conformalAbstentionThreshold(labelled, 0.1)
+    expect(tau).toBe(0.9)
+    expect(conformalAbstentionThreshold([{ score: 0.9, correct: false }], 0.1)).toBeNull()   // one wrong label cannot meet the bound
+    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'candidate', answers: ['1', '2'], confidence: 0.6 }])).toBeCloseTo(0.7, 6)
+    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'tie', answers: ['1', '1'], confidence: 0.6 }])).toBeCloseTo(0.2, 6)   // inconsistent vote drops out, panel split halves
+  })
+
+  it('reports the length-balanced win rate and grades anchors for drift', async () => {
+    const { gradeAnchors } = await import('../src/core/judge.js')
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-anchor-'))
+    const dirA = join(root, 'a'); mkdirSync(dirA); writeFileSync(join(dirA, 'out.md'), 'GOOD work')
+    const dirB = join(root, 'b'); mkdirSync(dirB); writeFileSync(join(dirB, 'out.md'), 'BAD work')
+    const chat = async (messages: Array<{ content: string }>): Promise<{ text: string; usage: { hit: number; miss: number; output: number } }> => ({ text: JSON.stringify({ pass: messages[1]!.content.includes('GOOD'), score: 1, reason: 'x' }), usage: { hit: 0, miss: 10, output: 5 } })
+    const g = await gradeAnchors([
+      { key: 'r1|s|a|1', rubric: 'good', artifactDir: dirA, humanPass: true, previousJudgePass: true },
+      { key: 'r1|s|b|1', rubric: 'good', artifactDir: dirB, humanPass: false, previousJudgePass: true },
+    ], [{ model: 'deepseek-v4-flash', chat }])
+    expect(g.answers).toEqual({ 'r1|s|a|1': true, 'r1|s|b|1': false })
+    expect(g.summary).toMatchObject({ n: 2, humanAgreement: 1, stability: 0.5, comparedWithPrevious: 2, attribution: 'judge' })
+  })
+})

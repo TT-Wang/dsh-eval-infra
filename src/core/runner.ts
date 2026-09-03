@@ -10,6 +10,8 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import yaml from 'js-yaml'
+import { normalizeUsage } from './usage.js'
+import { bandAt, priceUsage } from './pricing.js'
 import type { ResolvedArm, RunLedger, RunPlan, Scenario, Verdict } from './types.js'
 import { armOverlays } from './arms.js'
 import { buildLedger, type EventLike } from './ledger.js'
@@ -122,6 +124,10 @@ export interface RunDeps {
   sequential?: { alpha?: number; seed?: number; minScenarios?: number; sesoiPct?: number; onDecision?: (d: SequentialDecision) => void; /** Explicit scenario order (e.g. by archive signal) instead of the seeded shuffle. */ order?: string[] }
   /** Prompt perturbation: repeats above 1 run a seeded paraphrase variant of the prompts, the same variant for every arm of that repeat. */
   perturb?: { seed: number }
+  /** Per-trial spend cap in USD, checked on observed usage after every turn (scenario meta.max_usd_per_trial wins when lower). */
+  maxUsdPerTrial?: number
+  /** Replay recorded provider responses (from another run's meter recordings) instead of calling the provider; forkAt = recorded responses to serve before going live. */
+  replay?: { runId: string; recordingFor: (scenario: string, arm: string, rep: number) => string | null; forkAt?: number; liveAllowed: boolean }
 }
 
 /** Deterministic variant choice for (scenario, rep): rep 1 always runs the original prompts. */
@@ -324,6 +330,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   const variantIndex = deps.perturb ? pickVariant(deps.perturb.seed, scenario.name, job.rep, scenario.variants?.length ?? 0) : 0
   const prompts: string[] = variantIndex > 0 ? scenario.variants![variantIndex - 1]! : scenario.prompts
   let restoreTruth: (() => void) | undefined
+  let capped: RunLedger['capped'] | undefined
+  let replaySource: string | undefined
   let meter: import('./meter.js').Meter | undefined
   let meterFile: string | undefined
   try {
@@ -336,7 +344,15 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
       mkdirSync(meterDir, { recursive: true })
       meterFile = join('meter', scenario.name, arm.name, `rep${job.rep}.jsonl`)
       const faultSeed = deps.meter.faults ? (deps.meter.faults.seed ?? 7) * 1000003 + job.order : undefined
-      meter = await startMeter({ upstream: deps.meter.upstream, ledgerFile: join(deps.paths.dir, meterFile), ...(deps.meter.exposed ? { exposed: true } : {}), ...(deps.meter.faults ? { faults: { ...deps.meter.faults, ...(faultSeed !== undefined ? { seed: faultSeed } : {}) } } : {}) })
+      const recordFile = join(meterDir, `rep${job.rep}.responses.jsonl`)
+      let replay: import('./meter.js').MeterOptions['replay']
+      if (deps.replay) {
+        const { readRecording } = await import('./meter.js')
+        const src = deps.replay.recordingFor(scenario.name, arm.name, job.rep)
+        if (src !== null && existsSync(src)) { replay = { responses: readRecording(src), ...(deps.replay.forkAt !== undefined ? { liveAfter: deps.replay.forkAt } : {}), live: deps.replay.liveAllowed }; replaySource = src }
+        else if (!deps.replay.liveAllowed) throw new Error(`no recording for ${scenario.name}/${arm.name}#${job.rep} in run ${deps.replay.runId} and live calls are off`)
+      }
+      meter = await startMeter({ upstream: deps.meter.upstream, ledgerFile: join(deps.paths.dir, meterFile), recordFile, ...(deps.meter.exposed ? { exposed: true } : {}), ...(deps.meter.faults ? { faults: { ...deps.meter.faults, ...(faultSeed !== undefined ? { seed: faultSeed } : {}) } } : {}), ...(replay ? { replay } : {}) })
       const host = deps.meter.hostFromContainer ?? '127.0.0.1'
       const overlay = join(deps.paths.arms, `_meter-${meter.port}.patch.yml`)
       writeFileSync(overlay, `# per-trial usage meter (dsh-eval); identical role in every arm\n` + yaml.dump([{ id: 'llm-deepseek', config: { baseURL: `http://${host}:${meter.port}` } }]))
@@ -347,8 +363,19 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     let driver = makeDriver()
     // A fresh session numbers its turns from 1 again; the ledger keeps one global turn axis.
     let turnOffset = 0
+    const capUsd = [deps.maxUsdPerTrial, scenario.meta.max_usd_per_trial].filter((x): x is number => typeof x === 'number' && x > 0).reduce((a, b) => Math.min(a, b), Infinity)
+    const spentSoFar = (): number => {
+      let usd = 0
+      for (const e of events) {
+        if (e.type !== 'assistant/message') continue
+        const u = normalizeUsage((e as { data?: { usage?: unknown } }).data?.usage)
+        if (u) usd += priceUsage(arm.model, bandAt(Date.now(), deps.prices), u, deps.prices)
+      }
+      return usd
+    }
     try {
       for (let i = 0; i < prompts.length; i += 1) {
+        if (capped) break
         if (i > 0 && breaks.has(i + 1)) {
           await driver.close()
           sessions += 1
@@ -362,6 +389,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
         const result = await driver.runTurn(prompts[i]!, options)
         turnWall.set(i + 1, Date.now() - t0)
         events.push(...(turnOffset === 0 ? result.events : result.events.map(e => offsetTurn(e, turnOffset))))
+        if (Number.isFinite(capUsd)) { const spent = spentSoFar(); if (spent > capUsd) capped = { maxUsd: capUsd, usdAtStop: spent, afterTurn: i + 1 } }
         if (result.sessionId !== null) sessionId = sessionId === null || sessionId === result.sessionId ? result.sessionId : `${sessionId},${result.sessionId}`
       }
     } finally {
@@ -372,7 +400,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   try {
     restoreTruth?.()
-    verdict = await scenarioVerify(scenario, workdir)
+    verdict = capped ? { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` } : await scenarioVerify(scenario, workdir)
     // Judge artifacts: copy the listed files out before the workspace is discarded.
     if (scenario.meta.judge && scenario.meta.judge.artifacts.length > 0) {
       const dest = join(deps.paths.dir, 'ledgers', scenario.name, arm.name, `rep${job.rep}.artifacts`)
@@ -418,12 +446,13 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     const deviationPct = meterTokens > 0 ? (Math.abs(ledgerTokens - meterTokens) / meterTokens) * 100 : null
     const tolerance = deps.meter?.tolerancePct ?? 1
     const reconciled = meterTokens > 0 ? deviationPct! <= tolerance : ledgerTokens === 0
-    ledger.usageProvenance = { source: 'meter', meter: totals, ledgerTokens, meterTokens, deviationPct, reconciled, ...(meterFile !== undefined ? { meterFile } : {}) }
+    ledger.usageProvenance = { source: replaySource !== undefined ? 'replay' : 'meter', meter: totals, ledgerTokens, meterTokens, deviationPct, reconciled, ...(meterFile !== undefined ? { meterFile } : {}), ...(replaySource !== undefined && deps.replay ? { replay: { runId: deps.replay.runId, replayed: totals.replayed, live: totals.forwarded, ...(deps.replay.forkAt !== undefined ? { forkAt: deps.replay.forkAt } : {}) } } : {}) }
     try { rmSync(join(deps.paths.arms, `_meter-${meter.port}.patch.yml`), { force: true }) } catch { /* best effort */ }
   } else {
     ledger.usageProvenance = { source: 'self-reported' }
   }
   if (deps.perturb) ledger.promptVariant = variantIndex
+  if (capped) ledger.capped = capped
   const verifierPath = join(scenario.dir, 'verify.py')
   if (existsSync(verifierPath)) ledger.verifierSha = createHash('sha256').update(readFileSync(verifierPath)).digest('hex')
   mkdirSync(join(deps.paths.dir, 'ledgers', scenario.name, arm.name), { recursive: true })

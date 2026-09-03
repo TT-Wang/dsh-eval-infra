@@ -36,6 +36,13 @@ export interface RunRequest {
     meter?: boolean;
     /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
     perturb?: boolean;
+    /** Replay another run's recorded provider responses (keyless); forkAt serves that many recorded responses per trial, then goes live. */
+    replay?: {
+        runId: string;
+        forkAt?: number;
+    };
+    /** Per-trial spend cap in USD (observed usage after each turn). */
+    maxUsdPerTrial?: number;
     /** Sequential scenario order: seeded shuffle (default) or archive signal-to-noise, strongest first. */
     order?: 'seed' | 'signal';
     /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
@@ -85,6 +92,8 @@ export declare function launchRun(project: Project, request: RunRequest, hooks?:
 /** Per-scenario mean cost of an arm across earlier runs (excluding `exceptRunId`) — the CUPED covariate. */
 export declare function archiveBaselineCosts(project: Project, arm: string, exceptRunId?: string): Record<string, number>;
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
+/** Behavioural drift of this run's baseline arm against archived trials of the same arm name and model. */
+export declare function baselineDrift(project: Project, plan: RunPlan, ledgers: RunLedger[]): import('./drift.js').DriftResult | null;
 export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
 export interface JudgeOptions {
     /** Judge models; several form a panel. Each may be `model` or `model@baseUrl` with the key from `<NAME>_API_KEY` env, or a name from project config `judges`. */
@@ -140,6 +149,15 @@ export declare function deriveReport(project: Project, id: string): Report;
 export declare function rebuildReport(project: Project, id: string): Report;
 /** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
 export declare function verifyRunIntegrity(project: Project, id: string): VerifyResult;
+/** Archived human-labelled trials with judge artifacts, newest first, for the judge drift check. */
+export declare function collectAnchors(project: Project, exceptRunId: string, limit?: number): Array<{
+    key: string;
+    rubric: string;
+    artifactDir: string;
+    humanPass: boolean;
+    previousJudgePass?: boolean;
+}>;
+export declare function rememberAnchorAnswers(project: Project, answers: Record<string, boolean>): void;
 export interface RegradeResult {
     at: string;
     regradable: number;

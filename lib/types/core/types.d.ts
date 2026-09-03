@@ -5,6 +5,8 @@
  */
 /** meta.json of a scenario directory. */
 export interface ScenarioMeta {
+    /** Per-trial spend cap in USD (observed usage; the trial stops and counts as a failure once exceeded). */
+    max_usd_per_trial?: number;
     name: string;
     /** Number of user turns (must equal prompts.json length). */
     turns: number;
@@ -152,7 +154,14 @@ export interface Verdict {
 }
 /** The ledger of one run: one scenario × one arm × one repeat. */
 export interface UsageProvenance {
-    source: 'self-reported' | 'meter';
+    source: 'self-reported' | 'meter' | 'replay';
+    /** Replay: which run's recording served the responses and how many were replayed vs live (fork). */
+    replay?: {
+        runId: string;
+        replayed: number;
+        live: number;
+        forkAt?: number;
+    };
     meter?: {
         requests: number;
         forwarded: number;
@@ -163,6 +172,7 @@ export interface UsageProvenance {
         reasoning: number;
         servedModels?: string[];
         fingerprints?: string[];
+        replayed?: number;
     };
     /** Total tokens (hit + miss + output) as the runtime reported them. */
     ledgerTokens?: number;
@@ -234,6 +244,12 @@ export interface RunLedger {
     verifierSha?: string;
     /** 0 = the scenario's own prompts; k ≥ 1 = the k-th paraphrase variant (same variant for every arm of the repeat). */
     promptVariant?: number;
+    /** Set when the trial was stopped by the per-trial spend cap (an observed failure, not a prediction). */
+    capped?: {
+        maxUsd: number;
+        usdAtStop: number;
+        afterTurn: number;
+    };
     sessionId: string | null;
     /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
     sessions: number;
@@ -260,6 +276,11 @@ export interface RunPlan {
     sandbox?: 'host' | 'docker';
     /** Prompt perturbation on: repeats above 1 use a seeded paraphrase variant, identical across arms. */
     perturb?: boolean;
+    /** Replay of a recorded run (keyless); forkAt = number of recorded responses to serve before going live. */
+    replay?: {
+        runId: string;
+        forkAt?: number;
+    };
 }
 /** Environment facts recorded once per run for reproducibility. */
 export interface RunEnvironment {

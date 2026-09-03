@@ -271,7 +271,7 @@ describe('hierarchical bootstrap and holdout', () => {
       mk('h1', 'a', true, 1), mk('h1', 'b', false, 1), mk('h1', 'c', true, 1),
     ]
     const rep = buildReport(plan, ledgers, { holdout: new Set(['h1']) })
-    expect(rep.candidates[0]!.alpha).toBeCloseTo(0.025, 6)
+    expect(rep.candidates[0]!.alpha).toBeCloseTo(0.0125, 6)
     expect(rep.notes.join(' ')).toMatch(/Bonferroni/)
     const b = rep.candidates[0]!
     expect(b.holdoutGap).toEqual({ dev: 100, holdout: -100, devScenarios: 2, holdoutScenarios: 1 })
@@ -367,5 +367,20 @@ describe('project prices', () => {
     expect(Object.keys(table.models)).toEqual(expect.arrayContaining(['deepseek-v4-flash', 'gpt-5.2']))
     expect(table.peak).toEqual(DEEPSEEK_PRICES.peak)
     expect(priceUsage('gpt-5.2', 'peak', { hit: 1e6, miss: 1e6, output: 1e6, reasoning: 0 }, table)).toBeCloseTo(11, 6)
+  })
+})
+
+describe('behavioural drift', () => {
+  it('finds no drift between like distributions and drift when the tool mix changes', async () => {
+    const { driftTest } = await import('../src/core/drift.js')
+    const mkL = (scenario: string, arm: string, rep: number, calls: string[]): any => ({ scenario, arm, rep, steps: calls.map(c => ({ calls: [{ name: c }] })), totals: { usd: 0 }, verdict: { ok: true } })
+    const archive = [1, 2, 3, 4].flatMap(r => [mkL('s1', 'base', r, ['read', 'grep', 'bash', 'read']), mkL('s2', 'base', r, ['bash', 'bash', 'write'])])
+    const same = [5, 6].flatMap(r => [mkL('s1', 'base', r, ['read', 'grep', 'bash', 'read']), mkL('s2', 'base', r, ['bash', 'bash', 'write'])])
+    const changed = [5, 6].flatMap(r => [mkL('s1', 'base', r, ['todo_write', 'todo_write', 'todo_write', 'write']), mkL('s2', 'base', r, ['todo_write', 'todo_write', 'todo_write'])])
+    expect(driftTest(same, archive).verdict).toBe('no-drift')
+    const d = driftTest(changed, archive)
+    expect(d.verdict).toBe('drift')
+    expect(d.p).toBeLessThan(0.05)
+    expect(driftTest([mkL('s9', 'base', 1, ['read'])], archive).verdict).toBe('insufficient')
   })
 })
