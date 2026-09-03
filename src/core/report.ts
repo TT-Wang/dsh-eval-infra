@@ -104,6 +104,8 @@ export interface CandidateReport {
 export interface ReportOptions {
   /** Smallest cost effect of interest in percent; a CI inside ±sesoi reads "equivalent" (default 10). */
   sesoiPct?: number
+  /** Comparable scenarios needed before any directional or equivalence claim (default 3); fewer reads "inconclusive". */
+  minScenarios?: number
 }
 
 function armSummary(arm: string, pairs: PairedScenario[], side: 'baseline' | 'candidate', ledgers: RunLedger[]): ArmSummary {
@@ -220,6 +222,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
 
 export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: ReportOptions = {}): Report {
   const sesoi = options.sesoiPct ?? 10
+  const minScenarios = options.minScenarios ?? 3
   const scenarios = [...new Set([...plan.scenarios, ...ledgers.map(l => l.scenario)])]
   const notes: string[] = []
   const candidates: CandidateReport[] = plan.candidates.map((cand) => {
@@ -254,8 +257,9 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const ciText = `${fmtPct(costPctCI.mean)}, 95% CI ${fmtPct(costPctCI.lo)} to ${fmtPct(costPctCI.hi)}, ${comparable.length} scenario${comparable.length === 1 ? '' : 's'}`
     const gains = improvements.length ? ` Improves correctness on ${improvements.join(', ')}.` : ''
     if (comparable.length > 0) {
-      if (costPctCI.significant) costReading = costPctCI.mean < 0 ? 'cheaper' : 'more-expensive'
-      else if (comparable.length >= 2 && costPctCI.lo > -sesoi && costPctCI.hi < sesoi) costReading = 'equivalent'
+      if (comparable.length < minScenarios) costReading = 'inconclusive'
+      else if (costPctCI.significant) costReading = costPctCI.mean < 0 ? 'cheaper' : 'more-expensive'
+      else if (costPctCI.lo > -sesoi && costPctCI.hi < sesoi) costReading = 'equivalent'
       else costReading = 'inconclusive'
     }
     if (gate === 'regressions') verdict = `REGRESSION on ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} (${regressions.join(', ')}); cost is not compared until this is fixed.`
@@ -263,6 +267,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     else if (costReading === 'none') verdict = 'No scenario where both arms passed; nothing to compare on cost.'
     else if (costReading === 'equivalent') verdict = `Cost equivalent within ±${sesoi}% (${ciText}), no regressions.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < 2) verdict = `Single comparable scenario: ${fmtPct(costPctCI.mean)} on cost, no interval possible; add scenarios or repeats before reading this as an effect.${gains}`
+    else if (costReading === 'inconclusive' && comparable.length < minScenarios) verdict = `Only ${comparable.length} comparable scenarios (${ciText}); a bootstrap over fewer than ${minScenarios} scenarios cannot support a direction — add scenarios before reading this as an effect.${gains}`
     else if (costReading === 'inconclusive') verdict = `Cost difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${ciText}); more repeats or scenarios needed.${gains}`
     else verdict = `${costReading === 'cheaper' ? 'Cheaper' : 'More expensive'} by ${fmtPct(Math.abs(costPctCI.mean))} (${ciText}), no regressions.${gains}`
     return {

@@ -33,7 +33,10 @@ interface Args {
   flags: Record<string, string | boolean | string[]>
 }
 
-function parseArgs(argv: string[]): Args {
+/** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help'])
+
+export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
   const positional: string[] = []
   const flags: Record<string, string | boolean | string[]> = {}
@@ -44,6 +47,7 @@ function parseArgs(argv: string[]): Args {
       const key = eq === -1 ? a.slice(2) : a.slice(2, eq)
       let value: string | boolean
       if (eq !== -1) value = a.slice(eq + 1)
+      else if (BOOLEAN_FLAGS.has(key)) value = true
       else if (rest[i + 1] !== undefined && !rest[i + 1]!.startsWith('--')) { value = rest[i + 1]!; i += 1 }
       else value = true
       const prev = flags[key]

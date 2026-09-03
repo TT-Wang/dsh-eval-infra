@@ -87,6 +87,33 @@ describe('dotenv', () => {
   })
 })
 
+describe('report claims', () => {
+  it('needs at least three comparable scenarios before calling a direction', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, usd: number) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: ['s1', 's2'], repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const two = buildReport(plan, [mk('s1', 'a', 1), mk('s1', 'b', 1.2), mk('s2', 'a', 1), mk('s2', 'b', 1.15)])
+    expect(two.candidates[0]!.costReading).toBe('inconclusive')
+    expect(two.candidates[0]!.verdict).toMatch(/Only 2 comparable scenarios/)
+    const plan3 = { ...plan, scenarios: ['s1', 's2', 's3'] }
+    const three = buildReport(plan3, [mk('s1', 'a', 1), mk('s1', 'b', 1.2), mk('s2', 'a', 1), mk('s2', 'b', 1.15), mk('s3', 'a', 1), mk('s3', 'b', 1.25)])
+    expect(three.candidates[0]!.costReading).toBe('more-expensive')
+    const flat = buildReport(plan3, [mk('s1', 'a', 1), mk('s1', 'b', 1.01), mk('s2', 'a', 1), mk('s2', 'b', 0.99), mk('s3', 'a', 1), mk('s3', 'b', 1.02)])
+    expect(flat.candidates[0]!.costReading).toBe('equivalent')
+  })
+  it('parses boolean flags without swallowing the next positional', async () => {
+    const { parseArgs } = await import('../src/cli.js')
+    const a = parseArgs(['run', '--baseline', 'base', '--aa', 'm1*', '--repeats', '2', '--allow-multi', 'p1*'])
+    expect(a.flags['aa']).toBe(true)
+    expect(a.flags['allow-multi']).toBe(true)
+    expect(a.flags['repeats']).toBe('2')
+    expect(a.positional).toEqual(['m1*', 'p1*'])
+  })
+})
+
 describe('ground-truth stash', () => {
   it('moves <workdir>/.truth out during the run and restores it for verify', async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs')

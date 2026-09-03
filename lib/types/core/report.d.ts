@@ -111,6 +111,8 @@ export interface CandidateReport {
 export interface ReportOptions {
     /** Smallest cost effect of interest in percent; a CI inside ±sesoi reads "equivalent" (default 10). */
     sesoiPct?: number;
+    /** Comparable scenarios needed before any directional or equivalence claim (default 3); fewer reads "inconclusive". */
+    minScenarios?: number;
 }
 export interface Report {
     schema: 'dsh-eval-report/1';
