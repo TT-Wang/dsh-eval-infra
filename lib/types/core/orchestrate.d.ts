@@ -29,6 +29,10 @@ export interface RunRequest {
     includeHoldout?: boolean;
     /** Anytime-valid sequential mode: shuffled scenario order, early stop once the paired comparison is decided. */
     sequential?: boolean;
+    /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
+    sandbox?: 'host' | 'docker';
+    /** Container image for docker mode (default node:22-bookworm-slim). */
+    dockerImage?: string;
     /** Seed for the sequential shuffle (default 42). */
     seed?: number;
 }
@@ -73,12 +77,15 @@ export declare function archiveBaselineCosts(project: Project, arm: string, exce
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
 export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
 export interface JudgeOptions {
-    model?: string;
+    /** Judge models; several form a panel. Each may be `model` or `model@baseUrl` with the key from `<NAME>_API_KEY` env, or a name from project config `judges`. */
+    models?: string[];
     candidate?: string;
     seed?: number;
+    /** pairwise (default), absolute (per-trial grades + PPI++), or both. */
+    mode?: 'pairwise' | 'absolute' | 'both';
     log?: (line: string) => void;
-    /** Test seam: replace the chat call. */
-    chat?: import('./judge.js').ChatCall;
+    /** Test seam: replace the chat calls (one per model). */
+    chats?: Record<string, import('./judge.js').ChatCall>;
 }
 /**
  * Run the blinded pairwise judge over every scenario of a finished run that
@@ -87,6 +94,8 @@ export interface JudgeOptions {
  * the usual v4-flash arms (same family: a stated limitation).
  */
 export declare function runJudge(project: Project, id: string, options?: JudgeOptions): Promise<import('./judge.js').JudgeReport[]>;
+/** Absolute judge report stored with a run, if any. */
+export declare function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('./judge.js').AbsoluteReport | null;
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
 export declare function sequencesOf(paths: ReturnType<typeof runPaths>): {
     sequences?: Record<string, {

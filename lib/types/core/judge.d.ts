@@ -19,8 +19,16 @@ export interface JudgeConfig {
 export interface Judgment {
     scenario: string;
     rep: number;
-    /** Preference after both orders: 'candidate', 'baseline', or 'tie' (including inconsistent answers). */
+    /** Panel preference: majority of decided votes when it is a strict majority of the panel; otherwise 'tie'. */
     preference: 'candidate' | 'baseline' | 'tie';
+    /** One vote per judge model, each already order-swapped (inconsistent orders → tie). */
+    votes: Array<{
+        model: string;
+        preference: 'candidate' | 'baseline' | 'tie';
+        answers: [string, string];
+        reasons: [string, string];
+        usd: number;
+    }>;
     /** The two raw answers as seen by the judge ('first' | 'second' | 'tie'), for the two presentation orders. */
     answers: [string, string];
     /** Which artifact was shown first in the first call ('baseline' | 'candidate'). */
@@ -38,7 +46,12 @@ export interface JudgeReport {
     runId: string;
     candidate: string;
     baseline: string;
+    /** Panel models (one entry = single judge). */
+    models: string[];
+    /** Kept for readers of older reports; the first panel model. */
     model: string;
+    /** Share of pairs on which every judge agreed (1 for a single judge). */
+    panelAgreement: number;
     generatedAt: string;
     judgments: Judgment[];
     wins: number;
@@ -76,6 +89,10 @@ export interface ChatCall {
 }
 /** DeepSeek chat completions over HTTPS (OpenAI-compatible); no dsh runtime needed. */
 export declare function deepseekChat(config: JudgeConfig): ChatCall;
+export interface JudgeModel {
+    model: string;
+    chat: ChatCall;
+}
 export interface JudgeInput {
     plan: RunPlan;
     candidate: string;
@@ -84,8 +101,8 @@ export interface JudgeInput {
     specs: Record<string, JudgeSpec>;
     /** Artifact directory for a trial. */
     artifactDir: (scenario: string, arm: string, rep: number) => string;
-    chat: ChatCall;
-    model: string;
+    /** The judge panel: one or more models; each is asked in both orders. */
+    judges: JudgeModel[];
     seed?: number;
     /** Human annotations keyed "scenario|arm|rep" → verdict boolean, for agreement. */
     annotations?: Record<string, {
@@ -94,4 +111,56 @@ export interface JudgeInput {
     log?: (line: string) => void;
 }
 export declare function judgeRun(input: JudgeInput): Promise<JudgeReport>;
+export interface AbsoluteGrade {
+    scenario: string;
+    arm: string;
+    rep: number;
+    pass: boolean;
+    score: number;
+    reason: string;
+    model: string;
+    usd: number;
+}
+/** PPI++ (Angelopoulos, Duchi, Zrnic 2023) estimate of a pass rate from judge grades f on all trials and human labels Y on a labelled subset. */
+export declare function ppiRate(all: number[], labelled: Array<{
+    f: number;
+    y: number;
+}>): {
+    estimate: number;
+    se: number;
+    lambda: number;
+    n: number;
+    N: number;
+    judgeOnly: number;
+};
+export interface AbsoluteReport {
+    schema: 'dsh-eval-judge-absolute/1';
+    runId: string;
+    models: string[];
+    generatedAt: string;
+    grades: AbsoluteGrade[];
+    /** Per arm: judge-only pass rate, PPI++ estimate with SE using human annotations as labels, and how many labels were used. */
+    arms: Record<string, {
+        estimate: number;
+        se: number;
+        lambda: number;
+        n: number;
+        N: number;
+        judgeOnly: number;
+    }>;
+    usd: number;
+}
+export interface AbsoluteInput {
+    plan: RunPlan;
+    ledgers: RunLedger[];
+    specs: Record<string, JudgeSpec>;
+    artifactDir: (scenario: string, arm: string, rep: number) => string;
+    judges: JudgeModel[];
+    annotations?: Record<string, {
+        verdict: boolean | null;
+    }>;
+    log?: (line: string) => void;
+}
+/** Grade every trial of every judged scenario on its own (no pairing), then rectify per-arm pass rates with human labels via PPI++. */
+export declare function absoluteJudge(input: AbsoluteInput): Promise<AbsoluteReport>;
 export { mean as _mean };

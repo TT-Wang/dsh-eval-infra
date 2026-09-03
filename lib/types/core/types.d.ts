@@ -216,6 +216,8 @@ export interface RunPlan {
     scenarioRoot: string;
     /** Free-text label. */
     label?: string;
+    /** Execution isolation used for the trials. */
+    sandbox?: 'host' | 'docker';
 }
 /** Environment facts recorded once per run for reproducibility. */
 export interface RunEnvironment {
@@ -241,4 +243,5 @@ export interface RunIndexEntry {
     completed: number;
     total: number;
     usd: number;
+    sandbox?: 'host' | 'docker';
 }

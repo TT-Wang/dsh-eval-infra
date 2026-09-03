@@ -192,6 +192,8 @@ export interface CandidateReport {
     /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
     judge?: {
         model: string;
+        models?: string[];
+        panelAgreement?: number;
         wins: number;
         losses: number;
         ties: number;
@@ -204,6 +206,28 @@ export interface CandidateReport {
             agree: number;
             kappa: number | null;
         } | null;
+    };
+    /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
+    absolute?: {
+        baseline: {
+            estimate: number;
+            se: number;
+            lambda: number;
+            n: number;
+            N: number;
+            judgeOnly: number;
+        };
+        candidate: {
+            estimate: number;
+            se: number;
+            lambda: number;
+            n: number;
+            N: number;
+            judgeOnly: number;
+        };
+        diff: number;
+        diffSe: number;
+        models: string[];
     };
     verdict: string;
 }

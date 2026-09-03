@@ -61,6 +61,8 @@ export interface RunDeps {
     /** Skip jobs whose ledger already exists (resume). */
     resume?: boolean;
     workRoot?: string;
+    /** Extra rows for the shared base overlay (container mode adds its rows here). */
+    baseOverlayRows?: Array<Record<string, unknown>>;
     /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
     maxUsd?: number;
     /**
@@ -93,8 +95,8 @@ export interface SequentialDecision {
     decided: boolean;
     reason: string;
 }
-/** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
-export declare function writeBaseOverlays(armsDir: string): {
+/** Base overlays every arm shares; the scenario decides whether network tools are allowed. `extraRows` (e.g. the container rows) apply to both. */
+export declare function writeBaseOverlays(armsDir: string, extraRows?: Array<Record<string, unknown>>): {
     noNetwork: string;
     network: string;
 };

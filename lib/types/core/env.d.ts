@@ -9,8 +9,15 @@ export declare function userDshHome(): string;
 export declare function resolveApiKey(env?: NodeJS.ProcessEnv): string | undefined;
 /** `dsh --version` output, or null when the CLI is unavailable. */
 export declare function dshVersion(bin?: string): Promise<string | null>;
-/** The dsh source checkout the local install points at, when discoverable. */
-export declare function dshSourceRoot(): string | null;
+/**
+ * The dsh source checkout the local install points at, when discoverable.
+ * By default the real path; `{ realpath: false }` returns the path as configured
+ * (usually the `~/.dsh/source/current` link), which plugins' dependency links go
+ * through and which container mounts therefore need.
+ */
+export declare function dshSourceRoot(options?: {
+    realpath?: boolean;
+}): string | null;
 /** Git revision of the dsh source checkout, when it is a git worktree. */
 export declare function dshSourceRevision(root: string | null): Promise<string | null>;
 export declare function evalInfraVersion(): string;
