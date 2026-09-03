@@ -14,7 +14,7 @@ import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
-import { listRuns, newRunId, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
+import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
 import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
 
 export interface RunRequest {
@@ -237,7 +237,7 @@ export function rebuildReport(project: Project, id: string): Report {
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
-  const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id) })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id) })
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))
   return report

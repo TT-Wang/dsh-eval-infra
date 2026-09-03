@@ -16,7 +16,7 @@ import { describeDiff, evalProfileManifest, prepareArms } from '../core/plan.js'
 import { loadProject, type Project } from '../core/project.js'
 import type { Report } from '../core/report.js'
 import { selfcheckAll } from '../core/selfcheck.js'
-import { listRuns, readEnvironment, readJson, readLedgers, readPlan, runPaths, type Progress } from '../core/store.js'
+import { annotationKey, applyAnnotations, listRuns, readAnnotations, readEnvironment, readJson, readLedgers, readPlan, runPaths, writeAnnotations, type Annotation, type Progress } from '../core/store.js'
 import type { RunLedger } from '../core/types.js'
 import type { TraceRow } from '../core/ledger.js'
 
@@ -217,8 +217,25 @@ export class EvalApp {
         return
       }
       if (method === 'POST' && seg[2] === 'report') { json(res, 200, rebuildReport(project, id)); return }
+      if (seg[2] === 'annotations') {
+        if (method === 'GET') { json(res, 200, readAnnotations(paths)); return }
+        if (method === 'PUT') {
+          const body = await readBody(req) as { scenario: string; arm: string; rep: number; verdict: boolean | null; note?: string; by?: string; remove?: boolean }
+          const all = readAnnotations(paths)
+          const key = annotationKey(body.scenario, body.arm, Number(body.rep))
+          if (body.remove) delete all[key]
+          else {
+            const a: Annotation = { verdict: body.verdict ?? null, note: (body.note ?? '').slice(0, 2000), by: (body.by ?? 'reviewer').slice(0, 80), at: new Date().toISOString() }
+            all[key] = a
+          }
+          writeAnnotations(paths, all)
+          const report = rebuildReport(project, id)
+          json(res, 200, { annotations: all, report })
+          return
+        }
+      }
       if (method === 'GET' && seg[2] === 'ledgers' && seg.length === 3) {
-        json(res, 200, readLedgers(paths).map(l => ({ ...l, steps: l.steps.map(s => ({ ...s, calls: s.calls.map(c => c.name) })) })))
+        json(res, 200, applyAnnotations(readLedgers(paths), readAnnotations(paths)).map(l => ({ ...l, steps: l.steps.map(s => ({ ...s, calls: s.calls.map(c => c.name) })) })))
         return
       }
       if (method === 'GET' && seg[2] === 'ledgers' && seg.length === 7) {

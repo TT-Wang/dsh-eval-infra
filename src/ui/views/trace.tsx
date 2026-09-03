@@ -16,10 +16,24 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
   const [showReasoning, setShowReasoning] = useState(false)
   const [openObs, setOpenObs] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState('')
+  const [annotation, setAnnotation] = useState<{ verdict: boolean | null; note: string; by: string; at: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const annotate = async (verdict: boolean | null, remove = false): Promise<void> => {
+    setSaving(true)
+    try {
+      await api.annotate(runId, { scenario, arm, rep, verdict, note, remove })
+      const all = await api.annotations(runId)
+      setAnnotation(all[`${scenario}|${arm}|${rep}`] ?? null)
+      const ledger = await api.ledger(runId, scenario, arm, rep)
+      setTrial(t => t ? { ...t, ledger } : t)
+    } catch (e) { setError(String(e)) } finally { setSaving(false) }
+  }
 
   useEffect(() => {
     setTrial(null); setOther(null); setSelected(0); setOpenObs(new Set())
     Promise.all([api.ledger(runId, scenario, arm, rep), api.trace(runId, scenario, arm, rep)]).then(([ledger, trace]) => setTrial({ ledger, trace })).catch(e => setError(String(e)))
+    api.annotations(runId).then(all => { const a = all[`${scenario}|${arm}|${rep}`] ?? null; setAnnotation(a); setNote(a?.note ?? '') }).catch(() => { /* static export */ })
     api.run(runId).then((d) => {
       const arms = [d.plan.baseline.name, ...d.plan.candidates.map(c => c.name)]
       const o = arms.find(a => a !== arm) ?? null
@@ -103,6 +117,18 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
               <pre>{ledger.verdict?.detail ?? '(no verdict)'}</pre>
               {ledger.error && <p class="error">runtime error: {ledger.error}</p>}
               <p class="muted small">turn ends: {ledger.turns.map(x => `${x.turn}:${x.end}`).join(' · ')}</p>
+              <div class="annotate">
+                <h3>Human review</h3>
+                {annotation && <p class="small"><span class={`cls ${annotation.verdict === null ? 'incomplete' : annotation.verdict ? 'same' : 'regression'}`}>{annotation.verdict === null ? 'note' : annotation.verdict ? 'marked pass' : 'marked fail'}</span> by {annotation.by} at {fmt.time(annotation.at)}{annotation.note ? ` — ${annotation.note}` : ''}</p>}
+                <textarea rows={2} placeholder="why (kept with the run, shown in the report)" value={note} onInput={e => setNote((e.target as HTMLTextAreaElement).value)} />
+                <div class="row">
+                  <button class="btn" disabled={saving} onClick={() => void annotate(true)}>mark pass</button>
+                  <button class="btn" disabled={saving} onClick={() => void annotate(false)}>mark fail</button>
+                  <button class="btn" disabled={saving} onClick={() => void annotate(null)}>note only</button>
+                  {annotation && <button class="btn small" disabled={saving} onClick={() => void annotate(null, true)}>remove</button>}
+                </div>
+                <p class="muted small">Overrides replace the verdict in the report (the machine verdict stays in the ledger and the report says how many were overridden).</p>
+              </div>
               {compare && other && <p class="muted small">{otherArm}: <span class={`cls ${other.ledger.verdict?.ok ? 'same' : 'regression'}`}>{other.ledger.verdict?.ok ? 'pass' : 'fail'}</span> {other.ledger.verdict?.detail}</p>}
             </div>
           )}

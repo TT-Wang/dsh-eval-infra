@@ -32,7 +32,7 @@ export interface ArmScenarioStats {
   wallMsMean: number
   peakPromptMax: number
   /** Ledger order per repeat (rep → verdict/cost) for the pairing. */
-  byRep: Record<number, { ok: boolean; usd: number; error: boolean; steps: number; usdPeak: number; usdOffpeak: number }>
+  byRep: Record<number, { ok: boolean; usd: number; error: boolean; steps: number; usdPeak: number; usdOffpeak: number; overridden?: boolean }>
 }
 
 export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete'
@@ -208,7 +208,7 @@ function armScenarioStats(arm: string, scenario: string, ledgers: RunLedger[]): 
   const passed = rows.filter(r => r.verdict?.ok === true && r.error === undefined)
   const usd = rows.map(r => r.totals.usd)
   const byRep: ArmScenarioStats['byRep'] = {}
-  for (const r of rows) byRep[r.rep] = { ok: r.verdict?.ok === true && r.error === undefined, usd: r.totals.usd, error: r.error !== undefined, steps: r.totals.steps, usdPeak: r.totals.usdPeak, usdOffpeak: r.totals.usdOffpeak }
+  for (const r of rows) byRep[r.rep] = { ok: r.verdict?.ok === true && r.error === undefined, usd: r.totals.usd, error: r.error !== undefined, steps: r.totals.steps, usdPeak: r.totals.usdPeak, usdOffpeak: r.totals.usdOffpeak, ...(r.overridden ? { overridden: true } : {}) }
   return {
     arm,
     scenario,
@@ -388,6 +388,8 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   }
   const errors = ledgers.filter(l => l.error !== undefined).length
   if (errors > 0) notes.push(`${errors} run(s) ended with a runtime error (timeout or crash); they count as failures.`)
+  const overridden = ledgers.filter(l => l.overridden).length
+  if (overridden > 0) notes.push(`${overridden} verdict(s) were overridden by a human annotation; the machine verdicts are kept in the ledgers.`)
   if (plan.repeats < 3) notes.push(`repeats=${plan.repeats}: below the 3-repeat floor the literature recommends; single-run noise is around ±30% on cost, so treat every difference as indicative only.`)
   if (plan.candidates.some(c => c.name === `${plan.baseline.name}-aa`)) notes.push('A/A run: the candidate is a copy of the baseline; any difference reported here is the noise floor of this setup.')
   const bands = new Set(ledgers.flatMap(l => l.steps.map(s => s.band)))

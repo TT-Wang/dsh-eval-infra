@@ -90,6 +90,19 @@ describe('http api', () => {
     const runs = await get<Array<{ verdicts?: Array<{ arm: string; gate: string }> }>>('/api/runs')
     expect(runs.body[0]!.verdicts?.[0]).toMatchObject({ arm: 'cand', gate: 'pass' })
   })
+  it('stores human annotations and applies them to the report', async () => {
+    const put = await fetch(url + 'api/runs/r1/annotations', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scenario: 't1_write_answer', arm: 'cand', rep: 1, verdict: false, note: 'wrong sum on inspection', by: 'tester' }) })
+    expect(put.status).toBe(200)
+    const body = await put.json() as { report: { candidates: Array<{ scenarios: Array<{ candidate: { passes: number } }> }>; notes: string[] } }
+    expect(body.report.candidates[0]!.scenarios[0]!.candidate.passes).toBe(1)
+    expect(body.report.notes.join(' ')).toMatch(/overridden/)
+    const ledgers = await get<Array<{ arm: string; rep: number; overridden?: boolean; verdict: { detail: string } }>>('/api/runs/r1/ledgers')
+    const l = ledgers.body.find(x => x.arm === 'cand' && x.rep === 1)!
+    expect(l.overridden).toBe(true)
+    expect(l.verdict.detail).toMatch(/manual override/)
+    const del = await fetch(url + 'api/runs/r1/annotations', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scenario: 't1_write_answer', arm: 'cand', rep: 1, verdict: null, remove: true }) })
+    expect(((await del.json()) as { report: { notes: string[] } }).report.notes.join(' ')).not.toMatch(/overridden/)
+  })
   it('streams a finished run as a single done event', async () => {
     const r = await fetch(url + 'api/runs/r1/stream')
     const text = await r.text()

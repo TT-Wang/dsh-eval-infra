@@ -127,6 +127,39 @@ export function listRuns(root: string): RunIndexEntry[] {
   return out
 }
 
+/** A human override of one trial's verdict (or a note without override). */
+export interface Annotation {
+  /** `true` = mark pass, `false` = mark fail, `null` = note only. */
+  verdict: boolean | null
+  note: string
+  by: string
+  at: string
+}
+
+export type Annotations = Record<string, Annotation>
+
+export function annotationKey(scenario: string, arm: string, rep: number): string {
+  return `${scenario}|${arm}|${rep}`
+}
+
+export function readAnnotations(paths: RunPaths): Annotations {
+  const file = join(paths.dir, 'annotations.json')
+  return existsSync(file) ? readJson<Annotations>(file) : {}
+}
+
+export function writeAnnotations(paths: RunPaths, annotations: Annotations): void {
+  writeJsonAtomic(join(paths.dir, 'annotations.json'), annotations)
+}
+
+/** Apply overrides to ledgers (a copy); the ledger keeps the machine verdict under `machineVerdict`. */
+export function applyAnnotations(ledgers: RunLedger[], annotations: Annotations): RunLedger[] {
+  return ledgers.map((l) => {
+    const a = annotations[annotationKey(l.scenario, l.arm, l.rep)]
+    if (a === undefined || a.verdict === null) return l
+    return { ...l, machineVerdict: l.verdict, verdict: { ok: a.verdict, detail: `manual override (${a.by}): ${a.note || (a.verdict ? 'pass' : 'fail')}` }, overridden: true }
+  })
+}
+
 export function readPlan(paths: RunPaths): RunPlan {
   return readJson<RunPlan>(paths.plan)
 }

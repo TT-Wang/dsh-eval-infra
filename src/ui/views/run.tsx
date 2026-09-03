@@ -226,9 +226,11 @@ function Stat({ label, a, b }: { label: string; a: string; b: string }) {
 
 function Pips({ id, scenario, arm, stats }: { id: string; scenario: string; arm: string; stats: PairedScenario['baseline'] }) {
   const reps = Object.keys(stats.byRep).map(Number).sort((a, b) => a - b)
+  const overridden = Object.values(stats.byRep).filter(r => r.overridden).length
   return (
     <span class="pips">
       {reps.map((rep) => { const r = stats.byRep[rep]!; return <a class={`pip ${r.error ? 'err' : r.ok ? 'pass' : 'fail'}`} title={`rep ${rep}: ${r.ok ? 'pass' : 'fail'} · ${fmt.usd(r.usd)} · ${r.steps} steps`} href={`#/run/${id}/trace/${scenario}/${arm}/${rep}`} /> })}
+      {overridden > 0 && <span class="tag warn" title="verdict overridden by a human annotation">✎{overridden}</span>}
       <span class="muted small"> {stats.passes}/{stats.n}</span>
     </span>
   )

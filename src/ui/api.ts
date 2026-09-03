@@ -25,6 +25,7 @@ function fromStatic(path: string, method: string): unknown {
   if (path === '/runs') return b.runs
   if (path === '/history') return b.history
   if (path === '/scenarios') return { scenarios: [], invalid: [] }
+  if (/\/annotations$/.test(path)) return {}
   if (path === '/arms') return { dir: '', arms: [] }
   const m = /^\/runs\/([^/]+)(?:\/(.*))?$/.exec(path)
   if (m && m[1] === b.run.plan.id) {
@@ -70,6 +71,8 @@ export const api = {
   diff: (baseline: string, candidates: string[]) => req<{ diffs: Array<{ candidate: string; variables: number; lines: string[] }> }>('/arms/diff', { method: 'POST', body: JSON.stringify({ baseline, candidates }) }),
   start: (body: unknown) => req<{ id: string }>('/runs', { method: 'POST', body: JSON.stringify(body) }),
   cancel: (id: string) => req<{ cancelled: boolean }>(`/runs/${id}/cancel`, { method: 'POST' }),
+  annotations: (id: string) => req<Record<string, { verdict: boolean | null; note: string; by: string; at: string }>>(`/runs/${id}/annotations`),
+  annotate: (id: string, body: { scenario: string; arm: string; rep: number; verdict: boolean | null; note?: string; by?: string; remove?: boolean }) => req<{ annotations: Record<string, unknown> }>(`/runs/${id}/annotations`, { method: 'PUT', body: JSON.stringify(body) }),
   atifUrl: (id: string, scenario: string, arm: string, rep: number) => `${BASE}/api/runs/${id}/ledgers/${scenario}/${arm}/rep${rep}/atif`,
 }
 

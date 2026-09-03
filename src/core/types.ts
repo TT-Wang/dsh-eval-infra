@@ -171,6 +171,9 @@ export interface RunLedger {
   behaviour: { toolErrors: number; repeatedCalls: number; noActionSteps: number; observationChars: number; compactions: number }
   /** Set when the run itself failed (runtime crash, timeout) — the verdict is then null. */
   error?: string
+  /** Present when a human override replaced the machine verdict (the original is kept here). */
+  machineVerdict?: Verdict | null
+  overridden?: boolean
   sessionId: string | null
   /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
   sessions: number
