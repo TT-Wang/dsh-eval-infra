@@ -25,10 +25,13 @@ export function HistoryView() {
                     if (!c) return <td class="muted">—</td>
                     const rate = c.runs ? c.passes / c.runs : 0
                     const flaky = c.runs >= 2 && c.passes > 0 && c.passes < c.runs
+                    const pts = s.points[a] ?? []
+                    const max = Math.max(1e-9, ...pts.map(p => p.usd))
                     return (
                       <td>
                         <span class={`cls ${rate === 1 ? 'same' : rate === 0 ? 'regression' : 'both-fail'}`}>{c.passes}/{c.runs}{flaky ? ' flaky' : ''}</span>
                         <span class="muted small"> {fmt.usd(c.usdMean)} · {c.stepsMean.toFixed(0)} steps{c.errors ? ` · ${c.errors} err` : ''}</span>
+                        <span class="sparkbars" title="cost per trial, oldest → newest">{pts.map(p => <i class={p.ok ? 'ok' : 'ko'} style={{ height: `${Math.max(12, p.usd / max * 100)}%` }} title={`${p.runId} · ${fmt.usd(p.usd)} · ${p.ok ? 'pass' : 'fail'}`} />)}</span>
                       </td>
                     )
                   })}

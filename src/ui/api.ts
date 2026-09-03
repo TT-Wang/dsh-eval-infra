@@ -52,7 +52,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
-export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[] }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }> }
+export interface HistoryPoint { runId: string; usd: number; ok: boolean }
+export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]> }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }> }
 
 export interface RunRow extends RunIndexEntry { verdicts?: Array<{ arm: string; gate: string; costReading: string; costPct: number; regressions: number; improvements: number }> }
 

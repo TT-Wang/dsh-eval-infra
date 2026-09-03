@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { api, type ArmInfo, type Meta, type ScenarioInfo } from '../api.js'
+import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
 
 export function NewRunView() {
@@ -21,6 +21,8 @@ export function NewRunView() {
   const [diffError, setDiffError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [history, setHistory] = useState<History | null>(null)
+  const [maxUsd, setMaxUsd] = useState('')
 
   useEffect(() => {
     api.meta().then((m) => { setMeta(m); setRepeats(m.defaults.repeats); setConcurrency(m.defaults.concurrency) }).catch(e => setError(String(e)))
@@ -33,6 +35,7 @@ export function NewRunView() {
       if (first !== undefined) setCandidates([first])
     }).catch(e => setError(String(e)))
     api.scenarios().then((r) => { setScenarios(r.scenarios); setInvalid(r.invalid); setSelected(new Set(r.scenarios.map(s => s.name))) }).catch(e => setError(String(e)))
+    api.history().then(setHistory).catch(() => setHistory(null))
   }, [])
 
   useEffect(() => {
@@ -47,6 +50,23 @@ export function NewRunView() {
   const categories = useMemo(() => [...new Set(scenarios.map(s => s.meta.category ?? 'uncategorised'))].sort(), [scenarios])
   const visible = scenarios.filter(s => (category === '' || (s.meta.category ?? 'uncategorised') === category) && (query === '' || s.name.includes(query) || (s.meta.stressor ?? '').toLowerCase().includes(query.toLowerCase())))
   const trials = selected.size * repeats * (1 + (aa ? 1 : candidates.length))
+  // Estimate from the archive: mean cost per trial of each selected scenario (any arm), else the archive-wide mean.
+  const estimate = useMemo(() => {
+    if (!history) return null
+    const cells = history.scenarios.flatMap(s => Object.values(s.cells))
+    const overall = cells.length ? cells.reduce((a, c) => a + c.usdMean * c.runs, 0) / Math.max(1, cells.reduce((a, c) => a + c.runs, 0)) : null
+    let usd = 0
+    let known = 0
+    for (const name of selected) {
+      const row = history.scenarios.find(s => s.name === name)
+      const cs = row ? Object.values(row.cells) : []
+      const m = cs.length ? cs.reduce((a, c) => a + c.usdMean * c.runs, 0) / Math.max(1, cs.reduce((a, c) => a + c.runs, 0)) : overall
+      if (m !== null) { usd += m; known += 1 }
+    }
+    if (known === 0) return null
+    const perTrial = usd / known
+    return { usd: perTrial * trials, known, perTrial }
+  }, [history, selected, trials])
   const multi = diff?.some(d => d.variables > 1) ?? false
   const identical = diff?.some(d => d.variables === 0) ?? false
 
@@ -54,7 +74,8 @@ export function NewRunView() {
   const start = async (): Promise<void> => {
     setBusy(true); setError(null)
     try {
-      const { id } = await api.start({ baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa })
+      const cap = Number(maxUsd)
+      const { id } = await api.start({ baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa, ...(maxUsd !== '' && Number.isFinite(cap) && cap > 0 ? { maxUsd: cap } : {}) })
       navigate(`/run/${id}`)
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
@@ -103,7 +124,9 @@ export function NewRunView() {
             <label>Label <input type="text" value={label} placeholder="optional" onInput={e => setLabel((e.target as HTMLInputElement).value)} /></label>
           </div>
           <p class="muted small">Arms interleave per repeat (A B, then B A), each trial in a fresh workspace and a fresh runtime process. Three repeats is the floor; five is recommended for binary outcomes; use A/A first to learn the noise floor.</p>
-          <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials</p>
+          <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} from the archive ({estimate.known}/{selected.size} scenarios seen before, {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
+          <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>
+          <p class="muted small">Detectability: with {selected.size} scenarios the run can resolve a cost effect roughly of size 2.5 × (per-scenario spread) / √{selected.size}; a first A/A run tells you the spread. Fewer than 3 comparable scenarios never yields a direction.</p>
           <button class="btn primary" disabled={busy || baseline === '' || (!aa && candidates.length === 0) || selected.size === 0 || (multi && !allowMulti)} onClick={() => void start()}>{busy ? 'starting…' : 'Start run'}</button>
           <p class="muted small">Every scenario is self-checked (oracle must pass, untouched workspace must fail) before the first trial.</p>
         </div>

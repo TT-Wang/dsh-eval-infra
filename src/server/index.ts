@@ -259,9 +259,10 @@ export class EvalApp {
 }
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
+export interface HistoryPoint { runId: string; usd: number; ok: boolean }
 export interface History {
   arms: string[]
-  scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[] }>
+  scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]> }>
   runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>
 }
 
@@ -269,12 +270,13 @@ export interface History {
 export function buildHistory(runsRoot: string): History {
   const runs = listRuns(runsRoot)
   const arms = new Set<string>()
-  const byScenario = new Map<string, { cells: Map<string, { runs: number; passes: number; errors: number; usd: number; steps: number }>; runIds: Set<string> }>()
-  for (const r of runs) {
+  const byScenario = new Map<string, { cells: Map<string, { runs: number; passes: number; errors: number; usd: number; steps: number }>; runIds: Set<string>; points: Map<string, HistoryPoint[]> }>()
+  for (const r of [...runs].reverse()) {
     const paths = runPaths(runsRoot, r.id)
     for (const l of readLedgers(paths)) {
       arms.add(l.arm)
-      const entry = byScenario.get(l.scenario) ?? { cells: new Map(), runIds: new Set() }
+      const entry = byScenario.get(l.scenario) ?? { cells: new Map(), runIds: new Set(), points: new Map() }
+      entry.points.set(l.arm, [...(entry.points.get(l.arm) ?? []), { runId: r.id, usd: l.totals.usd, ok: l.verdict?.ok === true && l.error === undefined }])
       const cell = entry.cells.get(l.arm) ?? { runs: 0, passes: 0, errors: 0, usd: 0, steps: 0 }
       cell.runs += 1
       if (l.verdict?.ok && l.error === undefined) cell.passes += 1
@@ -292,6 +294,7 @@ export function buildHistory(runsRoot: string): History {
       name,
       cells: Object.fromEntries([...e.cells.entries()].map(([arm, c]) => [arm, { runs: c.runs, passes: c.passes, errors: c.errors, usdMean: c.runs ? c.usd / c.runs : 0, stepsMean: c.runs ? c.steps / c.runs : 0 }])),
       runIds: [...e.runIds],
+      points: Object.fromEntries([...e.points.entries()]),
     })),
     runs: runs.map(r => ({ id: r.id, createdAt: r.createdAt, ...(r.label !== undefined ? { label: r.label } : {}), arms: r.arms })),
   }
