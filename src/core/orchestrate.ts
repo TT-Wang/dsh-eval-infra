@@ -3,7 +3,7 @@
  * both follow the same discipline — scenarios self-checked, arms composed and
  * diffed through dsh, environment recorded, ledgers written, report built.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { loadArmFile, type ArmError } from './arms.js'
 import { resolveApiKey } from './env.js'
@@ -319,7 +319,6 @@ export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: R
 /** Judge reports stored with a run, keyed by candidate. */
 export function readJudgeReports(paths: ReturnType<typeof runPaths>): Record<string, import('./judge.js').JudgeReport> {
   const out: Record<string, import('./judge.js').JudgeReport> = {}
-  const { readdirSync } = require('node:fs') as typeof import('node:fs')
   if (!existsSync(paths.dir)) return out
   for (const f of readdirSync(paths.dir)) {
     const m = /^judge-(.+)\.json$/.exec(f)

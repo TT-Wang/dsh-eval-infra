@@ -240,3 +240,23 @@ describe('ground-truth stash', () => {
     }
   })
 })
+
+describe('esm hygiene', () => {
+  it('never uses CommonJS require in the shipped sources', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const offenders: string[] = []
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d)) {
+        const p = join(d, e)
+        if (statSync(p).isDirectory()) walk(p)
+        else if (/\.tsx?$/.test(e)) {
+          const src = readFileSync(p, 'utf8').split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+          if (/\brequire\(/.test(src)) offenders.push(p)
+        }
+      }
+    }
+    walk(join(__dirname, '..', 'src'))
+    expect(offenders).toEqual([])
+  })
+})
