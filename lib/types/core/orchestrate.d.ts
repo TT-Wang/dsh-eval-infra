@@ -104,5 +104,12 @@ export declare function sequencesOf(paths: ReturnType<typeof runPaths>): {
 };
 /** Judge reports stored with a run, keyed by candidate. */
 export declare function readJudgeReports(paths: ReturnType<typeof runPaths>): Record<string, import('./judge.js').JudgeReport>;
+/**
+ * Re-derive every ledger of a run from its stored events (the ledger schema
+ * evolves; the events are the durable record). Keeps verdict, timing, route
+ * and error facts from the existing ledger; recomputes usage, prices, steps,
+ * behaviour, observations and invariants. Then rebuilds the report.
+ */
+export declare function rebuildLedgers(project: Project, id: string): Promise<number>;
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 export declare function rebuildReport(project: Project, id: string): Report;

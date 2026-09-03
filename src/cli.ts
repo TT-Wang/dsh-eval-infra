@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { launchRun, LaunchError, collectScenarios, rebuildReport, resolveArmPath, runJudge } from './core/orchestrate.js'
+import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, resolveArmPath, runJudge } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
 import { ensureEvalProfile, loadProject, saveProjectConfig, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -228,9 +228,10 @@ async function cmdJudge(project: Project, args: Args): Promise<number> {
   }
 }
 
-function cmdReport(project: Project, args: Args): number {
+async function cmdReport(project: Project, args: Args): Promise<number> {
   const id = args.positional[0]
-  if (id === undefined) { err('usage: dsh-eval report <runId> [--json]'); return 3 }
+  if (id === undefined) { err('usage: dsh-eval report <runId> [--json] [--rebuild-ledgers]'); return 3 }
+  if (args.flags['rebuild-ledgers'] === true) out(`re-derived ${await rebuildLedgers(project, id)} ledgers from events`)
   const report = rebuildReport(project, id)
   if (args.flags['json'] === true) out(JSON.stringify(report, null, 2))
   else printReport(report)
@@ -337,7 +338,7 @@ function help(): number {
   run --baseline <arm> --arm <arm>... [globs] [--repeats N] [--concurrency N] [--label L]
       [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N] [--include-holdout]
       [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
-  report <runId> [--json]             rebuild the report from ledgers
+  report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
   judge <runId> [--model M] [--arm A] blinded pairwise judge over scenarios that declare meta.judge (both orders, ties on disagreement)
   runs                                list runs
   ui [--port 4177] [--open]           local web UI

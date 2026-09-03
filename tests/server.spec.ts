@@ -116,6 +116,18 @@ describe('http api', () => {
   })
 })
 
+describe('ledger rebuild', () => {
+  it('re-derives ledgers from events without losing verdicts', async () => {
+    const { rebuildLedgers } = await import('../src/core/orchestrate.js')
+    const project = loadProject(root)
+    const n = await rebuildLedgers(project, 'r1')
+    expect(n).toBe(4)
+    const ledgers = readLedgers(runPaths(project.runsRoot, 'r1'))
+    expect(ledgers.every(l => l.verdict?.ok === true)).toBe(true)
+    expect(ledgers.every(l => l.steps.every(st => typeof st.durationMs === 'number'))).toBe(true)
+  })
+})
+
 describe('dsh plugin entry', () => {
   it('registers a prefix route and the /eval command when the services appear', async () => {
     const registered: Array<{ kind: string; path: string; handler: (req: unknown, res: unknown) => Promise<void> }> = []
