@@ -305,9 +305,13 @@ export function archiveNoiseFloors(project: Project, exceptRunId?: string): Reco
     if (!existsSync(paths.plan)) continue
     try {
       const plan = readPlan(paths)
-      if (out[plan.baseline.name] !== undefined) continue
+      const kind = plan.perturb ? 'perturbation' : 'rerun'
+      if (out[`${plan.baseline.name}|${kind}`] !== undefined) continue
       const floor = noiseFloorOf(plan, readLedgers(paths))
-      if (floor !== null) out[plan.baseline.name] = floor
+      if (floor === null) continue
+      // Newest floor of each kind per baseline; the bare key stays the rerun floor (or the only one) for callers that do not ask for a kind.
+      out[`${plan.baseline.name}|${kind}`] = floor
+      if (kind === 'rerun' || out[plan.baseline.name] === undefined) out[plan.baseline.name] = floor
     } catch { /* unreadable run */ }
   }
   return out

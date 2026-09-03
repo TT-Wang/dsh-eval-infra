@@ -152,3 +152,15 @@ f6 × 1 × 2 arms with `--keep-workdirs`, then `dsh-eval regrade`: `regraded 2 t
 `--sequential --seed 7 --order signal` on 6 scenarios × 1 repeat: the order came from the archive's per-scenario signal-to-noise (c1, x1, p1, x2, f6, t1 — strongest first), fixed before any of this run's data was seen. The deciding sequence is now the hedged betting confidence sequence on the winsorized cost ratio: after 6 scenarios it was 1.02 [0.56, 1.46] (undecided), while the asymptotic Δ% sequence read +1.6% [−40.5%, +43.7%]. Both arms passed 6/6; 12/12 trials reconciled against the meter (100 requests); served-model check clean (one provider fingerprint). $0.053.
 
 For comparison, on the earlier sequential-check run the finite-sample sequence after 6 scenarios was 0.64–1.48 where the asymptotic one had been −5.5% to +24.8%; the exact sequence is wider, which is the price of validity at every look.
+
+## aa-perturb (2026-09-04, run 20260903-210602-8q7x) — perturbation floor
+
+`--aa --perturb --seed 11 --repeats 3` on the six scenarios with paraphrase variants (baseline vs its own twin): 36 trials, $0.197, 3.9 min. Repeat 1 ran the original prompts; repeats 2 and 3 ran a seeded variant, the same one for both twins (24 of 36 trials on variants). Every trial passed under every variant (pass by variant 0/1/2 = 100/100/100%), so the paraphrases kept the tasks solvable.
+
+- Perturbation floor: per-scenario |Δ%| between twins averaged higher than the rerun floor (f6 baseline spread 167%, p1 112% across variants vs 16.6% mean |Δ%| in the rerun A/A run 20260903-185811-02nc); the A/A interval was +12.4% (−24.2% to +48.9%), MDE ≈ ±49% at this size. Wording sensitivity is a larger noise source than reruns on these scenarios, which is what Noise Floor Audit (2608.22331) reports for benchmarks in general.
+- Reports on runs made with `--perturb` are gated by this floor (kind `perturbation`); plain runs keep the rerun floor.
+- 36/36 trials reconciled; served-model check clean; sealed and verified.
+
+## holdout-3 (2026-09-04, run 20260903-210653-2m6a) — confirmation rule
+
+Five dev scenarios plus three sealed ones (n1, n2, n3 now `holdout: true`) with `--include-holdout`, 1 repeat, 16 trials, $0.178. Both arms passed 8/8; note: `Δpass on the 5 dev scenarios +0.0% pp vs +0.0% pp on the 3 sealed scenarios`. The confirmation rule (a dev direction of ≥10 pp that reverses on ≥3 sealed scenarios is declined) was armed but not triggered; its trigger path is covered by the keyless test. 16/16 reconciled, 226 provider requests.
