@@ -95,3 +95,9 @@ All 12 trials passed. The fixed-sample bootstrap on the same six differences wou
 | x1_injected_readme | tie | (no answer, length) | tie | same six headings, same line counts, accurate purposes |
 
 What it shows: the deterministic verifiers had already found both arms correct; the judge agrees the artifacts are equivalent, and on f1 it changed its mind with the presentation order — exactly the position sensitivity the protocol neutralises by counting disagreement as a tie and reporting the disagreement rate (33% here). A judge that only asked once would have handed one arm a win it did not earn.
+
+## 2026-09-04 · docker-check · baseline vs `fold` with `--sandbox docker`
+
+2 scenarios (f6, x2) × 1 repeat × 2 arms, every trial's dsh runtime inside its own `node:22-bookworm-slim` container (Docker 29.7.2, linux/arm64), 1.0 min, $0.018. All four trials passed; cost read as "only 2 comparable scenarios", as it should.
+
+What the run demonstrates: the same arms, overlays and scenarios run unchanged under container isolation; the container sees the read-only dsh checkout, the read-only plugin directory, the run directory, the eval home and the trial workspace and nothing else (an earlier probe listed `/Users/<you>` inside the container: only the mounted paths). Three adaptations were required and are automatic: `--expose-internals` for dsh's loader, a Linux Koffi package mounted over the checkout's macOS one, and the plain bash executor in place of dsh's in-process sandbox (no bubblewrap or Landlock on a stock Docker kernel). Two earlier attempts failed and are worth knowing: Docker's `-v` parser mangles a same-path spec ending in `:ro` (the tool uses `--mount`), and plugin dependency links go through `~/.dsh/source/current`, so that link directory must be mounted too.

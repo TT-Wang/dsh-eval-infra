@@ -28,6 +28,11 @@ describe('docker sandbox', () => {
     expect(joined).toContain(`type=bind,source=${home},target=${home}`)
     expect(joined).toContain(`type=bind,source=${plugin},target=${plugin},readonly`)
     expect(joined).toContain(`type=bind,source=${runDir},target=${runDir},readonly`)
+    // a checkout reached through a symlink also mounts the link's directory so plugin dependency links resolve inside the container
+    const linkDir = join(root, 'dshhome', 'source'); mkdirSync(linkDir, { recursive: true }); symlinkSync(src, join(linkDir, 'current'))
+    const viaLink = dockerArgs(input as never, { dshSource: join(linkDir, 'current') }, runDir).join(' ')
+    expect(viaLink).toContain(`type=bind,source=${linkDir},target=${linkDir},readonly`)
+    expect(viaLink).toContain(`type=bind,source=${src},target=${src},readonly`)
     expect(joined).toContain('--expose-internals')
     expect(joined).toContain(`-e DSH_HOME=${home}`)
     expect(joined).toContain('-e DEEPSEEK_API_KEY')

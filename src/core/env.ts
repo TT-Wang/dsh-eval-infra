@@ -57,11 +57,17 @@ export async function dshVersion(bin = process.env['DSH_BIN'] ?? 'dsh'): Promise
   }
 }
 
-/** The dsh source checkout the local install points at, when discoverable. */
-export function dshSourceRoot(): string | null {
+/**
+ * The dsh source checkout the local install points at, when discoverable.
+ * By default the real path; `{ realpath: false }` returns the path as configured
+ * (usually the `~/.dsh/source/current` link), which plugins' dependency links go
+ * through and which container mounts therefore need.
+ */
+export function dshSourceRoot(options: { realpath?: boolean } = {}): string | null {
   const candidates = [process.env['DSH_SOURCE'], join(userDshHome(), 'source', 'current'), join(homedir(), '.dsh', 'source', 'current')].filter((c): c is string => c !== undefined)
   for (const c of candidates) {
     if (existsSync(join(c, 'packages', 'core', 'agent', 'package.json'))) {
+      if (options.realpath === false) return c
       try { return realpathSync(c) } catch { return c }
     }
   }

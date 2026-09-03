@@ -97,8 +97,11 @@ export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: s
   mounts.set(realpathSync(options.dshSource), 'ro')
   // Plugins linked into the profile resolve their dsh peers through the install's symlink path (e.g. ~/.dsh/source/current), so
   // that path must exist inside the container too: mount the directory holding the `current` link, read-only.
-  const sourceLinkParent = dirname(resolve(options.dshSource))
-  if (existsSync(sourceLinkParent) && realpathSync(sourceLinkParent) !== realpathSync(options.dshSource)) mounts.set(realpathSync(sourceLinkParent), 'ro')
+  const given = resolve(options.dshSource)
+  if (realpathSync(given) !== given) {
+    const linkParent = dirname(given)
+    if (existsSync(linkParent)) mounts.set(realpathSync(linkParent), 'ro')
+  }
   mounts.set(realpathSync(input.evalHome), 'rw')
   mounts.set(realpathSync(input.workdir), 'rw')
   mounts.set(realpathSync(runDir), 'ro')

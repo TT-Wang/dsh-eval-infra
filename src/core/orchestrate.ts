@@ -208,7 +208,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     const { dshSourceRoot } = await import('./env.js')
     const avail = await dockerAvailable()
     if (!avail.ok) throw new LaunchError(`docker sandbox requested but docker is not usable: ${avail.detail}`, 'env')
-    const source = dshSourceRoot()
+    const source = dshSourceRoot({ realpath: false })
     if (source === null) throw new LaunchError('docker sandbox needs a dsh source checkout (DSH_SOURCE or ~/.dsh/source/current)', 'env')
     const arch = process.arch === 'x64' ? 'x64' : 'arm64'
     const nativeShims = prepareNativeShims(project.home, source, arch, log)
