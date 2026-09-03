@@ -27,7 +27,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | ground truth unreadable from the sandbox | ABC T.5, SWE-Lancer incident | `.truth` stashed out of the workspace | **met** |
 | grade state, not path | BFCL v3, Anthropic eval guide | verifiers only read the end state | **met** |
 | decoys / injections in scenarios | AgentDojo, BFCL irrelevance | every new scenario ships one | **met** |
-| task validation across trials (flaky-task retirement) | Harbor-Index, Terminal-Bench 2.1 | flaky flag per scenario and history view; no automatic retirement | *partial* |
+| task validation across trials (flaky-task retirement) | Harbor-Index, Terminal-Bench 2.1 | flaky flag per scenario; the history view names chronically flaky, never-passing and saturated scenarios with the action to take (retirement stays a human decision) | **met** |
 
 ## C. Measurement
 

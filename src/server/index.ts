@@ -281,6 +281,8 @@ export interface History {
   arms: string[]
   scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]> }>
   runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>
+  /** Scenarios that behave the same way for every arm across the archive: worth retiring or fixing rather than re-running. */
+  chronic: { flaky: string[]; failing: string[]; saturated: string[] }
 }
 
 /** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
@@ -305,7 +307,18 @@ export function buildHistory(runsRoot: string): History {
       byScenario.set(l.scenario, entry)
     }
   }
+  const chronic = { flaky: [] as string[], failing: [] as string[], saturated: [] as string[] }
+  for (const [name, e] of byScenario) {
+    const cells = [...e.cells.values()]
+    const runs = cells.reduce((a, c) => a + c.runs, 0)
+    const passes = cells.reduce((a, c) => a + c.passes, 0)
+    if (runs < 4) continue
+    if (passes === 0) chronic.failing.push(name)
+    else if (passes === runs) chronic.saturated.push(name)
+    else if (cells.every(c => c.runs < 2 || (c.passes > 0 && c.passes < c.runs))) chronic.flaky.push(name)
+  }
   return {
+    chronic,
     arms: [...arms].sort(),
     scenarios: [...byScenario.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, e]) => ({
       name,

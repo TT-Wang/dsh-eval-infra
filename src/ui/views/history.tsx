@@ -12,6 +12,14 @@ export function HistoryView() {
   return (
     <section>
       <div class="page-head"><div><h1>Scenario history</h1><p class="muted">{h.scenarios.length} scenarios × {h.arms.length} arms over {h.runs.length} runs · pass / runs, mean cost, mean steps</p></div></div>
+      {h.chronic && (h.chronic.flaky.length + h.chronic.failing.length + h.chronic.saturated.length) > 0 && (
+        <div class="card small">
+          <b>Scenario health</b> (4+ trials, every arm alike):
+          {h.chronic.flaky.length > 0 && <span> <span class="cls both-fail">chronically flaky</span> {h.chronic.flaky.join(', ')} — more repeats or a sharper prompt before trusting a regression here;</span>}
+          {h.chronic.failing.length > 0 && <span> <span class="cls regression">never passes</span> {h.chronic.failing.join(', ')} — no signal until something passes;</span>}
+          {h.chronic.saturated.length > 0 && <span> <span class="cls same">always passes</span> {h.chronic.saturated.join(', ')} — tracks regressions only, gives no headroom.</span>}
+        </div>
+      )}
       {h.scenarios.length === 0 ? <div class="empty"><p>No ledgers yet.</p></div> : (
         <div class="card">
           <table class="data">
