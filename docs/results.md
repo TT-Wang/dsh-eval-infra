@@ -101,3 +101,10 @@ What it shows: the deterministic verifiers had already found both arms correct; 
 2 scenarios (f6, x2) × 1 repeat × 2 arms, every trial's dsh runtime inside its own `node:22-bookworm-slim` container (Docker 29.7.2, linux/arm64), 1.0 min, $0.018. All four trials passed; cost read as "only 2 comparable scenarios", as it should.
 
 What the run demonstrates: the same arms, overlays and scenarios run unchanged under container isolation; the container sees the read-only dsh checkout, the read-only plugin directory, the run directory, the eval home and the trial workspace and nothing else (an earlier probe listed `/Users/<you>` inside the container: only the mounted paths). Three adaptations were required and are automatic: `--expose-internals` for dsh's loader, a Linux Koffi package mounted over the checkout's macOS one, and the plain bash executor in place of dsh's in-process sandbox (no bubblewrap or Landlock on a stock Docker kernel). Two earlier attempts failed and are worth knowing: Docker's `-v` parser mangles a same-path spec ending in `:ro` (the tool uses `--mount`), and plugin dependency links go through `~/.dsh/source/current`, so that link directory must be mounted too.
+
+## 2026-09-04 · judge panel and absolute grades on judge-check
+
+`dsh-eval judge --model deepseek-v4-pro --model deepseek-v4-flash --mode both` on the judge-check run (3 judged scenarios), $0.037.
+
+- Pairwise panel: both judges tied all three pairs; panel unanimity 100%; 50% of the individual votes had order-inconsistent answers, each counted as a tie. Same conclusion as the deterministic verifiers (both arms correct), reached without either judge being allowed to convert a position preference into a win.
+- Absolute grades: 6/6 trials graded pass by both judges, matching the verifiers. No human annotations exist on this run, so the per-arm pass rates are reported as judge-only and marked uncalibrated; adding annotations from the trace page turns them into PPI++ estimates with a standard error (covered by the unit tests).
