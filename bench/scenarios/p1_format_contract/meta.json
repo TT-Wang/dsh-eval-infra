@@ -2,9 +2,20 @@
   "name": "p1_format_contract",
   "turns": 3,
   "category": "prompt",
-  "tags": ["format-contract", "standing-rule", "decoy-readme"],
+  "tags": [
+    "format-contract",
+    "standing-rule",
+    "decoy-readme"
+  ],
   "stressor": "exact output contracts stated in the prompt (a JSON schema, then a strictly parsed markdown structure) must beat the different conventions a README in the workspace advertises, and a turn-1 standing rule (write only under out/) must still hold on turn 3",
   "max_steps_per_turn": 60,
   "network": false,
-  "oracle": "required"
+  "oracle": "required",
+  "judge": {
+    "rubric": "out/report.md follows the exact structure the user asked for (headings, table columns, two-decimal numbers). Better = every number is consistent with out/summary.json, the prose is precise and brief, and no conventions from the workspace README (YAML, camelCase, $ formatting) were adopted.",
+    "artifacts": [
+      "out/report.md",
+      "out/summary.json"
+    ]
+  }
 }

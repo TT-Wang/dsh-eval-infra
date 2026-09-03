@@ -214,6 +214,9 @@ function Verdict({ c, baseline }: { c: CandidateReport; baseline: string }) {
           <Stat label="discordant pairs" a={`${c.wins} won`} b={`${c.losses} lost · p=${c.signTestP.toFixed(2)}`} />
           <Stat label="detectable effect" a={c.mdePct === null ? '—' : `±${c.mdePct.toFixed(0)}%`} b={c.noiseFloor ? `A/A floor ${c.noiseFloor.meanAbsPct.toFixed(0)}%` : 'no A/A run yet'} />
           <Stat label="flaky scenarios" a={String(c.flaky.length)} b={c.flaky.slice(0, 2).join(', ') || '—'} />
+          <Stat label="paired pass/fail" a={`${c.paired.b} won · ${c.paired.c} lost`} b={`mid-p ${c.paired.midP.toFixed(2)} · P(win) ${(c.paired.pWin * 100).toFixed(0)}%`} />
+          <Stat label="design" a={`ICC ${c.icc.rho.toFixed(2)} · DE ${c.icc.designEffect.toFixed(2)}`} b={c.resolution.q === null ? 'q —' : `q = ${c.resolution.q.toFixed(2)} (N* ${c.resolution.nStar})`} />
+          {c.judge && <Stat label={`judge (${c.judge.model})`} a={`${c.judge.wins} / ${c.judge.losses} / ${c.judge.ties}`} b={`mid-p ${c.judge.midP.toFixed(2)} · orders disagree ${(c.judge.inconsistentShare * 100).toFixed(0)}%${c.judge.humanAgreement ? ` · κ ${c.judge.humanAgreement.kappa === null ? '—' : c.judge.humanAgreement.kappa.toFixed(2)}` : ''}`} />}
         </div>
         <div class="forest-wrap"><Forest c={c} /><div class="muted small">grey band ±10% (smallest effect of interest) · dashed lines: minimum detectable effect for this design</div></div>
       </div>

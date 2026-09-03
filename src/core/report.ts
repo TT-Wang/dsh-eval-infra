@@ -134,6 +134,8 @@ export interface CandidateReport {
   resolution: { nStar: number | null; q: number | null }
   /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
   holdoutGap: { dev: number; holdout: number; devScenarios: number; holdoutScenarios: number } | null
+  /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
+  judge?: { model: string; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null }
   verdict: string
 }
 

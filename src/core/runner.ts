@@ -5,7 +5,7 @@
  * scripted driver. Scheduling order is fixed — scenario → repeat → arm — so
  * baseline and candidate always run back to back under the same conditions.
  */
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import yaml from 'js-yaml'
@@ -321,6 +321,15 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   try {
     restoreTruth?.()
     verdict = await scenarioVerify(scenario, workdir)
+    // Judge artifacts: copy the listed files out before the workspace is discarded.
+    if (scenario.meta.judge && scenario.meta.judge.artifacts.length > 0) {
+      const dest = join(deps.paths.dir, 'ledgers', scenario.name, arm.name, `rep${job.rep}.artifacts`)
+      mkdirSync(dest, { recursive: true })
+      for (const rel of scenario.meta.judge.artifacts) {
+        const src = join(workdir, rel)
+        if (existsSync(src)) cpSync(src, join(dest, rel), { recursive: true })
+      }
+    }
   } catch (e) {
     verdict = { ok: false, detail: `verify failed: ${e instanceof Error ? e.message : String(e)}` }
   }

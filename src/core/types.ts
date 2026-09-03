@@ -38,6 +38,13 @@ export interface ScenarioMeta {
   new_session_before_turns?: number[]
   /** Files the strict self-check must not mutate: side products of the scenario's own scripts that no prompt asks for. */
   strict_ignore?: string[]
+  /**
+   * Optional blinded pairwise judge for qualities code cannot verify: the listed
+   * workspace files are captured at the end of every trial and, after the run,
+   * `dsh-eval judge` shows the baseline's and the candidate's files to a judge
+   * model in both orders with this rubric.
+   */
+  judge?: { rubric: string; artifacts: string[]; maxChars?: number }
 }
 
 /** A loaded scenario. */

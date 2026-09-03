@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { launchRun, LaunchError, collectScenarios, rebuildReport, resolveArmPath } from './core/orchestrate.js'
+import { launchRun, LaunchError, collectScenarios, rebuildReport, resolveArmPath, runJudge } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
 import { ensureEvalProfile, loadProject, saveProjectConfig, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
@@ -215,6 +215,19 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
   return 0
 }
 
+async function cmdJudge(project: Project, args: Args): Promise<number> {
+  const id = args.positional[0]
+  if (id === undefined) { err('usage: dsh-eval judge <runId> [--model deepseek-v4-pro] [--arm <candidate>] [--seed N]'); return 3 }
+  try {
+    const reports = await runJudge(project, id, { ...(typeof args.flags['model'] === 'string' ? { model: args.flags['model'] } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}), log: out })
+    for (const r of reports) out(`${r.candidate} vs ${r.baseline} · judge ${r.model}: ${r.wins} candidate / ${r.losses} baseline / ${r.ties} ties · mid-p ${r.midP.toFixed(2)} · P(candidate wins a decided pair) ${(r.pWin * 100).toFixed(0)}% · order disagreement ${(r.inconsistentShare * 100).toFixed(0)}% · ${fmtUsd(r.usd)}${r.humanAgreement ? ` · human agreement ${(r.humanAgreement.agree * 100).toFixed(0)}% on ${r.humanAgreement.n}` : ''}`)
+    return 0
+  } catch (error) {
+    if (error instanceof LaunchError) { err(`error: ${error.message}`); return 3 }
+    throw error
+  }
+}
+
 function cmdReport(project: Project, args: Args): number {
   const id = args.positional[0]
   if (id === undefined) { err('usage: dsh-eval report <runId> [--json]'); return 3 }
@@ -325,6 +338,7 @@ function help(): number {
       [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N] [--include-holdout]
       [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
   report <runId> [--json]             rebuild the report from ledgers
+  judge <runId> [--model M] [--arm A] blinded pairwise judge over scenarios that declare meta.judge (both orders, ties on disagreement)
   runs                                list runs
   ui [--port 4177] [--open]           local web UI
   export <runId> [--out dir]          ATIF v1.8 trajectories
@@ -345,6 +359,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'diff': return cmdDiff(project, args)
     case 'run': return cmdRun(project, args)
     case 'report': return cmdReport(project, args)
+    case 'judge': return cmdJudge(project, args)
     case 'runs': return cmdRuns(project)
     case 'ui': return cmdUi(project, args)
     case 'export': return cmdExport(project, args)

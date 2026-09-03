@@ -3,7 +3,7 @@
  * both follow the same discipline — scenarios self-checked, arms composed and
  * diffed through dsh, environment recorded, ledgers written, report built.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { loadArmFile, type ArmError } from './arms.js'
 import { resolveApiKey } from './env.js'
@@ -250,6 +250,72 @@ export function archiveNoiseFloors(project: Project, exceptRunId?: string): Reco
   return out
 }
 
+export interface JudgeOptions {
+  model?: string
+  candidate?: string
+  seed?: number
+  log?: (line: string) => void
+  /** Test seam: replace the chat call. */
+  chat?: import('./judge.js').ChatCall
+}
+
+/**
+ * Run the blinded pairwise judge over every scenario of a finished run that
+ * declares `meta.judge`. Writes `judge-<candidate>.json` next to the report and
+ * returns it. The judge model defaults to deepseek-v4-pro so it differs from
+ * the usual v4-flash arms (same family: a stated limitation).
+ */
+export async function runJudge(project: Project, id: string, options: JudgeOptions = {}): Promise<import('./judge.js').JudgeReport[]> {
+  const { judgeRun, deepseekChat } = await import('./judge.js')
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
+  const plan = readPlan(paths)
+  const ledgers = readLedgers(paths)
+  const { scenarios } = collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true })
+  const specs: Record<string, import('./judge.js').JudgeSpec> = {}
+  for (const s of scenarios) if (s.meta.judge) specs[s.name] = s.meta.judge
+  if (Object.keys(specs).length === 0) throw new LaunchError('no scenario in this run declares meta.judge', 'usage')
+  const model = options.model ?? 'deepseek-v4-pro'
+  let chat = options.chat
+  if (chat === undefined) {
+    const apiKey = resolveApiKey()
+    if (apiKey === undefined) throw new LaunchError('DEEPSEEK_API_KEY not found for the judge', 'env')
+    chat = deepseekChat({ model, apiKey, ...(options.seed !== undefined ? { seed: options.seed } : {}) })
+  }
+  const annotations = readAnnotations(paths)
+  const out: import('./judge.js').JudgeReport[] = []
+  for (const cand of plan.candidates.filter(c => options.candidate === undefined || c.name === options.candidate)) {
+    const report = await judgeRun({
+      plan,
+      candidate: cand.name,
+      ledgers,
+      specs,
+      artifactDir: (scenario, arm, rep) => join(paths.ledgers, scenario, arm, `rep${rep}.artifacts`),
+      chat,
+      model,
+      ...(options.seed !== undefined ? { seed: options.seed } : {}),
+      annotations,
+      ...(options.log !== undefined ? { log: options.log } : {}),
+    })
+    writeJsonAtomic(join(paths.dir, `judge-${cand.name}.json`), report)
+    out.push(report)
+  }
+  rebuildReport(project, id)
+  return out
+}
+
+/** Judge reports stored with a run, keyed by candidate. */
+export function readJudgeReports(paths: ReturnType<typeof runPaths>): Record<string, import('./judge.js').JudgeReport> {
+  const out: Record<string, import('./judge.js').JudgeReport> = {}
+  const { readdirSync } = require('node:fs') as typeof import('node:fs')
+  if (!existsSync(paths.dir)) return out
+  for (const f of readdirSync(paths.dir)) {
+    const m = /^judge-(.+)\.json$/.exec(f)
+    if (m) { try { out[m[1]!] = JSON.parse(readFileSync(join(paths.dir, f), 'utf8')) as import('./judge.js').JudgeReport } catch { /* skip */ } }
+  }
+  return out
+}
+
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 export function rebuildReport(project: Project, id: string): Report {
   const paths = runPaths(project.runsRoot, id)
@@ -257,6 +323,13 @@ export function rebuildReport(project: Project, id: string): Report {
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
   const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout })
+  const judges = readJudgeReports(paths)
+  for (const c of report.candidates) {
+    const j = judges[c.arm]
+    if (!j) continue
+    c.judge = { model: j.model, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement }
+    report.notes.push(`${c.arm}: blinded pairwise judge (${j.model}, both orders, inconsistent answers count as ties) prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}%${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}.`)
+  }
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))
   return report

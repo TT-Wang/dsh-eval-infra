@@ -1,1 +1,20 @@
-{"name": "f1_log_triage", "turns": 3, "max_steps_per_turn": 60, "stressor": "6 service logs (~600K chars, ~9K lines) with one root-cause chain and a red herring; triage needs per-service error-code counts and first-seen timestamps; follow-ups ask for the WARN lines preceding the first error and a summary", "category": "context", "tags": ["logs", "whole-read", "multi-turn"], "oracle": "required"}
+{
+  "name": "f1_log_triage",
+  "turns": 3,
+  "max_steps_per_turn": 60,
+  "stressor": "6 service logs (~600K chars, ~9K lines) with one root-cause chain and a red herring; triage needs per-service error-code counts and first-seen timestamps; follow-ups ask for the WARN lines preceding the first error and a summary",
+  "category": "context",
+  "tags": [
+    "logs",
+    "whole-read",
+    "multi-turn"
+  ],
+  "oracle": "required",
+  "judge": {
+    "rubric": "summary.md is the incident-channel paragraph. Better = names the root-cause service and error code correctly (db-proxy), gives the first timestamp exactly as it appears in the logs, states the number of affected services, is 3-5 sentences, and is written for an on-call engineer: concrete, no filler, no speculation beyond the logs.",
+    "artifacts": [
+      "summary.md",
+      "triage.md"
+    ]
+  }
+}
