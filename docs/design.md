@@ -44,7 +44,11 @@ Patch rows are exactly what dsh's own profile layering accepts (`dsh --profile X
 | Cost only on comparable pairs | per-repeat pairs where both arms passed; a run that failed early never looks cheap |
 | Honest aggregates | percentile bootstrap over scenarios (B=2000, seeded); a CI covering zero reads *inconclusive*, and *equivalent* only when the CI sits inside ±10% (the smallest effect of interest); sign test on discordant pairs; Wilson intervals on pass rates |
 | Price drift | every call is priced at the DeepSeek list price of its band (peak/off-peak by UTC calendar) **and** re-priced at both fixed bands, so runs straddling a boundary stay comparable |
-| Reproducibility | the run directory holds the plan, the composed tree per arm and its SHA, the dsh version and source path, the price table date, every session event, and a per-step trace; the report is recomputed from ledgers on demand |
+| Reproducibility | the run directory holds the plan, the composed tree per arm and its SHA, the dsh version, source path and git revision, the price table date, every session event, and a per-step trace with what the model saw back from each tool; the report is recomputed from ledgers on demand |
+| Verifier validity, strict | `selfcheck --strict` deletes and blanks every file the oracle produced, one at a time, and requires the verifier to fail each time; files it ignores are listed as non-discriminating |
+| Budget | `--max-usd` stops scheduling trials once spend crosses the cap; finished trials stay and the run resumes with `--resume` |
+| Sandbox | dsh's own `workspace-write` confinement (Seatbelt on macOS, bwrap/Landlock on Linux): a trial's bash cannot write outside its workspace, verified by an escape probe (home dir and sibling dirs denied, platform temp dirs allowed); network tools off unless the scenario asks. This is same-world confinement, not a container |
+| Human review | per-trial annotations (mark pass / fail / note) stored with the run; the report applies overrides, keeps the machine verdict, and states how many were overridden |
 
 ## 4. Architecture
 
@@ -92,6 +96,12 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 - Candidate aggregate: mean over comparable scenarios of the per-scenario Δ; 95% percentile bootstrap over scenarios; `significant` when the interval excludes zero; `equivalent` when it lies inside ±SESOI (10%) with ≥2 scenarios; otherwise `inconclusive`. A single comparable scenario is reported as a point with no interval.
 - Discordant pairs: exact two-sided sign test.
 - pass^k: share of scenarios where every repeat passed; pass@k: share with at least one pass.
+- Δpass: per-scenario pass-rate difference in percentage points, bootstrapped over scenarios like cost.
+- Grade: one word combining both axes — improvement (better correctness, or cheaper without regressions), regression (worse correctness, or dearer), tradeoff (better correctness but dearer), tie (equivalent), inconclusive.
+- Flaky: repeats disagree within an arm on a scenario; listed and filterable, and a regression on a flaky scenario is a reason for more repeats before it counts.
+- Minimum detectable effect: from the observed spread of per-scenario paired cost differences, MDE ≈ (t₀.₉₇₅,ₙ₋₁ + 0.84) · s/√n, reported as ±% so a reader knows what the design could have seen.
+- Noise floor: when the archive holds an A/A run on the same baseline, its |Δ%| and interval are quoted in the notes and drawn in the forest strip.
+- Behaviour signature per arm: tool errors, consecutive repeated calls, no-action steps, characters of tool output the model was shown, compactions — the "failure fingerprint" view the Scaffold Effect paper asks for.
 - Notes appended automatically: runtime errors, repeats below 3, peak/off-peak straddling, more than one model or effort observed, multi-variable comparison, A/A.
 
 ## 7. What it does not do (yet)

@@ -57,15 +57,18 @@ export function NewRunView() {
     const overall = cells.length ? cells.reduce((a, c) => a + c.usdMean * c.runs, 0) / Math.max(1, cells.reduce((a, c) => a + c.runs, 0)) : null
     let usd = 0
     let known = 0
+    let seen = 0
     for (const name of selected) {
       const row = history.scenarios.find(s => s.name === name)
       const cs = row ? Object.values(row.cells) : []
-      const m = cs.length ? cs.reduce((a, c) => a + c.usdMean * c.runs, 0) / Math.max(1, cs.reduce((a, c) => a + c.runs, 0)) : overall
+      const own = cs.length ? cs.reduce((a, c) => a + c.usdMean * c.runs, 0) / Math.max(1, cs.reduce((a, c) => a + c.runs, 0)) : null
+      if (own !== null) seen += 1
+      const m = own ?? overall
       if (m !== null) { usd += m; known += 1 }
     }
     if (known === 0) return null
     const perTrial = usd / known
-    return { usd: perTrial * trials, known, perTrial }
+    return { usd: perTrial * trials, seen, perTrial }
   }, [history, selected, trials])
   const multi = diff?.some(d => d.variables > 1) ?? false
   const identical = diff?.some(d => d.variables === 0) ?? false
@@ -124,7 +127,7 @@ export function NewRunView() {
             <label>Label <input type="text" value={label} placeholder="optional" onInput={e => setLabel((e.target as HTMLInputElement).value)} /></label>
           </div>
           <p class="muted small">Arms interleave per repeat (A B, then B A), each trial in a fresh workspace and a fresh runtime process. Three repeats is the floor; five is recommended for binary outcomes; use A/A first to learn the noise floor.</p>
-          <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} from the archive ({estimate.known}/{selected.size} scenarios seen before, {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
+          <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} ({estimate.seen}/{selected.size} scenarios have archive history; the rest use the archive mean of {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
           <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>
           <p class="muted small">Detectability: with {selected.size} scenarios the run can resolve a cost effect roughly of size 2.5 × (per-scenario spread) / √{selected.size}; a first A/A run tells you the spread. Fewer than 3 comparable scenarios never yields a direction.</p>
           <button class="btn primary" disabled={busy || baseline === '' || (!aa && candidates.length === 0) || selected.size === 0 || (multi && !allowMulti)} onClick={() => void start()}>{busy ? 'starting…' : 'Start run'}</button>

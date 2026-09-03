@@ -11,8 +11,10 @@
 - **场景**自带确定性判卷器和标准答案;**selfcheck** 证明每个判卷器"空工作区不过、标准答案能过"。`bench/scenarios` 内置 35 个场景(context、tools、coding、prompt、memory、safety、cost、verification),见 [docs/scenarios.md](docs/scenarios.md)。
 - **配对、交替、重复**:场景 → 重复 → 臂,奇数次 A 后 B、偶数次 B 后 A,每次试验独立工作区、独立运行时进程、隔离的 `DSH_HOME`。A/A 模式测噪声地板。
 - **账本**:每步的缓存命中/未命中/输出/推理 token,按当时分钟的峰或谷价计费并同时给出两个固定档位的重算价,工具直方图,会话事件,带推理原文的逐步 trace。
-- **报告**:退化优先;成本只在两臂都通过的重复对上比较;按场景 bootstrap 置信区间;pass^k;每解一题的 token 与美元;缓存命中占比;一句话结论,区间跨零就写"不确定"。Markdown 与 JSON。
-- **Web 界面**(`dsh-eval ui`,或装进 dsh web 后的 `/eval`):建运行向导(实时显示合成 diff)、实时试验矩阵、结论横幅、带筛选的配对表、trace 查看器(每步 prompt 体量条、与配对试验并排对比、首次分叉标记)、ATIF 导出。
+- **报告**:退化优先;成本只在两臂都通过的重复对上比较;成本与通过率都按场景做 bootstrap 区间;一个词的评级(improvement / regression / tradeoff / tie / inconclusive);pass^k;每解一题的 token 与美元;缓存命中占比;抖动场景标记;失败原因归组;行为特征(工具报错、重复调用、空步);本次设计的最小可检出效应;有 A/A 时给出噪声地板。Markdown 与 JSON。
+- **护栏**:`selfcheck --strict` 逐个删除/清空标准答案产出的文件,抓出"判卷器根本没看"的情况;`--max-usd` 设预算上限;dsh 自带的 workspace-write 沙箱把每次试验的 shell 限制在自己的工作区里。
+- **人工复核**:在 trace 页把任意一次试验标为通过/失败并留言,报告会应用并注明。
+- **Web 界面**(`dsh-eval ui`,或装进 dsh web 后的 `/eval`):建运行向导(实时合成 diff、按历史估算成本)、实时试验矩阵、带森林图的结论横幅(区间、±10% 带、最小可检出效应线、A/A 地板)、退化优先且可按抖动/失败筛选的配对表、带成本迷你柱的场景历史、trace 查看器(折叠的工具结果、键盘导航、与配对试验并排并标首次分叉)、自包含 HTML 与 ATIF 导出。
 - **CI 退出码**:0 无退化,1 有退化,2 未完成或出错。
 
 ## 快速开始
