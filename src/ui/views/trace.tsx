@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { api, fmt } from '../api.js'
+import { api, STATIC, fmt } from '../api.js'
 import { VirtualRows } from '../virtual.js'
 import type { RunLedger } from '../../core/types.js'
 import type { TraceRow } from '../../core/ledger.js'
@@ -93,6 +93,7 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
           <button class={`btn ${blind ? 'primary' : ''}`} title="hide the arm name and machine verdicts until a verdict is saved (Braintrust-style blind review)" onClick={toggleBlind}>blind review {blind ? 'on' : 'off'}</button>
           {other && <button class={`btn ${compare ? 'primary' : ''}`} onClick={() => setCompare(!compare)}>{compare ? 'hide' : 'compare'} with {masked ? 'arm ○' : otherArm} <kbd>c</kbd></button>}
           <a class="btn" href={api.atifUrl(runId, scenario, arm, rep)} target="_blank">ATIF</a>
+          {!STATIC && <a class="btn" title={`start a new run that replays this trial's first ${selected} recorded provider responses, then goes live from this step (OrcaReplay-style fork)`} href={`#/new?replay=${encodeURIComponent(runId)}&forkAt=${selected}&scenario=${encodeURIComponent(scenario)}`}>fork from step {selected + 1}</a>}
         </div>
       </div>
       <div class="card">

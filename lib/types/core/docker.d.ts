@@ -30,6 +30,12 @@ export declare function dockerArgs(input: DriverInput, options: DockerOptions, r
 /** Docker-backed driver: one container per trial. */
 export declare function dockerDriverFactory(options: DockerOptions, runDir: string): DriverFactory;
 /** Overlay rows that make a profile run inside a container: the in-process sandbox off, the plain bash executor on. */
+/**
+ * Image for `keepDshSandbox`: the base image plus bubblewrap, which dsh's in-process
+ * sandbox needs inside a container (Landlock is unavailable on stock Docker kernels).
+ * Built once per base image and cached by tag.
+ */
+export declare function prepareSandboxImage(baseImage: string, log?: (line: string) => void): Promise<string>;
 /** Container rows when dsh's own sandbox is kept on inside the container (defence in depth): only the native image module is off. */
 export declare const CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX: {
     id: string;

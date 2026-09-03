@@ -30,9 +30,11 @@ function useDensity(): [boolean, () => void] {
 function App() {
   const hash = useHash()
   const [compact, toggleDensity] = useDensity()
-  const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
+  const [pathPart, query = ''] = hash.replace(/^#\/?/, '').split('?')
+  const parts = (pathPart ?? '').split('/').filter(Boolean).map(decodeURIComponent)
+  const preset = Object.fromEntries(new URLSearchParams(query).entries())
   let view
-  if (parts[0] === 'new') view = <NewRunView />
+  if (parts[0] === 'new') view = <NewRunView preset={preset} />
   else if (parts[0] === 'history') view = <HistoryView />
   else if (parts[0] === 'run' && parts[1] !== undefined && parts[2] === 'trace' && parts[3] !== undefined && parts[4] !== undefined && parts[5] !== undefined) {
     view = <TraceView runId={parts[1]} scenario={parts[3]} arm={parts[4]} rep={Number(parts[5])} />

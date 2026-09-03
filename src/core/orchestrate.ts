@@ -226,7 +226,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   }
   writeJsonAtomic(paths.plan, plan)
   const env = await recordEnvironment(prepared.composed)
-  writeJsonAtomic(paths.env, { ...env, sandbox, ...(sandbox === 'docker' ? { dockerImage: request.dockerImage ?? 'node:22-bookworm-slim', ...(request.dockerRuntime !== undefined ? { dockerRuntime: request.dockerRuntime } : {}), dshSandboxInContainer: request.dockerKeepSandbox === true } : {}), diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
+  writeJsonAtomic(paths.env, { ...env, sandbox, ...(sandbox === 'docker' ? { dockerImage: request.dockerKeepSandbox ? `dsh-eval-bwrap:${(request.dockerImage ?? 'node:22-bookworm-slim').replace(/[^a-zA-Z0-9_.-]/g, '_')}` : request.dockerImage ?? 'node:22-bookworm-slim', ...(request.dockerRuntime !== undefined ? { dockerRuntime: request.dockerRuntime } : {}), dshSandboxInContainer: request.dockerKeepSandbox === true } : {}), diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
   for (const [arm, text] of Object.entries(prepared.composed)) writeFileSync(join(paths.arms, `${arm}.composed.yml`), text)
 
   const runEnv: Record<string, string> = { DSH_TELEMETRY_DISABLED: '1' }
@@ -243,7 +243,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     const arch = process.arch === 'x64' ? 'x64' : 'arm64'
     const nativeShims = prepareNativeShims(project.home, source, arch, log)
     log(`docker sandbox: ${avail.detail}; image ${request.dockerImage ?? 'node:22-bookworm-slim'}; ${nativeShims.length} native shim(s)`)
-    driverFactory = dockerDriverFactory({ dshSource: source, nativeShims, ...(request.dockerImage !== undefined ? { image: request.dockerImage } : {}), ...(request.dockerRuntime !== undefined ? { runtime: request.dockerRuntime } : {}), ...(request.dockerKeepSandbox ? { keepDshSandbox: true } : {}) }, paths.dir)
+    const baseImage = request.dockerImage ?? 'node:22-bookworm-slim'
+    const image = request.dockerKeepSandbox ? await (await import('./docker.js')).prepareSandboxImage(baseImage, log) : baseImage
+    driverFactory = dockerDriverFactory({ dshSource: source, nativeShims, image, ...(request.dockerRuntime !== undefined ? { runtime: request.dockerRuntime } : {}), ...(request.dockerKeepSandbox ? { keepDshSandbox: true } : {}) }, paths.dir)
     baseOverlayRows = request.dockerKeepSandbox ? CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX : CONTAINER_OVERLAY_ROWS
   }
   const deps: RunDeps = {

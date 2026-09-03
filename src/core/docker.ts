@@ -152,6 +152,25 @@ export function dockerDriverFactory(options: DockerOptions, runDir: string): Dri
 }
 
 /** Overlay rows that make a profile run inside a container: the in-process sandbox off, the plain bash executor on. */
+/**
+ * Image for `keepDshSandbox`: the base image plus bubblewrap, which dsh's in-process
+ * sandbox needs inside a container (Landlock is unavailable on stock Docker kernels).
+ * Built once per base image and cached by tag.
+ */
+export async function prepareSandboxImage(baseImage: string, log?: (line: string) => void): Promise<string> {
+  const { execFile } = await import('node:child_process')
+  const tag = `dsh-eval-bwrap:${baseImage.replace(/[^a-zA-Z0-9_.-]/g, '_')}`
+  const exists = await new Promise<boolean>((resolveP) => execFile('docker', ['image', 'inspect', tag], { timeout: 20_000 }, (err) => resolveP(!err)))
+  if (exists) return tag
+  log?.(`docker: building ${tag} (base ${baseImage} + bubblewrap) for dsh's in-container sandbox`)
+  const dockerfile = `FROM ${baseImage}\nRUN apt-get update && apt-get install -y --no-install-recommends bubblewrap && rm -rf /var/lib/apt/lists/*\n`
+  await new Promise<void>((resolveP, reject) => {
+    const child = execFile('docker', ['build', '-t', tag, '-'], { timeout: 600_000, maxBuffer: 16 * 1024 * 1024 }, (err, _stdout, stderr) => { if (err) reject(new Error(`docker build failed: ${String(stderr).slice(-400)}`)); else resolveP() })
+    child.stdin?.end(dockerfile)
+  })
+  return tag
+}
+
 /** Container rows when dsh's own sandbox is kept on inside the container (defence in depth): only the native image module is off. */
 export const CONTAINER_OVERLAY_ROWS_KEEP_SANDBOX = [
   { id: 'attachment-local', disabled: true },

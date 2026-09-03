@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
 
-export function NewRunView() {
+export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [arms, setArms] = useState<ArmInfo[]>([])
   const [scenarios, setScenarios] = useState<ScenarioInfo[]>([])
   const [invalid, setInvalid] = useState<Array<{ dir: string; error: string }>>([])
   const [baseline, setBaseline] = useState('')
   const [candidates, setCandidates] = useState<string[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(preset['scenario'] ? [preset['scenario']] : []))
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('')
   const [repeats, setRepeats] = useState(3)
@@ -24,6 +24,18 @@ export function NewRunView() {
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<History | null>(null)
   const [maxUsd, setMaxUsd] = useState('')
+  const [maxUsdPerTrial, setMaxUsdPerTrial] = useState('')
+  const [sequential, setSequential] = useState(false)
+  const [seed, setSeed] = useState('42')
+  const [orderSignal, setOrderSignal] = useState(false)
+  const [perturb, setPerturb] = useState(false)
+  const [sandbox, setSandbox] = useState<'auto' | 'host' | 'docker'>('auto')
+  const [dockerRuntime, setDockerRuntime] = useState('')
+  const [keepDshSandbox, setKeepDshSandbox] = useState(false)
+  const [replayRun, setReplayRun] = useState(preset['replay'] ?? '')
+  const [forkAt, setForkAt] = useState(preset['forkAt'] ?? '')
+  const [runsList, setRunsList] = useState<Array<{ id: string; label?: string }>>([])
+  useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
   useEffect(() => {
     api.meta().then((m) => { setMeta(m); setRepeats(m.defaults.repeats); setConcurrency(m.defaults.concurrency) }).catch(e => setError(String(e)))
@@ -79,7 +91,19 @@ export function NewRunView() {
     setBusy(true); setError(null)
     try {
       const cap = Number(maxUsd)
-      const { id } = await api.start({ baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa, ...(docker ? { sandbox: 'docker' } : {}), ...(maxUsd !== '' && Number.isFinite(cap) && cap > 0 ? { maxUsd: cap } : {}) })
+      const perTrial = Number(maxUsdPerTrial)
+      const fork = Number(forkAt)
+      const { id } = await api.start({
+        baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa,
+        ...(sandbox !== 'auto' ? { sandbox } : docker ? { sandbox: 'docker' } : {}),
+        ...(dockerRuntime.trim() !== '' ? { dockerRuntime: dockerRuntime.trim() } : {}),
+        ...(keepDshSandbox ? { dockerKeepSandbox: true } : {}),
+        ...(maxUsd !== '' && Number.isFinite(cap) && cap > 0 ? { maxUsd: cap } : {}),
+        ...(maxUsdPerTrial !== '' && Number.isFinite(perTrial) && perTrial > 0 ? { maxUsdPerTrial: perTrial } : {}),
+        ...(sequential ? { sequential: true, seed: Number(seed) || 42, ...(orderSignal ? { order: 'signal' } : {}) } : {}),
+        ...(perturb ? { perturb: true } : {}),
+        ...(replayRun !== '' ? { replay: { runId: replayRun, ...(forkAt !== '' && Number.isFinite(fork) && fork >= 0 ? { forkAt: fork } : {}) } } : {}),
+      })
       navigate(`/run/${id}`)
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
@@ -127,7 +151,29 @@ export function NewRunView() {
             <label>Concurrency <input type="number" min={1} max={8} value={concurrency} onInput={e => setConcurrency(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} /></label>
             <label>Label <input type="text" value={label} placeholder="optional" onInput={e => setLabel((e.target as HTMLInputElement).value)} /></label>
           </div>
-          <label class="check"><input type="checkbox" checked={docker} onChange={e => setDocker((e.target as HTMLInputElement).checked)} /> Run each trial inside a Docker container (needs a running Docker daemon; the container is the boundary — only the workspace, the eval home and the read-only dsh checkout are mounted)</label>
+          <div class="row wrap">
+            <label>Isolation <select value={sandbox} onChange={e => { const v = (e.target as HTMLSelectElement).value as 'auto' | 'host' | 'docker'; setSandbox(v); setDocker(v === 'docker') }}>
+              <option value="auto">auto (container when third-party plugins are linked and Docker is available)</option>
+              <option value="host">host (dsh workspace-write sandbox)</option>
+              <option value="docker">Docker container per trial</option>
+            </select></label>
+            <label>Container runtime <input type="text" value={dockerRuntime} placeholder="default · runsc · kata" onInput={e => setDockerRuntime((e.target as HTMLInputElement).value)} /></label>
+            <label class="check"><input type="checkbox" checked={keepDshSandbox} onChange={e => setKeepDshSandbox((e.target as HTMLInputElement).checked)} /> keep dsh's own sandbox on inside the container (defence in depth; needs Landlock or user namespaces)</label>
+          </div>
+          <div class="row wrap">
+            <label class="check"><input type="checkbox" checked={sequential} onChange={e => setSequential((e.target as HTMLInputElement).checked)} /> Sequential (stop as soon as the anytime-valid sequences decide)</label>
+            {sequential && <label>seed <input type="text" value={seed} onInput={e => setSeed((e.target as HTMLInputElement).value)} /></label>}
+            {sequential && <label class="check"><input type="checkbox" checked={orderSignal} onChange={e => setOrderSignal((e.target as HTMLInputElement).checked)} /> order by archive signal (strongest scenarios first)</label>}
+            <label class="check"><input type="checkbox" checked={perturb} onChange={e => setPerturb((e.target as HTMLInputElement).checked)} /> Perturb prompts on repeats above 1 (scenarios with prompts.variants.json; same variant for every arm)</label>
+          </div>
+          <div class="row wrap">
+            <label>Replay recorded responses from <select value={replayRun} onChange={e => setReplayRun((e.target as HTMLSelectElement).value)}>
+              <option value="">— live run —</option>
+              {runsList.map(r => <option value={r.id}>{r.id}{r.label ? ` · ${r.label}` : ''}</option>)}
+            </select></label>
+            {replayRun !== '' && <label>fork after N recorded responses (empty = pure replay, no key needed) <input type="text" value={forkAt} placeholder="e.g. 3" onInput={e => setForkAt((e.target as HTMLInputElement).value)} /></label>}
+            <label>Per-trial cap (USD) <input type="text" value={maxUsdPerTrial} placeholder="optional" onInput={e => setMaxUsdPerTrial((e.target as HTMLInputElement).value)} /></label>
+          </div>
           <p class="muted small">Arms interleave per repeat (A B, then B A), each trial in a fresh workspace and a fresh runtime process. Three repeats is the floor; five is recommended for binary outcomes; use A/A first to learn the noise floor.</p>
           <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} ({estimate.seen}/{selected.size} scenarios have archive history; the rest use the archive mean of {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
           <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>
