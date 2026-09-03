@@ -101,6 +101,22 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 - No cross-run trend view yet; runs are self-contained directories that can be compared by rebuilding reports.
 - DeepSeek pricing only; other providers price at zero and are reported as unknown.
 
-## 8. Positioning
+## 8. Gap checklist
+
+The landscape survey ended with eight gaps no surveyed tool fills. Status here:
+
+| gap | dsh-eval-infra |
+|---|---|
+| paired, interleaved same-window runs | yes — one process schedules scenario → repeat → arm with alternating order |
+| one-variable enforcement between arms | yes — composed-tree diff through `dsh --dump-config`, refused above one row |
+| oracle / null verifier self-checks | yes — `selfcheck` gates every run; ground truth stashed out of the workspace |
+| never-worse gating | yes — regression classification blocks the cost summary; CLI exit code 1 |
+| cache-aware cost with time-of-day pricing | yes — per-call band pricing plus fixed-band re-pricing; hit/miss/output split |
+| public comparable ledgers | partly — self-contained run directories, JSON report, static HTML export; no shared registry yet |
+| component-level (not model-level) evaluation | yes — the unit is a dsh composition difference |
+| multi-session memory scenarios | yes — `new_session_before_turns` restarts the runtime; `m1_cross_session_recall` |
+| prompt-injection safety scenarios | yes — `x1_injected_readme`, `x2_tool_result_injection` with state-inspecting verifiers |
+
+## 9. Positioning
 
 Harbor runs whole agents on task sets in containers; promptfoo and the observability platforms compare experiments after the fact; Claude's `plugin eval` (early access) does with/without ablation for its own plugins. dsh-eval-infra sits between them: the comparison unit is a dsh composition difference, the two arms are run paired and interleaved by one process, the verifier is checked before the first trial, cost is cache- and calendar-aware, and everything is recomputable from the ledgers.
