@@ -9,12 +9,12 @@ import { loadArmFile, type ArmError } from './arms.js'
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import type { Project } from './project.js'
-import { buildReport, renderMarkdown, type Report } from './report.js'
+import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
 import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
-import { newRunId, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
+import { listRuns, newRunId, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
 import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
 
 export interface RunRequest {
@@ -35,6 +35,8 @@ export interface RunRequest {
   resume?: string
   /** A/A: run the baseline against an identical copy of itself to measure the noise floor. */
   aa?: boolean
+  /** Budget cap in USD; the run stops scheduling trials once exceeded. */
+  maxUsd?: number
 }
 
 export interface LaunchHooks {
@@ -200,10 +202,11 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (request.keepWorkdirs) deps.keepWorkdirs = true
   if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
   if (request.resume !== undefined) deps.resume = true
+  if (request.maxUsd !== undefined) deps.maxUsd = request.maxUsd
 
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
-    const report = buildReport(plan, readLedgers(paths))
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id) })
     if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
     writeJsonAtomic(paths.report, report)
     writeFileSync(paths.reportMd, renderMarkdown(report))
@@ -212,12 +215,29 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   return { id, plan, diffs: prepared.diffs, scenarios, selfcheck, done }
 }
 
+/** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
+export function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor> {
+  const out: Record<string, NoiseFloor> = {}
+  for (const r of listRuns(project.runsRoot)) {
+    if (r.id === exceptRunId || r.status !== 'done') continue
+    const paths = runPaths(project.runsRoot, r.id)
+    if (!existsSync(paths.plan)) continue
+    try {
+      const plan = readPlan(paths)
+      if (out[plan.baseline.name] !== undefined) continue
+      const floor = noiseFloorOf(plan, readLedgers(paths))
+      if (floor !== null) out[plan.baseline.name] = floor
+    } catch { /* unreadable run */ }
+  }
+  return out
+}
+
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 export function rebuildReport(project: Project, id: string): Report {
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
-  const report = buildReport(plan, readLedgers(paths))
+  const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id) })
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))
   return report

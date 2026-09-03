@@ -14,6 +14,7 @@ export interface AtifStep {
   model_name?: string
   reasoning_content?: string
   tool_calls?: Array<{ tool_call_id: string; function_name: string; arguments: Record<string, unknown> | { raw: string } }>
+  observation?: { results: Array<{ source_call_id: string; content: string }> }
   metrics?: { prompt_tokens: number; completion_tokens: number; cached_tokens?: number; cost_usd?: number }
   extra?: Record<string, unknown>
 }
@@ -55,7 +56,8 @@ export function toAtif(ledger: RunLedger, trace: TraceRow[], prompts: string[], 
       extra: { turn: row.turn, step: row.step },
     }
     if (row.reasoning !== '') step.reasoning_content = row.reasoning
-    if (row.calls.length > 0) step.tool_calls = row.calls.map((c, i) => ({ tool_call_id: `t${row.turn}-s${row.step}-${i + 1}`, function_name: c.name, arguments: parseArgs(c.arguments) }))
+    if (row.calls.length > 0) step.tool_calls = row.calls.map((c, i) => ({ tool_call_id: row.observations[i]?.callId || `t${row.turn}-s${row.step}-${i + 1}`, function_name: c.name, arguments: parseArgs(c.arguments) }))
+    if (row.observations.length > 0) step.observation = { results: row.observations.map((o, i) => ({ source_call_id: o.callId || `t${row.turn}-s${row.step}-${i + 1}`, content: o.text })) }
     if (row.usage !== null) step.metrics = { prompt_tokens: row.usage.hit + row.usage.miss, completion_tokens: row.usage.output, cached_tokens: row.usage.hit, cost_usd: row.usd }
     steps.push(step)
   }

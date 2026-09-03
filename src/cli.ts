@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -141,11 +141,13 @@ function cmdScenarios(project: Project, args: Args): number {
 async function cmdSelfcheck(project: Project, args: Args): Promise<number> {
   const { scenarios } = collectScenarios(project, scenarioFilter(args))
   if (scenarios.length === 0) { err('no scenarios matched'); return 3 }
-  const results = await selfcheckAll(scenarios)
+  const strict = args.flags['strict'] === true
+  const results = await selfcheckAll(scenarios, 4, { strict })
   let ok = true
   for (const r of results) {
     ok &&= r.ok
-    out(`${r.ok ? 'OK ' : 'BAD'} ${r.name.padEnd(28)} size=${String(Math.round(r.bytes / 1000)).padStart(5)}K turns=${String(r.turns).padStart(2)} blank→${r.blankPasses === null ? '?' : r.blankPasses ? 'PASS?!' : 'fail'} oracle→${r.oraclePasses === null ? 'n/a ' : r.oraclePasses ? 'pass' : 'FAIL'} ${r.error ?? r.detail}`)
+    const mut = strict && r.mutated !== undefined ? ` mutations=${r.mutated - (r.nonDiscriminating?.length ?? 0)}/${r.mutated} caught` : ''
+    out(`${r.ok ? 'OK ' : 'BAD'} ${r.name.padEnd(28)} size=${String(Math.round(r.bytes / 1000)).padStart(5)}K turns=${String(r.turns).padStart(2)} blank→${r.blankPasses === null ? '?' : r.blankPasses ? 'PASS?!' : 'fail'} oracle→${r.oraclePasses === null ? 'n/a ' : r.oraclePasses ? 'pass' : 'FAIL'}${mut} ${r.error ?? r.detail}`)
   }
   return ok ? 0 : 1
 }
@@ -186,6 +188,7 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(num(args.flags['turn-timeout']) !== undefined ? { turnTimeoutS: num(args.flags['turn-timeout'])! } : {}),
     ...(resume !== undefined ? { resume } : {}),
     ...(aa ? { aa: true } : {}),
+    ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
   }
   const controller = new AbortController()
   process.on('SIGINT', () => { err('\ncancelling… (finished trials are kept; resume with --resume <id>)'); controller.abort() })
@@ -314,10 +317,10 @@ function help(): number {
   init [--plugin <path|pkg>]...       create .dsh-eval/home + eval profile, add plugins, write starter arms
   add <path|pkg>                      add a plugin to the eval profile
   scenarios [globs] [--category c]    list scenarios
-  selfcheck [globs]                   oracle must pass, untouched workspace must fail
+  selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output and requires a fail
   diff <baseline> <candidate>...      composed-tree diff between arms
   run --baseline <arm> --arm <arm>... [globs] [--repeats N] [--concurrency N] [--label L]
-      [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa]
+      [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N]
   report <runId> [--json]             rebuild the report from ledgers
   runs                                list runs
   ui [--port 4177] [--open]           local web UI

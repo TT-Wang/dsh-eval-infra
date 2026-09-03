@@ -92,7 +92,7 @@ describe('report claims', () => {
     const { buildReport } = await import('../src/core/report.js')
     const mk = (scenario: string, arm: string, usd: number) => ({
       schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
-      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
     })
     const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: ['s1', 's2'], repeats: 1, concurrency: 1, scenarioRoot: '' }
     const two = buildReport(plan, [mk('s1', 'a', 1), mk('s1', 'b', 1.2), mk('s2', 'a', 1), mk('s2', 'b', 1.15)])
@@ -103,6 +103,29 @@ describe('report claims', () => {
     expect(three.candidates[0]!.costReading).toBe('more-expensive')
     const flat = buildReport(plan3, [mk('s1', 'a', 1), mk('s1', 'b', 1.01), mk('s2', 'a', 1), mk('s2', 'b', 0.99), mk('s3', 'a', 1), mk('s3', 'b', 1.02)])
     expect(flat.candidates[0]!.costReading).toBe('equivalent')
+    expect(flat.candidates[0]!.grade).toBe('tie')
+    expect(three.candidates[0]!.grade).toBe('regression')
+    expect(three.candidates[0]!.mdePct).toBeGreaterThan(0)
+    expect(flat.candidates[0]!.passDiffCI.mean).toBe(0)
+  })
+  it('flags flaky scenarios, groups failure reasons, and carries an A/A noise floor into the notes', async () => {
+    const { buildReport, noiseFloorOf } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, rep: number, ok: boolean, usd: number, detail = ok ? 'ok' : 'answer.txt missing') => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail }, behaviour: { toolErrors: ok ? 0 : 2, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: ['s1'], repeats: 2, concurrency: 1, scenarioRoot: '' }
+    const rep = buildReport(plan, [mk('s1', 'a', 1, true, 1), mk('s1', 'a', 2, false, 1), mk('s1', 'b', 1, true, 1), mk('s1', 'b', 2, true, 1)], { noiseFloors: { a: { runId: 'aa1', scenarios: 4, meanAbsPct: 12, lo: -15, hi: 14 } } })
+    const c = rep.candidates[0]!
+    expect(c.flaky).toEqual(['s1'])
+    expect(c.scenarios[0]!.failures.baseline[0]).toEqual({ reason: 'answer.txt missing', n: 1 })
+    expect(c.scenarios[0]!.behaviour.baseline.toolErrors).toBe(1)
+    expect(c.noiseFloor?.runId).toBe('aa1')
+    expect(rep.notes.join(' ')).toMatch(/A\/A run aa1/)
+    const aaPlan = { ...plan, candidates: [{ name: 'a-aa' }] }
+    const floor = noiseFloorOf(aaPlan, [mk('s1', 'a', 1, true, 1), mk('s1', 'a-aa', 1, true, 1.1)])
+    expect(floor).toMatchObject({ runId: 'r', scenarios: 1 })
+    expect(floor!.meanAbsPct).toBeCloseTo(10, 5)
   })
   it('parses boolean flags without swallowing the next positional', async () => {
     const { parseArgs } = await import('../src/cli.js')

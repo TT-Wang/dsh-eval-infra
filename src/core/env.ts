@@ -68,6 +68,17 @@ export function dshSourceRoot(): string | null {
   return null
 }
 
+/** Git revision of the dsh source checkout, when it is a git worktree. */
+export async function dshSourceRevision(root: string | null): Promise<string | null> {
+  if (root === null) return null
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', root, 'rev-parse', '--short=12', 'HEAD'], { timeout: 10_000 })
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
 export function evalInfraVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: string }

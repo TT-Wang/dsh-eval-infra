@@ -167,6 +167,8 @@ export interface RunLedger {
   /** Counts of session event types worth watching (compaction/start, ...). */
   eventCounts: Record<string, number>
   verdict: Verdict | null
+  /** Behaviour signature: tool errors, repeated calls, no-action steps, observation volume, compactions. */
+  behaviour: { toolErrors: number; repeatedCalls: number; noActionSteps: number; observationChars: number; compactions: number }
   /** Set when the run itself failed (runtime crash, timeout) — the verdict is then null. */
   error?: string
   sessionId: string | null
@@ -198,6 +200,8 @@ export interface RunPlan {
 export interface RunEnvironment {
   dshVersion: string | null
   dshSource: string | null
+  /** Git revision of the dsh source checkout, when available. */
+  dshRevision: string | null
   evalInfraVersion: string
   node: string
   platform: string

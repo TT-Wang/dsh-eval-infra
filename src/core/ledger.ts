@@ -51,12 +51,31 @@ export interface TraceRow {
   reasoning: string
   usage: Usage | null
   usd: number
+  /** What the model saw back for each call this step (truncated to `observationMaxChars`). */
+  observations: Array<{ callId: string; chars: number; isError: boolean; text: string }>
 }
+
+export interface BehaviourMetrics {
+  /** Tool results flagged as errors by the tool or the pipeline. */
+  toolErrors: number
+  /** Consecutive identical tool calls (same name and arguments) — a loop signature. */
+  repeatedCalls: number
+  /** Steps with neither a tool call nor final text (empty or reasoning-only turns). */
+  noActionSteps: number
+  /** Total characters of tool results the model was shown. */
+  observationChars: number
+  /** compaction/start events observed. */
+  compactions: number
+}
+
+const OBSERVATION_MAX_CHARS = 4000
 
 export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: TraceRow[] } {
   const prices = input.prices ?? DEEPSEEK_PRICES
   const steps: StepRow[] = []
   const trace: TraceRow[] = []
+  const behaviour: BehaviourMetrics = { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }
+  let lastCallKey = ''
   const turnsMap = new Map<number, TurnRow>()
   const toolHistogram: Record<string, number> = {}
   const eventCounts: Record<string, number> = {}
@@ -73,6 +92,20 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
     } else if (e.type === 'tool/call') {
       const name = String(d['name'] ?? '?')
       toolHistogram[name] = (toolHistogram[name] ?? 0) + 1
+      const key = `${name}\u0000${String(d['arguments'] ?? '')}`
+      if (key === lastCallKey) behaviour.repeatedCalls += 1
+      lastCallKey = key
+    } else if (e.type === 'tool/result') {
+      const message = (d['message'] ?? {}) as { content?: Array<{ type: string; toolCallId?: string; isError?: boolean; content?: Array<{ type: string; text?: string }> }> }
+      const block = (message.content ?? []).find(b => b.type === 'tool-result')
+      const text = (block?.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('')
+      const isError = block?.isError === true || d['error'] !== undefined
+      if (isError) behaviour.toolErrors += 1
+      behaviour.observationChars += text.length
+      const last = trace.at(-1)
+      if (last !== undefined) last.observations.push({ callId: String(block?.toolCallId ?? ''), chars: text.length, isError, text: text.length > OBSERVATION_MAX_CHARS ? `${text.slice(0, OBSERVATION_MAX_CHARS)}\n…[${text.length - OBSERVATION_MAX_CHARS} more chars]` : text })
+    } else if (e.type === 'compaction/start') {
+      behaviour.compactions += 1
     } else if (e.type === 'assistant/message') {
       const turn = Number(d['turn'] ?? 0)
       const step = Number(d['step'] ?? 0)
@@ -90,8 +123,9 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
         usdOffpeak += priceUsage(input.model, 'offpeak', usage, prices)
         peakPrompt = Math.max(peakPrompt, usage.hit + usage.miss)
       }
+      if (calls.length === 0 && text.trim() === '') behaviour.noActionSteps += 1
       steps.push({ ...(usage ?? ZERO_USAGE), turn, step, time, band, usd, calls: calls.map(c => ({ name: c.name, args: c.arguments.slice(0, 200) })), textChars: text.length, reasoningChars: reasoning.length })
-      trace.push({ turn, step, time, calls, text, reasoning, usage: usage ?? null, usd })
+      trace.push({ turn, step, time, calls, text, reasoning, usage: usage ?? null, usd, observations: [] })
       const row = turnsMap.get(turn) ?? { ...ZERO_USAGE, turn, steps: 0, usd: 0, wallMs: input.turnWall.get(turn) ?? 0, end: 'unknown' }
       const summed = addUsage(row, usage ?? ZERO_USAGE)
       turnsMap.set(turn, { ...row, ...summed, steps: Math.max(row.steps, step), usd: row.usd + usd })
@@ -140,6 +174,7 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
     toolHistogram,
     eventCounts,
     verdict: input.verdict,
+    behaviour,
     sessionId: input.sessionId,
     workdir: input.workdir,
     eventsFile: input.eventsFile,

@@ -1,0 +1,28 @@
+# Example GitHub Actions job: gate a dsh plugin PR on a paired A/B against stock dsh.
+# Needs a self-hosted runner (or a job) where `dsh` is installed and DEEPSEEK_API_KEY is a secret.
+name: dsh-eval
+on:
+  pull_request:
+jobs:
+  ab:
+    runs-on: self-hosted
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+      - run: npx dsh-eval init --plugin .
+      - run: npx dsh-eval selfcheck --strict
+      - run: npx dsh-eval diff baseline candidate
+      # exit 0 = no regressions, 1 = regressions, 2 = incomplete/cancelled; the cost cap keeps a runaway PR cheap
+      - run: npx dsh-eval run --baseline baseline --arm candidate --repeats 3 --max-usd 5 --label "pr-${{ github.event.number }}"
+      - if: always()
+        run: npx dsh-eval export "$(ls .dsh-eval/runs | tail -1)" --html report.html
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-eval-report
+          path: |
+            report.html
+            .dsh-eval/runs/*/report.md
+            .dsh-eval/runs/*/report.json

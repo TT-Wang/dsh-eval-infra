@@ -99,6 +99,8 @@ export interface RunDeps {
   /** Skip jobs whose ledger already exists (resume). */
   resume?: boolean
   workRoot?: string
+  /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
+  maxUsd?: number
 }
 
 /** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
@@ -153,9 +155,11 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
   publish()
 
   let next = 0
+  let overBudget = false
   const worker = async (): Promise<void> => {
     for (;;) {
       if (deps.signal?.aborted) return
+      if (deps.maxUsd !== undefined && progress.usd >= deps.maxUsd) { overBudget = true; return }
       const job = jobs[next++]
       if (job === undefined) return
       if (deps.resume && existsSync(ledgerPath(paths, job.scenario.name, job.arm.name, job.rep))) {
@@ -188,7 +192,8 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
   }
   const workers = Array.from({ length: Math.max(1, Math.min(plan.concurrency, jobs.length)) }, () => worker())
   await Promise.all(workers)
-  progress.status = deps.signal?.aborted ? 'cancelled' : 'done'
+  progress.status = deps.signal?.aborted || overBudget ? 'cancelled' : 'done'
+  if (overBudget) progress.error = `budget of $${deps.maxUsd!.toFixed(2)} reached after ${progress.completed}/${progress.total} trials`
   publish()
   return progress
 }

@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { armOverlays, diffComposedRows, diffRoute, dumpComposedTree, parseComposedRows, resolveArm, sha256, type DshInvoker, type RowDiff } from './arms.js'
-import { dshSourceRoot, dshVersion, evalInfraVersion } from './env.js'
+import { dshSourceRevision, dshSourceRoot, dshVersion, evalInfraVersion } from './env.js'
 import { DEEPSEEK_PRICES } from './pricing.js'
 import { writeBaseOverlays } from './runner.js'
 import type { ArmSpec, ResolvedArm, RunEnvironment } from './types.js'
@@ -61,9 +61,11 @@ export async function prepareArms(baseline: ArmSpec, candidates: ArmSpec[], opti
 export async function recordEnvironment(composed: Record<string, string>): Promise<RunEnvironment> {
   const composedTreeSha: Record<string, string> = {}
   for (const [arm, text] of Object.entries(composed)) composedTreeSha[arm] = sha256(text.split('\n').filter(l => !l.startsWith('#')).join('\n'))
+  const source = dshSourceRoot()
   return {
     dshVersion: await dshVersion(),
-    dshSource: dshSourceRoot(),
+    dshSource: source,
+    dshRevision: await dshSourceRevision(source),
     evalInfraVersion: evalInfraVersion(),
     node: process.version,
     platform: `${process.platform}-${process.arch}`,

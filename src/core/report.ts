@@ -8,7 +8,7 @@
  *   3. Aggregates carry a bootstrap interval over scenarios; an interval that
  *      covers zero reads "no difference".
  */
-import { bootstrapMean, mean, median, signTest, wilson, type BootstrapCI } from './stats.js'
+import { bootstrapMean, mean, median, signTest, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
 import type { RunLedger, RunPlan } from './types.js'
 
 export interface ArmScenarioStats {
@@ -42,11 +42,17 @@ export interface PairedScenario {
   baseline: ArmScenarioStats
   candidate: ArmScenarioStats
   class: PairClass
+  /** Repeats disagree within at least one arm — the scenario is noisy for this setup. */
+  flaky: boolean
+  /** Distinct failure reasons per arm (verdict detail, truncated), most frequent first. */
+  failures: { baseline: Array<{ reason: string; n: number }>; candidate: Array<{ reason: string; n: number }> }
   /** Repeat pairs where both arms passed (cost comparison base). */
   costPairs: number
   /** Mean of per-pair (candidate − baseline) USD over costPairs; null when no pair. */
   costDiffUsd: number | null
   costDiffPct: number | null
+  /** Mean behaviour signature per arm (tool errors, repeated calls, no-action steps, observation chars, compactions). */
+  behaviour: { baseline: BehaviourMean; candidate: BehaviourMean }
   /** Same difference re-priced at a fixed band, immune to peak/off-peak drift. */
   costDiffPeakUsd: number | null
   costDiffOffpeakUsd: number | null
@@ -54,6 +60,10 @@ export interface PairedScenario {
   /** Within-arm spread of the baseline cost on passed runs (max−min)/mean, a noise indicator. */
   baselineSpreadPct: number | null
 }
+
+export interface BehaviourMean { toolErrors: number; repeatedCalls: number; noActionSteps: number; observationChars: number; compactions: number }
+
+export type Grade = 'improvement' | 'regression' | 'tradeoff' | 'tie' | 'inconclusive'
 
 export interface ArmSummary {
   arm: string
@@ -98,7 +108,27 @@ export interface CandidateReport {
   gate: 'pass' | 'regressions' | 'incomplete'
   /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
   costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none'
+  /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
+  passDiffCI: BootstrapCI
+  /** One-word grade combining correctness and cost: improvement / regression / tradeoff / tie / inconclusive. */
+  grade: Grade
+  /** Scenarios whose repeats disagree within an arm. */
+  flaky: string[]
+  /** Minimum detectable cost effect (percent of baseline) for this design at 95% confidence and 80% power, from the observed per-scenario spread; null with fewer than 3 comparable scenarios. */
+  mdePct: number | null
+  /** Noise floor from the most recent A/A run on the same baseline, when one exists in the archive. */
+  noiseFloor: NoiseFloor | null
   verdict: string
+}
+
+export interface NoiseFloor {
+  runId: string
+  scenarios: number
+  /** Mean of |Δ%| across scenarios in the A/A run. */
+  meanAbsPct: number
+  /** 95% bootstrap interval of Δ% in the A/A run. */
+  lo: number
+  hi: number
 }
 
 export interface ReportOptions {
@@ -106,6 +136,34 @@ export interface ReportOptions {
   sesoiPct?: number
   /** Comparable scenarios needed before any directional or equivalence claim (default 3); fewer reads "inconclusive". */
   minScenarios?: number
+  /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
+  noiseFloors?: Record<string, NoiseFloor>
+}
+
+function behaviourMean(rows: RunLedger[]): BehaviourMean {
+  const n = Math.max(1, rows.length)
+  const sum = rows.reduce((a, r) => ({ toolErrors: a.toolErrors + (r.behaviour?.toolErrors ?? 0), repeatedCalls: a.repeatedCalls + (r.behaviour?.repeatedCalls ?? 0), noActionSteps: a.noActionSteps + (r.behaviour?.noActionSteps ?? 0), observationChars: a.observationChars + (r.behaviour?.observationChars ?? 0), compactions: a.compactions + (r.behaviour?.compactions ?? 0) }), { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 })
+  return { toolErrors: sum.toolErrors / n, repeatedCalls: sum.repeatedCalls / n, noActionSteps: sum.noActionSteps / n, observationChars: sum.observationChars / n, compactions: sum.compactions / n }
+}
+
+function failureReasons(rows: RunLedger[]): Array<{ reason: string; n: number }> {
+  const counts = new Map<string, number>()
+  for (const r of rows) {
+    if (r.verdict?.ok === true && r.error === undefined) continue
+    const reason = (r.error !== undefined ? `runtime: ${r.error}` : r.verdict?.detail ?? 'no verdict').replace(/\s+/g, ' ').slice(0, 140)
+    counts.set(reason, (counts.get(reason) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, n]) => ({ reason, n }))
+}
+
+/** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
+export function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | null {
+  const twin = plan.candidates.find(c => c.name === `${plan.baseline.name}-aa`)
+  if (twin === undefined) return null
+  const pairs = plan.scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(twin.name, s, ledgers), plan.repeats)).filter(p => p.costDiffPct !== null)
+  if (pairs.length === 0) return null
+  const ci = bootstrapMean(pairs.map(p => p.costDiffPct!))
+  return { runId: plan.id, scenarios: pairs.length, meanAbsPct: mean(pairs.map(p => Math.abs(p.costDiffPct!))), lo: ci.lo, hi: ci.hi }
 }
 
 function armSummary(arm: string, pairs: PairedScenario[], side: 'baseline' | 'candidate', ledgers: RunLedger[]): ArmSummary {
@@ -186,8 +244,12 @@ function classify(b: ArmScenarioStats, c: ArmScenarioStats, repeats: number): Pa
   return 'same'
 }
 
-function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats, repeats: number): PairedScenario {
+function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats, repeats: number, ledgers: RunLedger[] = []): PairedScenario {
   const cls = classify(b, c, repeats)
+  const rowsB = ledgers.filter(l => l.arm === b.arm && l.scenario === scenario)
+  const rowsC = ledgers.filter(l => l.arm === c.arm && l.scenario === scenario)
+  const flakyB = b.n >= 2 && b.passes > 0 && b.passes < b.n
+  const flakyC = c.n >= 2 && c.passes > 0 && c.passes < c.n
   const diffs: number[] = []
   const pct: number[] = []
   const peak: number[] = []
@@ -210,6 +272,9 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     baseline: b,
     candidate: c,
     class: cls,
+    flaky: flakyB || flakyC,
+    failures: { baseline: failureReasons(rowsB), candidate: failureReasons(rowsC) },
+    behaviour: { baseline: behaviourMean(rowsB), candidate: behaviourMean(rowsC) },
     costPairs: diffs.length,
     costDiffUsd: diffs.length ? mean(diffs) : null,
     costDiffPct: pct.length ? mean(pct) : null,
@@ -226,7 +291,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   const scenarios = [...new Set([...plan.scenarios, ...ledgers.map(l => l.scenario)])]
   const notes: string[] = []
   const candidates: CandidateReport[] = plan.candidates.map((cand) => {
-    const pairs = scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(cand.name, s, ledgers), plan.repeats))
+    const pairs = scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(cand.name, s, ledgers), plan.repeats, ledgers))
     const comparable = pairs.filter(p => p.costDiffUsd !== null)
     let wins = 0
     let losses = 0
@@ -248,6 +313,12 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const costPeakCI = bootstrapMean(comparable.map(p => p.costDiffPeakUsd ?? 0))
     const costOffpeakCI = bootstrapMean(comparable.map(p => p.costDiffOffpeakUsd ?? 0))
     const gate: CandidateReport['gate'] = regressions.length > 0 ? 'regressions' : incomplete.length === pairs.length ? 'incomplete' : 'pass'
+    const complete = pairs.filter(p => p.class !== 'incomplete')
+    const passDiffCI = bootstrapMean(complete.map(p => (p.candidate.passRate - p.baseline.passRate) * 100))
+    const flaky = pairs.filter(p => p.flaky).map(p => p.scenario)
+    const pctDiffs = comparable.map(p => p.costDiffPct!)
+    const mdePct = pctDiffs.length >= 3 ? (tCritical(pctDiffs.length - 1) + 0.84) * stddev(pctDiffs) / Math.sqrt(pctDiffs.length) : null
+    const noiseFloor = options.noiseFloors?.[plan.baseline.name] ?? null
     const passBaseline = pairs.reduce((a, p) => a + p.baseline.passes, 0)
     const passCandidate = pairs.reduce((a, p) => a + p.candidate.passes, 0)
     const runsBaseline = pairs.reduce((a, p) => a + p.baseline.n, 0)
@@ -262,6 +333,15 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       else if (costPctCI.lo > -sesoi && costPctCI.hi < sesoi) costReading = 'equivalent'
       else costReading = 'inconclusive'
     }
+    let grade: Grade
+    if (gate === 'regressions') grade = 'regression'
+    else if (gate === 'incomplete') grade = 'inconclusive'
+    else if (improvements.length > 0 && (costReading === 'cheaper' || costReading === 'equivalent' || costReading === 'none')) grade = 'improvement'
+    else if (improvements.length > 0 && costReading === 'more-expensive') grade = 'tradeoff'
+    else if (costReading === 'cheaper') grade = 'improvement'
+    else if (costReading === 'more-expensive') grade = 'regression'
+    else if (costReading === 'equivalent') grade = 'tie'
+    else grade = 'inconclusive'
     if (gate === 'regressions') verdict = `REGRESSION on ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} (${regressions.join(', ')}); cost is not compared until this is fixed.`
     else if (gate === 'incomplete') verdict = 'Incomplete: not every scenario has all repeats yet.'
     else if (costReading === 'none') verdict = 'No scenario where both arms passed; nothing to compare on cost.'
@@ -293,9 +373,19 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       comparableUsdCandidate: comparable.reduce((a, p) => a + Object.values(p.candidate.byRep).filter(r => r.ok).reduce((x, r) => x + r.usd, 0), 0),
       gate,
       costReading,
+      passDiffCI,
+      grade,
+      flaky,
+      mdePct,
+      noiseFloor,
       verdict,
     }
   })
+  for (const c of candidates) {
+    if (c.flaky.length > 0) notes.push(`${c.arm}: repeats disagree within an arm on ${c.flaky.join(', ')} — noisy scenarios for this setup; a regression there needs more repeats before it counts.`)
+    if (c.mdePct !== null) notes.push(`${c.arm}: with ${c.scenarios.filter(p => p.costDiffUsd !== null).length} comparable scenarios this design can detect a cost effect of about ±${c.mdePct.toFixed(0)}% (95% confidence, 80% power); smaller effects will read inconclusive.`)
+    if (c.noiseFloor !== null) notes.push(`${c.arm}: the A/A run ${c.noiseFloor.runId} on this baseline showed |Δ%| averaging ${c.noiseFloor.meanAbsPct.toFixed(1)}% (interval ${fmtPct(c.noiseFloor.lo)} to ${fmtPct(c.noiseFloor.hi)}) with no real change; treat differences inside that band as noise.`)
+  }
   const errors = ledgers.filter(l => l.error !== undefined).length
   if (errors > 0) notes.push(`${errors} run(s) ended with a runtime error (timeout or crash); they count as failures.`)
   if (plan.repeats < 3) notes.push(`repeats=${plan.repeats}: below the 3-repeat floor the literature recommends; single-run noise is around ±30% on cost, so treat every difference as indicative only.`)
@@ -346,15 +436,18 @@ export function renderMarkdown(report: Report): string {
     lines.push('')
     lines.push(`**${c.verdict}**`)
     lines.push('')
+    lines.push(`Grade: **${c.grade}** · Δ pass ${fmtPct(c.passDiffCI.mean)} pp (95% CI ${fmtPct(c.passDiffCI.lo)} to ${fmtPct(c.passDiffCI.hi)})${c.flaky.length ? ` · flaky: ${c.flaky.join(', ')}` : ''}${c.mdePct !== null ? ` · MDE ≈ ±${c.mdePct.toFixed(0)}%` : ''}`)
+    lines.push('')
     lines.push(`Pass: baseline ${c.passBaseline}/${c.runsBaseline}, candidate ${c.passCandidate}/${c.runsCandidate} · pass^k ${(c.summary.baseline.passAllK * 100).toFixed(0)}% → ${(c.summary.candidate.passAllK * 100).toFixed(0)}% · discordant pairs: ${c.wins} won / ${c.losses} lost (sign test p=${c.signTestP.toFixed(2)})`)
     lines.push('')
     lines.push(`Per solved task: baseline ${c.summary.baseline.tokensPerSolved === null ? '—' : Math.round(c.summary.baseline.tokensPerSolved / 1000) + 'K tokens'} / ${fmtUsd(c.summary.baseline.usdPerSolved)}, candidate ${c.summary.candidate.tokensPerSolved === null ? '—' : Math.round(c.summary.candidate.tokensPerSolved / 1000) + 'K tokens'} / ${fmtUsd(c.summary.candidate.usdPerSolved)} · cache-hit share ${(c.summary.baseline.cacheHitShare * 100).toFixed(0)}% → ${(c.summary.candidate.cacheHitShare * 100).toFixed(0)}%`)
     lines.push('')
-    lines.push('| scenario | baseline pass | candidate pass | class | cost pairs | Δ cost | Δ % | Δ steps | baseline spread |')
-    lines.push('|---|---|---|---|---|---|---|---|---|')
+    lines.push('| scenario | baseline pass | candidate pass | class | cost pairs | Δ cost | Δ % | Δ steps | baseline spread | notes |')
+    lines.push('|---|---|---|---|---|---|---|---|---|---|')
     const order: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4 }
     for (const p of [...c.scenarios].sort((a, b) => order[a.class] - order[b.class] || a.scenario.localeCompare(b.scenario))) {
-      lines.push(`| ${p.scenario} | ${p.baseline.passes}/${p.baseline.n} | ${p.candidate.passes}/${p.candidate.n} | ${classLabel(p.class)} | ${p.costPairs} | ${fmtUsd(p.costDiffUsd)} | ${fmtPct(p.costDiffPct)} | ${p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)} | ${p.baselineSpreadPct === null ? '—' : p.baselineSpreadPct.toFixed(0) + '%'} |`)
+      const notes = [p.flaky ? 'flaky' : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
+      lines.push(`| ${p.scenario} | ${p.baseline.passes}/${p.baseline.n} | ${p.candidate.passes}/${p.candidate.n} | ${classLabel(p.class)} | ${p.costPairs} | ${fmtUsd(p.costDiffUsd)} | ${fmtPct(p.costDiffPct)} | ${p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)} | ${p.baselineSpreadPct === null ? '—' : p.baselineSpreadPct.toFixed(0) + '%'} | ${notes} |`)
     }
     lines.push('')
     lines.push(`Cost over comparable scenarios: baseline $${c.comparableUsdBaseline.toFixed(4)} → candidate $${c.comparableUsdCandidate.toFixed(4)}; per-scenario mean Δ ${fmtUsd(c.costCI.mean)} (95% bootstrap CI ${fmtUsd(c.costCI.lo)} to ${fmtUsd(c.costCI.hi)}); Δ% ${fmtPct(c.costPctCI.mean)} (CI ${fmtPct(c.costPctCI.lo)} to ${fmtPct(c.costPctCI.hi)}); fixed-band Δ peak ${fmtUsd(c.costPeakCI.mean)}, off-peak ${fmtUsd(c.costOffpeakCI.mean)}.`)

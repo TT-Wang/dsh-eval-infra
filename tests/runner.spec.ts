@@ -22,6 +22,14 @@ describe('scenarios', () => {
     expect(invalid).toEqual([])
     expect(listScenarios(FIXTURES, { names: ['t1*'] }).scenarios).toHaveLength(1)
   })
+  it('strict selfcheck reports oracle outputs the verifier ignores', async () => {
+    const { selfcheckScenario } = await import('../src/core/selfcheck.js')
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    const r = await selfcheckScenario(scenarios[0]!, tmpdir(), { strict: true })
+    expect(r.ok).toBe(true)
+    expect(r.mutated).toBe(1)
+    expect(r.nonDiscriminating).toEqual([])
+  })
   it('selfcheck catches a verifier that accepts an untouched workspace', async () => {
     const { scenarios } = listScenarios(FIXTURES)
     const results = await selfcheckAll(scenarios)
@@ -165,6 +173,35 @@ describe('runner + ledger + report', () => {
     expect(ledger.sessions).toBe(2)
     expect(ledger.turns).toHaveLength(2)
     expect(ledger.verdict?.ok).toBe(true)
+  })
+
+  it('stops scheduling trials once the budget is reached and keeps finished ones', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const plan = makePlan(root, { repeats: 3, concurrency: 1 })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const { scenarios } = listScenarios(FIXTURES, { names: plan.scenarios })
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    const progress = await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory(), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), maxUsd: 0.005 })
+    expect(progress.status).toBe('cancelled')
+    expect(progress.error).toMatch(/budget/)
+    expect(progress.completed).toBeGreaterThan(0)
+    expect(progress.completed).toBeLessThan(6)
+    expect(readLedgers(paths)).toHaveLength(progress.completed)
+  })
+
+  it('records observations and behaviour metrics from tool results', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const plan = makePlan(root, { repeats: 1, candidates: [] })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const { scenarios } = listScenarios(FIXTURES, { names: plan.scenarios })
+    const arms = [resolveArm(plan.baseline, paths.arms)]
+    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory(), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work') })
+    const l = readLedgers(paths)[0]!
+    expect(l.behaviour).toEqual({ toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 })
+    const trace = readFileSync(join(paths.dir, l.traceFile), 'utf8').split('\n').filter(Boolean).map(x => JSON.parse(x) as { observations: unknown[] })
+    expect(trace[0]!.observations).toHaveLength(1)
   })
 
   it('resumes without re-running finished jobs and honours cancellation', async () => {

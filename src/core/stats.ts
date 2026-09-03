@@ -92,3 +92,19 @@ export function wilson(passes: number, n: number, z = 1.96): { lo: number; hi: n
   const half = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
   return { lo: Math.max(0, centre - half), hi: Math.min(1, centre + half) }
 }
+
+export function stddev(xs: number[]): number {
+  if (xs.length < 2) return 0
+  const m = mean(xs)
+  return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1))
+}
+
+/** Two-sided 97.5% Student t quantile for small degrees of freedom (table up to 30, then normal). */
+export function tCritical(df: number): number {
+  const table: Record<number, number> = { 1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 25: 2.060, 30: 2.042 }
+  if (df <= 0) return 12.706
+  if (table[df] !== undefined) return table[df]!
+  if (df < 25) return table[20]!
+  if (df < 30) return table[25]!
+  return 1.96
+}
