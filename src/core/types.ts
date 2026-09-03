@@ -53,6 +53,8 @@ export interface Scenario {
   dir: string
   meta: ScenarioMeta
   prompts: string[]
+  /** Semantics-preserving paraphrases of the prompt list (prompts.variants.json), used by --perturb. */
+  variants?: string[][]
   hasOracle: boolean
   hasSetup: boolean
 }
@@ -156,7 +158,7 @@ export interface Verdict {
 /** The ledger of one run: one scenario × one arm × one repeat. */
 export interface UsageProvenance {
   source: 'self-reported' | 'meter'
-  meter?: { requests: number; forwarded: number; faults: number; hit: number; miss: number; output: number; reasoning: number }
+  meter?: { requests: number; forwarded: number; faults: number; hit: number; miss: number; output: number; reasoning: number; servedModels?: string[]; fingerprints?: string[] }
   /** Total tokens (hit + miss + output) as the runtime reported them. */
   ledgerTokens?: number
   /** Total tokens as seen on the wire by the meter. */
@@ -217,6 +219,8 @@ export interface RunLedger {
   regrade?: { at: string; previous: Verdict | null }
   /** sha256 of the scenario's verify.py at run time (provenance for regrades). */
   verifierSha?: string
+  /** 0 = the scenario's own prompts; k ≥ 1 = the k-th paraphrase variant (same variant for every arm of the repeat). */
+  promptVariant?: number
   sessionId: string | null
   /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
   sessions: number
@@ -242,6 +246,8 @@ export interface RunPlan {
   label?: string
   /** Execution isolation used for the trials. */
   sandbox?: 'host' | 'docker'
+  /** Prompt perturbation on: repeats above 1 use a seeded paraphrase variant, identical across arms. */
+  perturb?: boolean
 }
 
 /** Environment facts recorded once per run for reproducibility. */

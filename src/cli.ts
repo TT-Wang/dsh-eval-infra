@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -192,6 +192,8 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(args.flags['sequential'] === true ? { sequential: true } : {}),
     ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : {}),
     ...(args.flags['no-meter'] === true ? { meter: false } : {}),
+    ...(args.flags['perturb'] === true ? { perturb: true } : {}),
+    ...(args.flags['order'] === 'signal' ? { order: 'signal' as const } : {}),
     ...(num(args.flags['fault-rate']) !== undefined ? { faultRate: num(args.flags['fault-rate'])! } : {}),
     ...(num(args.flags['fault-seed']) !== undefined ? { faultSeed: num(args.flags['fault-seed'])! } : {}),
     ...(typeof args.flags['docker-image'] === 'string' ? { dockerImage: args.flags['docker-image'] } : {}),
@@ -375,6 +377,7 @@ function help(): number {
   report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
   judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N] [--allow-same-family]
   run … [--no-meter] [--fault-rate P] [--fault-seed N]   usage meter (on by default) and provider fault injection
+  run … [--perturb] [--order signal]   paraphrase variants on repeats above 1; sequential order by archive signal
   verify <runId> [--json]      check the sealed evidence hashes and that the report re-derives from them
   regrade <runId>              re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal
                                       blinded judge over scenarios that declare meta.judge: several --model form a panel; absolute mode grades

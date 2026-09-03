@@ -1,3 +1,4 @@
+import { type ModelPrice, type PriceTable } from './pricing.js';
 export interface ProjectConfig {
     profile: string;
     scenarioRoot?: string;
@@ -15,7 +16,15 @@ export interface ProjectConfig {
         apiKeyEnv?: string;
         family?: string;
     }>;
+    /** Extra or overriding prices (USD per million tokens, peak/off-peak) merged over the built-in DeepSeek table. */
+    prices?: {
+        asOf?: string;
+        models: Record<string, ModelPrice>;
+        peak?: PriceTable['peak'];
+    };
 }
+/** The project's price table: the built-in DeepSeek table with the config's models merged over it (undefined when the config adds nothing). */
+export declare function projectPrices(config: ProjectConfig): PriceTable | undefined;
 export interface Project {
     root: string;
     evalDir: string;

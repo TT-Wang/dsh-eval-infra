@@ -26,6 +26,9 @@ export interface MeterEntry {
   status: number | null
   durationMs: number
   usage: Usage | null
+  /** Model id and system fingerprint the provider put in the response (served-model check). */
+  responseModel: string | null
+  fingerprint: string | null
   /** SHA-256 of the request body (the meter never stores the body or headers). */
   requestSha: string
   /** Fault injected by the meter instead of forwarding (null when forwarded). */
@@ -43,6 +46,9 @@ export interface MeterTotals {
   miss: number
   output: number
   reasoning: number
+  /** Distinct model ids and fingerprints seen in responses. */
+  servedModels: string[]
+  fingerprints: string[]
 }
 
 export interface MeterOptions {
@@ -75,13 +81,19 @@ function canonical(entry: Omit<MeterEntry, 'hash'>): string {
 }
 
 export function meterTotals(entries: MeterEntry[]): MeterTotals {
-  const t: MeterTotals = { requests: 0, forwarded: 0, faults: 0, hit: 0, miss: 0, output: 0, reasoning: 0 }
+  const t: MeterTotals = { requests: 0, forwarded: 0, faults: 0, hit: 0, miss: 0, output: 0, reasoning: 0, servedModels: [], fingerprints: [] }
+  const models = new Set<string>()
+  const fps = new Set<string>()
   for (const e of entries) {
     t.requests += 1
     if (e.fault) t.faults += 1
     else t.forwarded += 1
     if (e.usage) { t.hit += e.usage.hit; t.miss += e.usage.miss; t.output += e.usage.output; t.reasoning += e.usage.reasoning }
+    if (e.responseModel) models.add(e.responseModel)
+    if (e.fingerprint) fps.add(e.fingerprint)
   }
+  t.servedModels = [...models].sort()
+  t.fingerprints = [...fps].sort()
   return t
 }
 
@@ -98,21 +110,30 @@ export function verifyChain(entries: MeterEntry[]): number | null {
   return null
 }
 
-/** Pull the usage object out of a streamed (SSE) or plain JSON response body. */
-export function usageFromBody(body: string, stream: boolean): Usage | null {
-  if (!stream) {
-    try { const j = JSON.parse(body) as { usage?: unknown }; return j.usage ? (normalizeUsage(j.usage) ?? null) : null } catch { return null }
+export interface ParsedResponse { usage: Usage | null; model: string | null; fingerprint: string | null }
+
+/** Pull usage, the served model id and the system fingerprint out of a streamed (SSE) or plain JSON response body. */
+export function parseResponseBody(body: string, stream: boolean): ParsedResponse {
+  const out: ParsedResponse = { usage: null, model: null, fingerprint: null }
+  const take = (j: { usage?: unknown; model?: unknown; system_fingerprint?: unknown }): void => {
+    if (j.usage) out.usage = normalizeUsage(j.usage) ?? out.usage
+    if (typeof j.model === 'string' && j.model) out.model = j.model
+    if (typeof j.system_fingerprint === 'string' && j.system_fingerprint) out.fingerprint = j.system_fingerprint
   }
-  let last: Usage | null = null
+  if (!stream) {
+    try { take(JSON.parse(body) as Parameters<typeof take>[0]) } catch { /* not JSON */ }
+    return out
+  }
   for (const line of body.split('\n')) {
     const m = /^data:\s*(\{.*\})\s*$/.exec(line)
     if (!m) continue
-    try {
-      const j = JSON.parse(m[1]!) as { usage?: unknown }
-      if (j.usage) last = normalizeUsage(j.usage) ?? last
-    } catch { /* partial or non-JSON line */ }
+    try { take(JSON.parse(m[1]!) as Parameters<typeof take>[0]) } catch { /* partial or non-JSON line */ }
   }
-  return last
+  return out
+}
+
+export function usageFromBody(body: string, stream: boolean): Usage | null {
+  return parseResponseBody(body, stream).usage
 }
 
 export async function startMeter(options: MeterOptions): Promise<Meter> {
@@ -147,7 +168,7 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
       if (options.faults && options.faults.rate > 0 && random() < options.faults.rate) {
         const fault = kinds[Math.floor(random() * kinds.length)] ?? '429'
         const finish = (): void => {
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: fault === '429' ? 429 : 503, durationMs: Date.now() - started, usage: null, requestSha, fault })
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: fault === '429' ? 429 : 503, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault })
         }
         if (fault === '429') {
           res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' })
@@ -179,13 +200,14 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
         upRes.on('end', () => {
           res.end()
           const text = Buffer.concat(collected).toString('utf8')
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: upRes.statusCode ?? null, durationMs: Date.now() - started, usage: usageFromBody(text, stream), requestSha, fault: null })
+          const parsed = parseResponseBody(text, stream)
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: upRes.statusCode ?? null, durationMs: Date.now() - started, usage: parsed.usage, responseModel: parsed.model, fingerprint: parsed.fingerprint, requestSha, fault: null })
         })
       })
       up.on('error', (err) => {
         if (!res.headersSent) { res.writeHead(502, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: `dsh-eval meter: upstream error ${err.message}` } })) }
         else res.end()
-        record({ at: new Date(started).toISOString(), method, path, model, stream, status: 502, durationMs: Date.now() - started, usage: null, requestSha, fault: null })
+        record({ at: new Date(started).toISOString(), method, path, model, stream, status: 502, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault: null })
       })
       up.end(body)
     })

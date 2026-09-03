@@ -90,9 +90,16 @@ export interface RunDeps {
         seed?: number;
         minScenarios?: number;
         sesoiPct?: number;
-        onDecision?: (d: SequentialDecision) => void;
+        onDecision?: (d: SequentialDecision) => void; /** Explicit scenario order (e.g. by archive signal) instead of the seeded shuffle. */
+        order?: string[];
+    };
+    /** Prompt perturbation: repeats above 1 run a seeded paraphrase variant of the prompts, the same variant for every arm of that repeat. */
+    perturb?: {
+        seed: number;
     };
 }
+/** Deterministic variant choice for (scenario, rep): rep 1 always runs the original prompts. */
+export declare function pickVariant(seed: number, scenario: string, rep: number, variants: number): number;
 export interface SequentialDecision {
     /** Scenarios completed on every arm so far. */
     scenarios: number;

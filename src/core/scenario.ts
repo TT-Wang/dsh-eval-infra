@@ -37,7 +37,16 @@ export function loadScenario(dir: string): Scenario {
   if ((meta.oracle ?? 'required') === 'required' && !hasOracle) {
     throw new ScenarioError(`${abs}: oracle.py is required (set meta.oracle to "none" to opt out)`)
   }
-  return { name, dir: abs, meta: { ...meta, name }, prompts: prompts as string[], hasOracle, hasSetup: existsSync(join(abs, 'setup.py')) }
+  const variantsPath = join(abs, 'prompts.variants.json')
+  let variants: string[][] | undefined
+  if (existsSync(variantsPath)) {
+    const raw = JSON.parse(readFileSync(variantsPath, 'utf8')) as unknown
+    if (!Array.isArray(raw) || raw.some(v => !Array.isArray(v) || v.length !== prompts.length || v.some(x => typeof x !== 'string' || x.length === 0))) {
+      throw new ScenarioError(`${abs}: prompts.variants.json must be an array of prompt lists, each with ${prompts.length} non-empty strings`)
+    }
+    variants = raw as string[][]
+  }
+  return { name, dir: abs, meta: { ...meta, name }, prompts: prompts as string[], ...(variants ? { variants } : {}), hasOracle, hasSetup: existsSync(join(abs, 'setup.py')) }
 }
 
 export interface ScenarioFilter {

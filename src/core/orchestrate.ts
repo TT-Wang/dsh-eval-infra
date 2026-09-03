@@ -8,9 +8,10 @@ import { join, resolve } from 'node:path'
 import { loadArmFile, type ArmError } from './arms.js'
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
-import type { Project } from './project.js'
+import { projectPrices, type Project } from './project.js'
 import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
 import { fileSha, sealRun, verifyRun, type VerifyResult } from './manifest.js'
+import { archiveSignalOrder } from './signal.js'
 import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
@@ -46,6 +47,10 @@ export interface RunRequest {
   sandbox?: 'host' | 'docker'
   /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
   meter?: boolean
+  /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
+  perturb?: boolean
+  /** Sequential scenario order: seeded shuffle (default) or archive signal-to-noise, strongest first. */
+  order?: 'seed' | 'signal'
   /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
   faultRate?: number
   faultSeed?: number
@@ -162,6 +167,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     }
     if (request.label !== undefined) plan.label = request.label
     if (request.sandbox === 'docker') plan.sandbox = 'docker'
+    if (request.perturb) plan.perturb = true
   }
   if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
 
@@ -234,6 +240,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
   if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
   if (request.keepWorkdirs) deps.keepWorkdirs = true
+  const prices = projectPrices(project.config)
+  if (prices) deps.prices = prices
+  if (request.perturb) deps.perturb = { seed: request.seed ?? 42 }
   const meterOn = request.meter ?? driverFactory === undefined
   if (meterOn) {
     deps.meter = {
@@ -248,7 +257,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (baseOverlayRows.length > 0) deps.baseOverlayRows = baseOverlayRows
   const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; ratio: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
   if (request.sequential) {
-    deps.sequential = { seed: request.seed ?? 42, onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost ratio betting CS ${d.ratio ? `${d.ratio.mean.toFixed(2)} [${d.ratio.lo.toFixed(2)}, ${d.ratio.hi.toFixed(2)}]` : '—'} · Δ% asymptotic ${d.cost ? `[${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
+    deps.sequential = { seed: request.seed ?? 42, ...(request.order === 'signal' ? { order: archiveSignalOrder(project.runsRoot, plan.id) } : {}), onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost ratio betting CS ${d.ratio ? `${d.ratio.mean.toFixed(2)} [${d.ratio.lo.toFixed(2)}, ${d.ratio.hi.toFixed(2)}]` : '—'} · Δ% asymptotic ${d.cost ? `[${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
     log('sequential mode: scenarios in seeded random order; the run stops once the anytime-valid sequences decide the comparison')
   }
 
@@ -440,6 +449,7 @@ export async function rebuildLedgers(project: Project, id: string): Promise<numb
       startedAt: new Date(old.startedAt), endedAt: new Date(old.endedAt), provider: old.provider, model: old.model,
       events, turnWall, verdict: old.machineVerdict ?? old.verdict, sessionId: old.sessionId, workdir: old.workdir,
       eventsFile: old.eventsFile, traceFile: old.traceFile, sessions: old.sessions ?? 1, ...(old.error !== undefined ? { error: old.error } : {}),
+      ...(projectPrices(project.config) !== undefined ? { prices: projectPrices(project.config)! } : {}),
     })
     writeFileSync(join(paths.dir, old.traceFile), trace.map(t => JSON.stringify(t)).join('\n') + (trace.length ? '\n' : ''))
     writeJsonAtomic(join(paths.ledgers, old.scenario, old.arm, `rep${old.rep}.json`), ledger)

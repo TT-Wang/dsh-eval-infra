@@ -301,3 +301,61 @@ describe('usage provenance', () => {
     expect(report.notes.some(n => n.includes('NOT reconciled'))).toBe(true)
   })
 })
+
+describe('divergence attribution', () => {
+  it('names the first tool call where a failing arm departs from the passing one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: scenarios.map(s => s.name) })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory({ failing: ['cand'] }), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work') })
+    const report = buildReport(plan, readLedgers(paths))
+    const p = report.candidates[0]!.scenarios[0]!
+    expect(p.class).toBe('regression')
+    expect(p.divergence).not.toBeNull()
+    expect(p.divergence!.failing).toBe('cand')
+    expect(p.divergence!.call).toBeGreaterThan(0)
+  })
+})
+
+describe('prompt perturbation and explicit order', () => {
+  it('runs the same paraphrase variant on both arms of a repeat, keeps rep 1 original, and honours an explicit sequential order', async () => {
+    const { pickVariant } = await import('../src/core/runner.js')
+    expect(pickVariant(42, 's', 1, 3)).toBe(0)
+    expect(pickVariant(42, 's', 2, 3)).toBe(pickVariant(42, 's', 2, 3))
+    expect(pickVariant(42, 's', 2, 3)).toBeGreaterThanOrEqual(1)
+    expect(pickVariant(42, 's', 2, 0)).toBe(0)
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    expect(scenarios[0]!.variants).toHaveLength(2)
+    const plan = { ...makePlan(root, { repeats: 2, concurrency: 1, scenarios: scenarios.map(s => s.name) }), perturb: true }
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory(), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), perturb: { seed: 42 } })
+    const ledgers = readLedgers(paths)
+    expect(ledgers.filter(l => l.rep === 1).every(l => l.promptVariant === 0)).toBe(true)
+    const rep2 = ledgers.filter(l => l.rep === 2)
+    expect(rep2).toHaveLength(2)
+    expect(rep2[0]!.promptVariant).toBeGreaterThanOrEqual(1)
+    expect(rep2[0]!.promptVariant).toBe(rep2[1]!.promptVariant)
+    const report = buildReport(plan, ledgers)
+    expect(report.notes.some(n => n.startsWith('Prompt perturbation on'))).toBe(true)
+
+    // explicit order: three copies, order given → the sequential trace visits them in that order
+    const pool = ['c', 'a', 'b'].map(n => ({ ...scenarios[0]!, name: `t1_${n}` }))
+    const root2 = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root2)
+    const plan2 = makePlan(root2, { repeats: 1, concurrency: 1, scenarios: pool.map(s => s.name) })
+    const paths2 = runPaths(root2, plan2.id)
+    writeJsonAtomic(paths2.plan, plan2)
+    const arms2 = [resolveArm(plan2.baseline, paths2.arms), ...plan2.candidates.map(c => resolveArm(c, paths2.arms))]
+    const seen: number[] = []
+    await executeRun(plan2, pool, arms2, { driverFactory: scriptedDriverFactory(), evalHome: join(root2, 'home'), paths: paths2, env: {}, workRoot: join(root2, 'work'), sequential: { seed: 1, order: ['t1_b', 't1_a', 't1_c'], minScenarios: 99, onDecision: d => seen.push(d.scenarios) } })
+    const byOrder = readLedgers(paths2).sort((x, y) => x.order - y.order).map(l => l.scenario)
+    expect(byOrder.slice(0, 2)).toEqual(['t1_b', 't1_b'])
+    expect(byOrder.slice(2, 4)).toEqual(['t1_a', 't1_a'])
+    expect(seen.length).toBe(3)
+  })
+})

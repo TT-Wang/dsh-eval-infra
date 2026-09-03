@@ -8,6 +8,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { DEEPSEEK_PRICES, type ModelPrice, type PriceTable } from './pricing.js'
+
 export interface ProjectConfig {
   profile: string
   scenarioRoot?: string
@@ -19,6 +21,14 @@ export interface ProjectConfig {
   pools?: string[]
   /** Judge models available to `dsh-eval judge`: OpenAI-compatible endpoints from any provider family. */
   judges?: Array<{ name?: string; model: string; baseUrl?: string; apiKeyEnv?: string; family?: string }>
+  /** Extra or overriding prices (USD per million tokens, peak/off-peak) merged over the built-in DeepSeek table. */
+  prices?: { asOf?: string; models: Record<string, ModelPrice>; peak?: PriceTable['peak'] }
+}
+
+/** The project's price table: the built-in DeepSeek table with the config's models merged over it (undefined when the config adds nothing). */
+export function projectPrices(config: ProjectConfig): PriceTable | undefined {
+  if (!config.prices) return undefined
+  return { ...DEEPSEEK_PRICES, ...(config.prices.asOf ? { asOf: config.prices.asOf } : {}), models: { ...DEEPSEEK_PRICES.models, ...config.prices.models }, peak: config.prices.peak ?? DEEPSEEK_PRICES.peak }
 }
 
 export interface Project {

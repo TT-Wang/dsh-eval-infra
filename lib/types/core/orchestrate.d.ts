@@ -1,5 +1,5 @@
 import { prepareArms, type ArmDiff } from './plan.js';
-import type { Project } from './project.js';
+import { type Project } from './project.js';
 import { type NoiseFloor, type Report } from './report.js';
 import { type VerifyResult } from './manifest.js';
 import { type RunDeps } from './runner.js';
@@ -34,6 +34,10 @@ export interface RunRequest {
     sandbox?: 'host' | 'docker';
     /** Route the runtime's provider calls through the independent usage meter (default on for real runs). */
     meter?: boolean;
+    /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
+    perturb?: boolean;
+    /** Sequential scenario order: seeded shuffle (default) or archive signal-to-noise, strongest first. */
+    order?: 'seed' | 'signal';
     /** Fault injection through the meter: share of provider requests answered with 429 or a stall. */
     faultRate?: number;
     faultSeed?: number;

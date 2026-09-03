@@ -48,6 +48,8 @@ export interface PairedScenario {
   failures: { baseline: Array<{ reason: string; n: number }>; candidate: Array<{ reason: string; n: number }> }
   /** Tool-sequence similarity (normalized Levenshtein over tool names): within each arm across repeats, and between the arms' paired repeats. 1 = identical. */
   tss: { baseline: number | null; candidate: number | null; between: number | null }
+  /** For the first repeat where exactly one arm failed: the first tool call at which the two arms' tool sequences diverge. */
+  divergence: { rep: number; call: number; baseline: string; candidate: string; failing: string } | null
   /** Repeat pairs where both arms passed (cost comparison base). */
   costPairs: number
   /** Per-pair (candidate − baseline) Δ% values behind costDiffPct, for the hierarchical bootstrap. */
@@ -145,6 +147,8 @@ export interface CandidateReport {
 
 export interface NoiseFloor {
   runId: string
+  /** rerun: the same prompts re-run; perturbation: paraphrased prompts on repeats above 1 (wider by construction). */
+  kind?: 'rerun' | 'perturbation'
   scenarios: number
   /** Mean of |Δ%| across scenarios in the A/A run. */
   meanAbsPct: number
@@ -191,7 +195,7 @@ export function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | 
   const pairs = plan.scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(twin.name, s, ledgers), plan.repeats)).filter(p => p.costDiffPct !== null)
   if (pairs.length === 0) return null
   const ci = smallSampleCI(pairs.map(p => p.costDiffPct!))
-  return { runId: plan.id, scenarios: pairs.length, meanAbsPct: mean(pairs.map(p => Math.abs(p.costDiffPct!))), lo: ci.lo, hi: ci.hi }
+  return { runId: plan.id, kind: plan.perturb ? 'perturbation' : 'rerun', scenarios: pairs.length, meanAbsPct: mean(pairs.map(p => Math.abs(p.costDiffPct!))), lo: ci.lo, hi: ci.hi }
 }
 
 function armSummary(arm: string, pairs: PairedScenario[], side: 'baseline' | 'candidate', ledgers: RunLedger[]): ArmSummary {
@@ -290,6 +294,20 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
   }
   const betweenVals: number[] = []
   for (const rb of rowsB) { const rc = rowsC.find(x => x.rep === rb.rep); if (rc) betweenVals.push(sequenceSimilarity(seqOf(rb), seqOf(rc))) }
+  let divergence: PairedScenario['divergence'] = null
+  for (const rb of rowsB) {
+    const rc = rowsC.find(x => x.rep === rb.rep)
+    if (!rc) continue
+    const okB = rb.verdict?.ok === true && rb.error === undefined
+    const okC = rc.verdict?.ok === true && rc.error === undefined
+    if (okB === okC) continue
+    const sb = seqOf(rb)
+    const sc = seqOf(rc)
+    let i = 0
+    while (i < sb.length && i < sc.length && sb[i] === sc[i]) i += 1
+    divergence = { rep: rb.rep, call: i + 1, baseline: sb[i] ?? '(stops)', candidate: sc[i] ?? '(stops)', failing: okB ? c.arm : b.arm }
+    break
+  }
   const diffs: number[] = []
   const pct: number[] = []
   const peak: number[] = []
@@ -315,6 +333,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     flaky: flakyB || flakyC,
     failures: { baseline: failureReasons(rowsB), candidate: failureReasons(rowsC) },
     tss: { baseline: within(rowsB), candidate: within(rowsC), between: betweenVals.length ? mean(betweenVals) : null },
+    divergence,
     behaviour: { baseline: behaviourMean(rowsB), candidate: behaviourMean(rowsC) },
     costPairs: diffs.length,
     costDiffPctPairs: pct,
@@ -422,6 +441,18 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const unreconciled = pairLedgers.filter(l => l.usageProvenance?.source === 'meter' && l.usageProvenance.reconciled === false)
     let provenanceBlocked = false
     if (unreconciled.length > 0 && costReading !== 'none' && costReading !== 'inconclusive') { costReading = 'inconclusive'; provenanceBlocked = true }
+    // Served-model check: every metered response must report the model the arm requested, and both arms the same one.
+    const servedMismatch: string[] = []
+    const servedByArm = new Map<string, Set<string>>()
+    for (const l of pairLedgers) {
+      const served = l.usageProvenance?.meter?.servedModels ?? []
+      if (served.length === 0) continue
+      servedByArm.set(l.arm, new Set([...(servedByArm.get(l.arm) ?? []), ...served]))
+      if (served.length !== 1 || served[0] !== l.model) servedMismatch.push(`${l.scenario}/${l.arm}#${l.rep}: requested ${l.model}, served ${served.join('+')}`)
+    }
+    if (servedByArm.size === 2) { const [x, y] = [...servedByArm.values()]; if ([...x!].sort().join() !== [...y!].sort().join()) servedMismatch.push('the two arms were served different models') }
+    let servedBlocked = false
+    if (servedMismatch.length > 0 && costReading !== 'none') { costReading = 'inconclusive'; servedBlocked = true }
     let grade: Grade
     if (gate === 'regressions') grade = 'regression'
     else if (gate === 'incomplete') grade = 'inconclusive'
@@ -437,10 +468,16 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     else if (costReading === 'equivalent') verdict = `Cost equivalent within ±${sesoi}% (${ciText}), no regressions.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < 2) verdict = `Single comparable scenario: ${fmtPct(costPctCI.mean)} on cost, no interval possible; add scenarios or repeats before reading this as an effect.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < minScenarios) verdict = `Only ${comparable.length} comparable scenarios (${ciText}); fewer than ${minScenarios} scenarios cannot support a direction — add scenarios before reading this as an effect.${gains}`
+    else if (costReading === 'inconclusive' && servedBlocked) verdict = `Provider conditions not held constant: ${servedMismatch[0]}${servedMismatch.length > 1 ? ` (+${servedMismatch.length - 1} more)` : ''}; the arms were not compared under the same served model, so no reading is made.${gains}`
     else if (costReading === 'inconclusive' && provenanceBlocked) verdict = `Cost figures withheld: on ${unreconciled.length} trial${unreconciled.length === 1 ? '' : 's'} the runtime's usage report disagrees with the independent wire meter beyond tolerance (${ciText} as self-reported); inspect the meter ledgers before reading any cost difference.${gains}`
     else if (costReading === 'inconclusive' && insideNoise) verdict = `Cost interval (${ciText}) reaches into the A/A noise band of ±${noiseFloor!.meanAbsPct.toFixed(1)}% measured on this baseline; not read as a real difference.${gains}`
     else if (costReading === 'inconclusive') verdict = `Cost difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${ciText}); more repeats or scenarios needed.${gains}`
     else verdict = `${costReading === 'cheaper' ? 'Cheaper' : 'More expensive'} by ${fmtPct(Math.abs(costPctCI.mean))} (${ciText}), no regressions.${gains}`
+    // Confirmation rule: a pass-rate direction found on the dev pool that reverses on a sealed pool of at least three scenarios is declined, not reported.
+    if (holdoutGap !== null && holdoutGap.holdoutScenarios >= 3 && Math.abs(holdoutGap.dev) >= 10 && Math.sign(holdoutGap.dev) !== Math.sign(holdoutGap.holdout) && grade !== 'regression') {
+      grade = 'inconclusive'
+      verdict = `Declined: the dev-pool pass-rate direction (${fmtPct(holdoutGap.dev)} pp on ${holdoutGap.devScenarios} scenarios) reverses on the ${holdoutGap.holdoutScenarios} sealed scenarios (${fmtPct(holdoutGap.holdout)} pp); a finding that does not confirm on the sealed pool is not reported. ${verdict}`
+    }
     return {
       arm: cand.name,
       summary: { baseline: armSummary(plan.baseline.name, pairs, 'baseline', ledgers), candidate: armSummary(cand.name, pairs, 'candidate', ledgers) },
@@ -490,7 +527,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   for (const c of candidates) {
     if (c.flaky.length > 0) notes.push(`${c.arm}: repeats disagree within an arm on ${c.flaky.join(', ')} — noisy scenarios for this setup; a regression there needs more repeats before it counts.`)
     if (c.mdePct !== null) notes.push(`${c.arm}: with ${c.scenarios.filter(p => p.costDiffUsd !== null).length} comparable scenarios this design can detect a cost effect of about ±${c.mdePct.toFixed(0)}% (95% confidence, 80% power); smaller effects will read inconclusive.`)
-    if (c.noiseFloor !== null) notes.push(`${c.arm}: the A/A run ${c.noiseFloor.runId} on this baseline showed |Δ%| averaging ${c.noiseFloor.meanAbsPct.toFixed(1)}% (interval ${fmtPct(c.noiseFloor.lo)} to ${fmtPct(c.noiseFloor.hi)}) with no real change; treat differences inside that band as noise.`)
+    if (c.noiseFloor !== null) notes.push(`${c.arm}: the A/A ${(c.noiseFloor?.kind ?? 'rerun') === 'perturbation' ? 'perturbation-floor ' : ''}run ${c.noiseFloor.runId} on this baseline showed |Δ%| averaging ${c.noiseFloor.meanAbsPct.toFixed(1)}% (interval ${fmtPct(c.noiseFloor.lo)} to ${fmtPct(c.noiseFloor.hi)}) with no real change; treat differences inside that band as noise.`)
     if (c.cuped !== null) notes.push(`${c.arm}: CUPED with each scenario's archived baseline cost as covariate removes ${(c.cuped.varianceRemoved * 100).toFixed(0)}% of the variance on ${c.cuped.n} scenarios; adjusted Δ% ${fmtPct(c.cuped.ci.mean)} (${fmtPct(c.cuped.ci.lo)} to ${fmtPct(c.cuped.ci.hi)}). Shown beside the raw interval, not instead of it.`)
   }
   const errors = ledgers.filter(l => l.error !== undefined).length
@@ -507,7 +544,19 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       const requests = metered.reduce((a, l) => a + (l.usageProvenance!.meter?.requests ?? 0), 0)
       notes.push(`Usage provenance: ${metered.length - bad.length}/${metered.length} trials reconciled against the independent wire meter (max deviation ${Math.max(0, ...devs).toFixed(2)}%, ${requests} provider requests${faults > 0 ? `, ${faults} injected faults` : ''})${bad.length > 0 ? `; ${bad.length} trial${bad.length === 1 ? '' : 's'} NOT reconciled — cost calls on those pairs are withheld` : ''}.`)
     }
+    const servedAll = new Map<string, Set<string>>()
+    for (const l of metered) for (const m of l.usageProvenance!.meter?.servedModels ?? []) servedAll.set(l.model, new Set([...(servedAll.get(l.model) ?? []), m]))
+    if (servedAll.size > 0) {
+      const lines = [...servedAll.entries()].map(([req, set]) => `${req} → ${[...set].join('+')}`)
+      const clean = [...servedAll.entries()].every(([req, set]) => set.size === 1 && set.has(req))
+      const fps = new Set(metered.flatMap(l => l.usageProvenance!.meter?.fingerprints ?? []))
+      notes.push(`Served-model check: ${clean ? 'every metered response reported the requested model' : 'MISMATCH between requested and served models'} (${lines.join('; ')}${fps.size ? `; ${fps.size} provider fingerprint${fps.size === 1 ? '' : 's'}` : ''}).`)
+    }
     if (selfReported.length > 0 && metered.length === 0) notes.push('Usage provenance: self-reported — token counts come from the runtime that hosts the component under test (no wire meter); cost figures are as that process reported them.')
+  }
+  if (plan.perturb) {
+    const variants = ledgers.filter(l => (l.promptVariant ?? 0) > 0).length
+    notes.push(`Prompt perturbation on: ${variants} of ${ledgers.length} trials ran a paraphrased prompt variant (repeats above 1; the same variant for every arm of a repeat), so the spread here includes prompt-wording sensitivity, not only rerun noise.`)
   }
   if (plan.repeats < 3) notes.push(`repeats=${plan.repeats}: below the 3-repeat floor the literature recommends; single-run noise is around ±30% on cost, so treat every difference as indicative only.`)
   if (plan.candidates.some(c => c.name === `${plan.baseline.name}-aa`)) notes.push('A/A run: the candidate is a copy of the baseline; any difference reported here is the noise floor of this setup.')
@@ -569,7 +618,7 @@ export function renderMarkdown(report: Report): string {
     lines.push('|---|---|---|---|---|---|---|---|---|---|')
     const order: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4, unrun: 5 }
     for (const p of [...c.scenarios].sort((a, b) => order[a.class] - order[b.class] || a.scenario.localeCompare(b.scenario))) {
-      const notes = [p.flaky ? 'flaky' : '', p.tss.between !== null ? `tool-seq similarity ${(p.tss.between * 100).toFixed(0)}%` : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
+      const notes = [p.flaky ? 'flaky' : '', p.tss.between !== null ? `tool-seq similarity ${(p.tss.between * 100).toFixed(0)}%` : '', p.divergence ? `${p.divergence.failing} diverges at call ${p.divergence.call} (${p.divergence.baseline} vs ${p.divergence.candidate}, rep ${p.divergence.rep})` : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
       lines.push(`| ${p.scenario} | ${p.baseline.passes}/${p.baseline.n} | ${p.candidate.passes}/${p.candidate.n} | ${classLabel(p.class)} | ${p.costPairs} | ${fmtUsd(p.costDiffUsd)} | ${fmtPct(p.costDiffPct)} | ${p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)} | ${p.baselineSpreadPct === null ? '—' : p.baselineSpreadPct.toFixed(0) + '%'} | ${notes} |`)
     }
     lines.push('')

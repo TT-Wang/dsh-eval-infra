@@ -69,6 +69,14 @@ export interface PairedScenario {
         candidate: number | null;
         between: number | null;
     };
+    /** For the first repeat where exactly one arm failed: the first tool call at which the two arms' tool sequences diverge. */
+    divergence: {
+        rep: number;
+        call: number;
+        baseline: string;
+        candidate: string;
+        failing: string;
+    } | null;
     /** Repeat pairs where both arms passed (cost comparison base). */
     costPairs: number;
     /** Per-pair (candidate − baseline) Δ% values behind costDiffPct, for the hierarchical bootstrap. */
@@ -241,6 +249,8 @@ export interface CandidateReport {
 }
 export interface NoiseFloor {
     runId: string;
+    /** rerun: the same prompts re-run; perturbation: paraphrased prompts on repeats above 1 (wider by construction). */
+    kind?: 'rerun' | 'perturbation';
     scenarios: number;
     /** Mean of |Δ%| across scenarios in the A/A run. */
     meanAbsPct: number;

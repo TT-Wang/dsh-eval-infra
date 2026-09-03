@@ -12,6 +12,7 @@ import { loadArmFile } from '../core/arms.js'
 import { toAtif } from '../core/atif.js'
 import { evalInfraVersion } from '../core/env.js'
 import { collectScenarios, launchRun, LaunchError, rebuildReport, resolveArmPath, verifyRunIntegrity, type RunRequest } from '../core/orchestrate.js'
+import { scenarioSignal } from '../core/signal.js'
 import { describeDiff, evalProfileManifest, prepareArms } from '../core/plan.js'
 import { loadProject, type Project } from '../core/project.js'
 import type { Report } from '../core/report.js'
@@ -290,26 +291,6 @@ export interface History {
 }
 
 /** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
-/**
- * Discriminating power of a scenario across the archive: between-arm variance of
- * the mean cost over the pooled within-arm variance (signal-to-noise; below 1 the
- * scenario's cost differences are mostly rerun noise), plus the pass-rate spread
- * across arms. Needs at least two arms with two trials each.
- */
-export function scenarioSignal(arms: Array<{ arm: string; usd: number[]; passes: number[] }>): { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number } {
-  const usable = arms.filter(a => a.usd.length >= 2)
-  const trials = arms.reduce((n, a) => n + a.usd.length, 0)
-  if (usable.length < 2) return { snr: null, withinCv: null, passSpread: arms.length >= 2 ? Math.max(...arms.map(a => a.passes.reduce((x, y) => x + y, 0) / Math.max(1, a.passes.length))) - Math.min(...arms.map(a => a.passes.reduce((x, y) => x + y, 0) / Math.max(1, a.passes.length))) : null, trials }
-  const meanOf = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length
-  const varOf = (xs: number[]): number => { const m = meanOf(xs); return xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1) }
-  const means = usable.map(a => meanOf(a.usd))
-  const within = meanOf(usable.map(a => varOf(a.usd)))
-  const between = varOf(means)
-  const grand = meanOf(means)
-  const passRates = arms.map(a => meanOf(a.passes))
-  return { snr: within > 0 ? between / within : null, withinCv: grand > 0 ? Math.sqrt(within) / grand : null, passSpread: Math.max(...passRates) - Math.min(...passRates), trials }
-}
-
 export function buildHistory(runsRoot: string): History {
   const runs = listRuns(runsRoot)
   const arms = new Set<string>()

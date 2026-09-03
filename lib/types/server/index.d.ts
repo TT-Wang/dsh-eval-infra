@@ -66,22 +66,6 @@ export interface History {
     };
 }
 /** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
-/**
- * Discriminating power of a scenario across the archive: between-arm variance of
- * the mean cost over the pooled within-arm variance (signal-to-noise; below 1 the
- * scenario's cost differences are mostly rerun noise), plus the pass-rate spread
- * across arms. Needs at least two arms with two trials each.
- */
-export declare function scenarioSignal(arms: Array<{
-    arm: string;
-    usd: number[];
-    passes: number[];
-}>): {
-    snr: number | null;
-    withinCv: number | null;
-    passSpread: number | null;
-    trials: number;
-};
 export declare function buildHistory(runsRoot: string): History;
 export declare function createEvalApp(options: EvalAppOptions): EvalApp;
 export interface ServeOptions {

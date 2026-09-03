@@ -142,3 +142,7 @@ First run through the independent usage meter (a per-trial local proxy between t
 ## regrade-check (2026-09-04, run 20260903-205119-9xup)
 
 f6 × 1 × 2 arms with `--keep-workdirs`, then `dsh-eval regrade`: `regraded 2 trial(s), 0 skipped (workspace not kept), 0 verdict(s) changed; report rebuilt and evidence re-sealed`, and `dsh-eval verify` on the re-sealed run: `report: reproduces from the sealed ledgers · OK`. The manifest records the regrade with the verifier's sha256.
+
+## fault-check-2 (2026-09-04, run 20260903-205605-tvbz)
+
+`--fault-rate 0.3` through the meter on f6 + p1 × 1 × 2 arms: `52 provider requests, 13 injected faults` (seeded 429s and stalls answered by the meter instead of the provider). All four trials passed; dsh's retry layer absorbed every fault, at the price of longer wall time (f6 baseline 49 s vs 24 s unfaulted) and unchanged usage (4/4 reconciled, 0.00% deviation, since faulted requests carry no usage). Total $0.0204. First exercise of fault injection.

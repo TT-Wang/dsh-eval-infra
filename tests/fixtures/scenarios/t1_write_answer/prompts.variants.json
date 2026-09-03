@@ -1,0 +1,10 @@
+[
+  [
+    "Read numbers.txt and write the sum of its numbers to answer.txt (please)",
+    "Append a line DONE to answer.txt (please)"
+  ],
+  [
+    "Kindly read numbers.txt and write the sum of its numbers to answer.txt",
+    "Kindly append a line DONE to answer.txt"
+  ]
+]

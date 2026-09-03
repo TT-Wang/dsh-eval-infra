@@ -322,3 +322,16 @@ describe('esm hygiene', () => {
     expect(offenders).toEqual([])
   })
 })
+
+describe('scenario signal', () => {
+  it('scores between-arm over within-arm cost variance and needs two arms with two trials', async () => {
+    const { scenarioSignal } = await import('../src/core/signal.js')
+    expect(scenarioSignal([{ arm: 'a', usd: [1], passes: [1] }, { arm: 'b', usd: [2], passes: [0] }]).snr).toBeNull()
+    const strong = scenarioSignal([{ arm: 'a', usd: [1.0, 1.02, 0.98], passes: [1, 1, 1] }, { arm: 'b', usd: [2.0, 2.02, 1.98], passes: [1, 1, 1] }])
+    expect(strong.snr!).toBeGreaterThan(1)
+    expect(strong.passSpread).toBe(0)
+    const noisy = scenarioSignal([{ arm: 'a', usd: [1, 3, 2], passes: [1, 0, 1] }, { arm: 'b', usd: [2, 1, 3], passes: [1, 1, 1] }])
+    expect(noisy.snr!).toBeLessThan(1)
+    expect(noisy.passSpread).toBeCloseTo(1 / 3, 6)
+  })
+})

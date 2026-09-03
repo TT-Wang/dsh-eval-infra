@@ -119,7 +119,17 @@ export interface RunDeps {
    * each scenario's repeats finish on all arms, the stop rule is evaluated on the
    * per-scenario paired differences and the run ends early once decided.
    */
-  sequential?: { alpha?: number; seed?: number; minScenarios?: number; sesoiPct?: number; onDecision?: (d: SequentialDecision) => void }
+  sequential?: { alpha?: number; seed?: number; minScenarios?: number; sesoiPct?: number; onDecision?: (d: SequentialDecision) => void; /** Explicit scenario order (e.g. by archive signal) instead of the seeded shuffle. */ order?: string[] }
+  /** Prompt perturbation: repeats above 1 run a seeded paraphrase variant of the prompts, the same variant for every arm of that repeat. */
+  perturb?: { seed: number }
+}
+
+/** Deterministic variant choice for (scenario, rep): rep 1 always runs the original prompts. */
+export function pickVariant(seed: number, scenario: string, rep: number, variants: number): number {
+  if (rep <= 1 || variants <= 0) return 0
+  let h = 2166136261 ^ seed
+  for (const ch of `${scenario}#${rep}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0 }
+  return 1 + (h % variants)
 }
 
 export interface SequentialDecision {
@@ -175,7 +185,11 @@ export function shuffled<T>(items: T[], seed: number): T[] {
 
 export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: ResolvedArm[], deps: RunDeps): Promise<Progress> {
   const { paths } = deps
-  const ordered = deps.sequential ? shuffled(scenarios, deps.sequential.seed ?? 42) : scenarios
+  const ordered = deps.sequential
+    ? (deps.sequential.order
+      ? [...scenarios].sort((a, b) => { const ia = deps.sequential!.order!.indexOf(a.name); const ib = deps.sequential!.order!.indexOf(b.name); return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib) })
+      : shuffled(scenarios, deps.sequential.seed ?? 42))
+    : scenarios
   const jobs = planJobs(ordered, arms, plan.repeats)
   const base = writeBaseOverlays(paths.arms, deps.baseOverlayRows ?? [])
   const started = new Date()
@@ -307,6 +321,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   let error: string | undefined
   let verdict: Verdict | null = null
   const timeoutMs = deps.turnTimeoutMs ?? (scenario.meta.turn_timeout_s !== undefined ? scenario.meta.turn_timeout_s * 1000 : DEFAULT_TURN_TIMEOUT_MS)
+  const variantIndex = deps.perturb ? pickVariant(deps.perturb.seed, scenario.name, job.rep, scenario.variants?.length ?? 0) : 0
+  const prompts: string[] = variantIndex > 0 ? scenario.variants![variantIndex - 1]! : scenario.prompts
   let restoreTruth: (() => void) | undefined
   let meter: import('./meter.js').Meter | undefined
   let meterFile: string | undefined
@@ -332,7 +348,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     // A fresh session numbers its turns from 1 again; the ledger keeps one global turn axis.
     let turnOffset = 0
     try {
-      for (let i = 0; i < scenario.prompts.length; i += 1) {
+      for (let i = 0; i < prompts.length; i += 1) {
         if (i > 0 && breaks.has(i + 1)) {
           await driver.close()
           sessions += 1
@@ -343,7 +359,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
         const t0 = Date.now()
         const options: { timeoutMs: number; signal?: AbortSignal } = { timeoutMs }
         if (deps.signal !== undefined) options.signal = deps.signal
-        const result = await driver.runTurn(scenario.prompts[i]!, options)
+        const result = await driver.runTurn(prompts[i]!, options)
         turnWall.set(i + 1, Date.now() - t0)
         events.push(...(turnOffset === 0 ? result.events : result.events.map(e => offsetTurn(e, turnOffset))))
         if (result.sessionId !== null) sessionId = sessionId === null || sessionId === result.sessionId ? result.sessionId : `${sessionId},${result.sessionId}`
@@ -407,6 +423,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   } else {
     ledger.usageProvenance = { source: 'self-reported' }
   }
+  if (deps.perturb) ledger.promptVariant = variantIndex
   const verifierPath = join(scenario.dir, 'verify.py')
   if (existsSync(verifierPath)) ledger.verifierSha = createHash('sha256').update(readFileSync(verifierPath)).digest('hex')
   mkdirSync(join(deps.paths.dir, 'ledgers', scenario.name, arm.name), { recursive: true })

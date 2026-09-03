@@ -9,6 +9,9 @@ export interface MeterEntry {
     status: number | null;
     durationMs: number;
     usage: Usage | null;
+    /** Model id and system fingerprint the provider put in the response (served-model check). */
+    responseModel: string | null;
+    fingerprint: string | null;
     /** SHA-256 of the request body (the meter never stores the body or headers). */
     requestSha: string;
     /** Fault injected by the meter instead of forwarding (null when forwarded). */
@@ -25,6 +28,9 @@ export interface MeterTotals {
     miss: number;
     output: number;
     reasoning: number;
+    /** Distinct model ids and fingerprints seen in responses. */
+    servedModels: string[];
+    fingerprints: string[];
 }
 export interface MeterOptions {
     /** Upstream base URL, e.g. https://api.deepseek.com */
@@ -51,6 +57,12 @@ export interface Meter {
 export declare function meterTotals(entries: MeterEntry[]): MeterTotals;
 /** Verify a meter ledger's hash chain; returns the first broken sequence number or null. */
 export declare function verifyChain(entries: MeterEntry[]): number | null;
-/** Pull the usage object out of a streamed (SSE) or plain JSON response body. */
+export interface ParsedResponse {
+    usage: Usage | null;
+    model: string | null;
+    fingerprint: string | null;
+}
+/** Pull usage, the served model id and the system fingerprint out of a streamed (SSE) or plain JSON response body. */
+export declare function parseResponseBody(body: string, stream: boolean): ParsedResponse;
 export declare function usageFromBody(body: string, stream: boolean): Usage | null;
 export declare function startMeter(options: MeterOptions): Promise<Meter>;

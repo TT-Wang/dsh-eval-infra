@@ -14,7 +14,7 @@ function fakeProvider(): Promise<{ url: string; close: () => void; seen: string[
       if (body.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         res.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
-        res.write('data: {"choices":[],"usage":{"prompt_tokens":120,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":3}}}\n\n')
+        res.write('data: {"model":"deepseek-v4-flash","system_fingerprint":"fp_abc","choices":[],"usage":{"prompt_tokens":120,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":3}}}\n\n')
         res.end('data: [DONE]\n\n')
       } else {
         res.writeHead(200, { 'content-type': 'application/json' })
@@ -44,7 +44,9 @@ describe('usage meter', () => {
     await new Promise(r => setTimeout(r, 30))
     const entries = meter.entries()
     expect(entries).toHaveLength(2)
-    expect(entries[0]).toMatchObject({ stream: true, status: 200, model: 'deepseek-v4-flash', usage: { hit: 100, miss: 20, output: 7, reasoning: 3 }, fault: null })
+    expect(entries[0]).toMatchObject({ stream: true, status: 200, model: 'deepseek-v4-flash', usage: { hit: 100, miss: 20, output: 7, reasoning: 3 }, fault: null, responseModel: 'deepseek-v4-flash', fingerprint: 'fp_abc' })
+    expect(meter.totals().servedModels).toEqual(['deepseek-v4-flash'])
+    expect(meter.totals().fingerprints).toEqual(['fp_abc'])
     expect(entries[1]!.usage).toMatchObject({ miss: 50, output: 5 })
     expect(meter.totals()).toMatchObject({ requests: 2, forwarded: 2, faults: 0, hit: 100, miss: 70, output: 12 })
     expect(provider.seen).toEqual(['Bearer secret', 'Bearer secret'])
