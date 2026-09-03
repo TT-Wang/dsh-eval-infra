@@ -39,6 +39,10 @@ export interface RunRequest {
   maxUsd?: number
   /** Include sealed holdout scenarios (meta.holdout) in the run. */
   includeHoldout?: boolean
+  /** Anytime-valid sequential mode: shuffled scenario order, early stop once the paired comparison is decided. */
+  sequential?: boolean
+  /** Seed for the sequential shuffle (default 42). */
+  seed?: number
 }
 
 export interface LaunchHooks {
@@ -206,10 +210,21 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
   if (request.resume !== undefined) deps.resume = true
   if (request.maxUsd !== undefined) deps.maxUsd = request.maxUsd
+  const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
+  if (request.sequential) {
+    deps.sequential = { seed: request.seed ?? 42, onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost Δ% ${d.cost ? `${d.cost.mean.toFixed(1)} [${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
+    log('sequential mode: scenarios in seeded random order; the run stops once the anytime-valid sequences decide the comparison')
+  }
 
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
     const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)) })
+    if (request.sequential) {
+      writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, decisions })
+      const last = decisions.at(-1)
+      if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
+      else if (last) report.notes.unshift(`Sequential mode ran every scenario without an early decision (last sequence: cost Δ% ${last.cost ? `[${last.cost.lo.toFixed(1)}, ${last.cost.hi.toFixed(1)}]` : '—'}).`)
+    }
     if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
     writeJsonAtomic(paths.report, report)
     writeFileSync(paths.reportMd, renderMarkdown(report))

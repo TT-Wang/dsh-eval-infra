@@ -188,6 +188,30 @@ describe('runner + ledger + report', () => {
     expect(ledger.verdict?.ok).toBe(true)
   })
 
+  it('sequential mode stops early once the paired sequences decide, and reports unrun scenarios as not run', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
+    // eight copies of the same scenario under different names → a pool where the candidate is always 40% cheaper
+    const pool = Array.from({ length: 8 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
+    const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: pool.map(s => s.name) })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    const decisions: number[] = []
+    const progress = await executeRun(plan, pool, arms, {
+      driverFactory: scriptedDriverFactory({ costScale: { cand: 0.6 } }),
+      evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'),
+      sequential: { seed: 1, onDecision: d => decisions.push(d.scenarios) },
+    })
+    expect(progress.status).toBe('done')
+    expect(progress.stoppedEarly).toBeDefined()
+    expect(progress.stoppedEarly!.after).toBeLessThan(8)
+    expect(progress.stoppedEarly!.after).toBeGreaterThanOrEqual(3)
+    const report = buildReport(plan, readLedgers(paths))
+    expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(8 - progress.stoppedEarly!.after)
+    expect(report.candidates[0]!.gate).toBe('pass')
+  })
+
   it('stops scheduling trials once the budget is reached and keeps finished ones', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
     const plan = makePlan(root, { repeats: 3, concurrency: 1 })

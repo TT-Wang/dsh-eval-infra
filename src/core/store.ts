@@ -97,6 +97,8 @@ export interface Progress {
   /** Last few finished jobs. */
   recent: Array<{ scenario: string; arm: string; rep: number; ok: boolean | null; usd: number; wallMs: number; error?: string }>
   error?: string
+  /** Set when the anytime-valid stop rule ended the run before every scenario ran. */
+  stoppedEarly?: { after: number; of: number; reason: string }
 }
 
 export function listRuns(root: string): RunIndexEntry[] {

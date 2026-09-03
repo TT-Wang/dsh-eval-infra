@@ -101,6 +101,23 @@ export interface RunDeps {
   workRoot?: string
   /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
   maxUsd?: number
+  /**
+   * Anytime-valid sequential mode: scenarios run in a seeded random order; after
+   * each scenario's repeats finish on all arms, the stop rule is evaluated on the
+   * per-scenario paired differences and the run ends early once decided.
+   */
+  sequential?: { alpha?: number; seed?: number; minScenarios?: number; sesoiPct?: number; onDecision?: (d: SequentialDecision) => void }
+}
+
+export interface SequentialDecision {
+  /** Scenarios completed on every arm so far. */
+  scenarios: number
+  /** Cost Δ% confidence sequence (candidate − baseline) over per-scenario paired means. */
+  cost: { mean: number; lo: number; hi: number } | null
+  /** Pass-difference confidence sequence over per-scenario x = (Δpass + 1) / 2; 0.5 is "no difference". */
+  pass: { lo: number; hi: number } | null
+  decided: boolean
+  reason: string
 }
 
 /** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
@@ -131,9 +148,19 @@ function sanitize(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 40)
 }
 
+/** Seeded Fisher–Yates shuffle (mulberry32). */
+export function shuffled<T>(items: T[], seed: number): T[] {
+  const out = [...items]
+  let a = seed >>> 0
+  const rnd = (): number => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  for (let i = out.length - 1; i > 0; i -= 1) { const j = Math.floor(rnd() * (i + 1)); [out[i], out[j]] = [out[j]!, out[i]!] }
+  return out
+}
+
 export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: ResolvedArm[], deps: RunDeps): Promise<Progress> {
   const { paths } = deps
-  const jobs = planJobs(scenarios, arms, plan.repeats)
+  const ordered = deps.sequential ? shuffled(scenarios, deps.sequential.seed ?? 42) : scenarios
+  const jobs = planJobs(ordered, arms, plan.repeats)
   const base = writeBaseOverlays(paths.arms)
   const started = new Date()
   const progress: Progress = {
@@ -156,10 +183,51 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
 
   let next = 0
   let overBudget = false
+  let decidedEarly: SequentialDecision | undefined
+  const finished = new Map<string, RunLedger[]>()
+  const perScenarioDone = (scenario: string): boolean => (finished.get(scenario)?.length ?? 0) >= arms.length * plan.repeats
+  const evaluateStop = async (): Promise<void> => {
+    if (!deps.sequential || arms.length < 2) return
+    const { asympCS, bettingCS, mean } = await import('./stats.js')
+    const baseline = arms[0]!.name
+    const cand = arms[1]!.name
+    const done = ordered.filter(s => perScenarioDone(s.name))
+    const costDiffs: number[] = []
+    const passX: number[] = []
+    for (const s of done) {
+      const rows = finished.get(s.name) ?? []
+      const b = rows.filter(r => r.arm === baseline)
+      const c = rows.filter(r => r.arm === cand)
+      const pct: number[] = []
+      for (const rb of b) { const rc = c.find(x => x.rep === rb.rep); if (rc && rb.verdict?.ok && rc.verdict?.ok && rb.totals.usd > 0) pct.push((rc.totals.usd - rb.totals.usd) / rb.totals.usd * 100) }
+      if (pct.length) costDiffs.push(mean(pct))
+      const pb = b.length ? b.filter(r => r.verdict?.ok && r.error === undefined).length / b.length : 0
+      const pc = c.length ? c.filter(r => r.verdict?.ok && r.error === undefined).length / c.length : 0
+      passX.push(((pc - pb) + 1) / 2)
+    }
+    const alpha = deps.sequential.alpha ?? 0.05
+    const minS = deps.sequential.minScenarios ?? 3
+    const sesoi = deps.sequential.sesoiPct ?? 10
+    const cost = costDiffs.length >= 2 ? asympCS(costDiffs, alpha, ordered.length) : null
+    const pass = passX.length >= 2 ? bettingCS(passX, alpha) : null
+    let decided = false
+    let reason = 'undecided'
+    if (done.length >= minS && cost !== null) {
+      const passDecided = pass !== null && (pass.lo > 0.5 || pass.hi < 0.5)
+      const passNull = pass !== null && pass.lo <= 0.5 && pass.hi >= 0.5
+      if (passDecided) { decided = true; reason = pass.lo > 0.5 ? 'candidate passes more scenarios (pass-difference sequence excludes 0)' : 'candidate passes fewer scenarios (pass-difference sequence excludes 0)' }
+      else if (passNull && (cost.lo > 0 || cost.hi < 0)) { decided = true; reason = `${cost.hi < 0 ? 'cheaper' : 'more expensive'}: cost Δ% sequence excludes 0 (${cost.lo.toFixed(1)} to ${cost.hi.toFixed(1)})` }
+      else if (passNull && cost.lo > -sesoi && cost.hi < sesoi) { decided = true; reason = `equivalent within ±${sesoi}%: cost Δ% sequence inside the band (${cost.lo.toFixed(1)} to ${cost.hi.toFixed(1)})` }
+    }
+    const decision: SequentialDecision = { scenarios: done.length, cost: cost ? { mean: cost.mean, lo: cost.lo, hi: cost.hi } : null, pass: pass ? { lo: pass.lo, hi: pass.hi } : null, decided, reason }
+    deps.sequential.onDecision?.(decision)
+    if (decided) decidedEarly = decision
+  }
   const worker = async (): Promise<void> => {
     for (;;) {
       if (deps.signal?.aborted) return
       if (deps.maxUsd !== undefined && progress.usd >= deps.maxUsd) { overBudget = true; return }
+      if (decidedEarly !== undefined) return
       const job = jobs[next++]
       if (job === undefined) return
       if (deps.resume && existsSync(ledgerPath(paths, job.scenario.name, job.arm.name, job.rep))) {
@@ -181,6 +249,8 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
       progress.completed += 1
       if (ledger === undefined || ledger.error !== undefined) progress.failed += 1
       if (ledger !== undefined) {
+        finished.set(ledger.scenario, [...(finished.get(ledger.scenario) ?? []), ledger])
+        if (deps.sequential && perScenarioDone(ledger.scenario)) await evaluateStop()
         progress.usd += ledger.totals.usd
         const entry: Progress['recent'][number] = { scenario: ledger.scenario, arm: ledger.arm, rep: ledger.rep, ok: ledger.verdict?.ok ?? null, usd: ledger.totals.usd, wallMs: ledger.wallMs }
         if (ledger.error !== undefined) entry.error = ledger.error
@@ -194,6 +264,10 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
   await Promise.all(workers)
   progress.status = deps.signal?.aborted || overBudget ? 'cancelled' : 'done'
   if (overBudget) progress.error = `budget of $${deps.maxUsd!.toFixed(2)} reached after ${progress.completed}/${progress.total} trials`
+  if (decidedEarly !== undefined) {
+    progress.status = 'done'
+    progress.stoppedEarly = { after: decidedEarly.scenarios, of: ordered.length, reason: decidedEarly.reason }
+  }
   publish()
   return progress
 }

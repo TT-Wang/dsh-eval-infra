@@ -222,3 +222,55 @@ export function sequenceSimilarity(a: string[], b: string[]): number {
   }
   return 1 - prev[m]! / Math.max(n, m)
 }
+
+/**
+ * Asymptotic confidence sequence (Waudby-Smith, Arbour, Sinha, Kennedy, Ramdas
+ * 2021, Theorem 2.2) for the running mean of a sequence: valid uniformly over
+ * time, so a run may be stopped the moment 0 leaves the interval without
+ * inflating the error rate. ρ tunes where the sequence is tightest; the
+ * paper's choice for a planned first look at m units is used.
+ */
+export function asympCS(values: number[], alpha = 0.05, plannedN = 10): { mean: number; lo: number; hi: number; t: number } {
+  const t = values.length
+  const mu = mean(values)
+  if (t < 2) return { mean: mu, lo: -Infinity, hi: Infinity, t }
+  const sd = Math.max(stddev(values), 1e-9)
+  const m = Math.max(2, plannedN)
+  const rho = Math.sqrt((-2 * Math.log(alpha) + Math.log(-2 * Math.log(alpha)) + 1) / (m * Math.log(Math.max(m, Math.E))))
+  const width = sd * Math.sqrt((2 * (t * rho * rho + 1) / (t * t * rho * rho)) * Math.log(Math.sqrt(t * rho * rho + 1) / alpha))
+  return { mean: mu, lo: mu - width, hi: mu + width, t }
+}
+
+/**
+ * Betting confidence sequence for the mean of [0, 1] outcomes (Waudby-Smith &
+ * Ramdas 2020, predictable-plug-in bets). Used on x = (d + 1) / 2 where d is
+ * the per-scenario pass-rate difference in [−1, 1]; the null "no difference"
+ * is the point 1/2. Returns the set of means not rejected, on a grid.
+ */
+export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number; t: number } {
+  const t = xs.length
+  if (t === 0) return { lo: 0, hi: 1, t }
+  const grid = 400
+  let lo = 1
+  let hi = 0
+  for (let g = 0; g <= grid; g += 1) {
+    const m = g / grid
+    let wealth = 1
+    let sumX = 0
+    let sumSq = 0
+    for (let i = 0; i < t; i += 1) {
+      // predictable bet: shrunken empirical-variance plug-in, capped to keep wealth non-negative
+      const n = i
+      const mu = n ? sumX / n : 0.5
+      const varHat = n ? Math.max(sumSq / n - mu * mu, 1e-4) : 0.25
+      const lam = Math.max(-0.5 / Math.max(1 - m, 1e-9), Math.min(0.5 / Math.max(m, 1e-9), Math.sqrt(2 * Math.log(2 / alpha) / (varHat * (n + 1) * Math.log(n + 2)))))
+      wealth *= 1 + lam * (xs[i]! - m)
+      sumX += xs[i]!
+      sumSq += xs[i]! * xs[i]!
+      if (wealth >= 1 / alpha) break
+    }
+    if (wealth < 1 / alpha) { lo = Math.min(lo, m); hi = Math.max(hi, m) }
+  }
+  if (lo > hi) return { lo: 0.5, hi: 0.5, t }
+  return { lo, hi, t }
+}

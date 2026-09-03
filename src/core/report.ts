@@ -35,7 +35,7 @@ export interface ArmScenarioStats {
   byRep: Record<number, { ok: boolean; usd: number; error: boolean; steps: number; usdPeak: number; usdOffpeak: number; overridden?: boolean }>
 }
 
-export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete'
+export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun'
 
 export interface PairedScenario {
   scenario: string
@@ -252,6 +252,7 @@ function armScenarioStats(arm: string, scenario: string, ledgers: RunLedger[]): 
 }
 
 function classify(b: ArmScenarioStats, c: ArmScenarioStats, repeats: number): PairClass {
+  if (b.n === 0 && c.n === 0) return 'unrun'
   if (b.n < repeats || c.n < repeats) return 'incomplete'
   const bPass = b.passRate >= 0.5
   const cPass = c.passRate >= 0.5
@@ -478,7 +479,7 @@ export function fmtPct(v: number | null): string {
 }
 
 function classLabel(c: PairClass): string {
-  return { regression: 'REGRESSION', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete' }[c]
+  return { regression: 'REGRESSION', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }[c]
 }
 
 export function renderMarkdown(report: Report): string {
@@ -502,7 +503,7 @@ export function renderMarkdown(report: Report): string {
     lines.push('')
     lines.push('| scenario | baseline pass | candidate pass | class | cost pairs | Δ cost | Δ % | Δ steps | baseline spread | notes |')
     lines.push('|---|---|---|---|---|---|---|---|---|---|')
-    const order: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4 }
+    const order: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4, unrun: 5 }
     for (const p of [...c.scenarios].sort((a, b) => order[a.class] - order[b.class] || a.scenario.localeCompare(b.scenario))) {
       const notes = [p.flaky ? 'flaky' : '', p.tss.between !== null ? `tool-seq similarity ${(p.tss.between * 100).toFixed(0)}%` : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
       lines.push(`| ${p.scenario} | ${p.baseline.passes}/${p.baseline.n} | ${p.candidate.passes}/${p.candidate.n} | ${classLabel(p.class)} | ${p.costPairs} | ${fmtUsd(p.costDiffUsd)} | ${fmtPct(p.costDiffPct)} | ${p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)} | ${p.baselineSpreadPct === null ? '—' : p.baselineSpreadPct.toFixed(0) + '%'} | ${notes} |`)

@@ -5,8 +5,8 @@ import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../co
 import type { Progress } from '../../core/store.js'
 
 type Filter = 'all' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'flaky'
-const ORDER: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4 }
-const LABEL: Record<PairClass, string> = { regression: 'regression', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete' }
+const ORDER: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4, unrun: 5 }
+const LABEL: Record<PairClass, string> = { regression: 'regression', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }
 const GRADE_TONE: Record<Grade, string> = { improvement: 'good', regression: 'bad', tradeoff: 'warn', tie: 'neutral', inconclusive: 'neutral' }
 
 export function RunView({ id }: { id: string }) {
@@ -65,7 +65,7 @@ export function RunView({ id }: { id: string }) {
         <div class="card progress-card">
           <div class="row between">
             <div><span class={`status ${progress.status}`}>{progress.status}</span> <b>{progress.completed}</b>/{progress.total} trials{progress.failed ? <span class="warn-text"> · {progress.failed} errors</span> : null} · spent <b>{fmt.usd(progress.usd, 3)}</b></div>
-            <div class="muted small">started {fmt.time(progress.startedAt)}{progress.error ? <span class="error"> · {progress.error}</span> : null}</div>
+            <div class="muted small">started {fmt.time(progress.startedAt)}{progress.error ? <span class="error"> · {progress.error}</span> : null}{progress.stoppedEarly ? <span class="good"> · stopped early after {progress.stoppedEarly.after}/{progress.stoppedEarly.of} scenarios: {progress.stoppedEarly.reason}</span> : null}</div>
           </div>
           <div class="bar"><i style={{ width: `${pctDone}%` }} /></div>
           {progress.active.length > 0 && <div class="active">{progress.active.map(a => <span class="chip live">{a.scenario} / {a.arm} #{a.rep} · turn {a.turn}/{a.turns}</span>)}</div>}

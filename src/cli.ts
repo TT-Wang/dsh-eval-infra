@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -189,6 +189,8 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(resume !== undefined ? { resume } : {}),
     ...(aa ? { aa: true } : {}),
     ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
+    ...(args.flags['sequential'] === true ? { sequential: true } : {}),
+    ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}),
   }
   const controller = new AbortController()
   process.on('SIGINT', () => { err('\ncancelling… (finished trials are kept; resume with --resume <id>)'); controller.abort() })
@@ -321,6 +323,7 @@ function help(): number {
   diff <baseline> <candidate>...      composed-tree diff between arms
   run --baseline <arm> --arm <arm>... [globs] [--repeats N] [--concurrency N] [--label L]
       [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N] [--include-holdout]
+      [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
   report <runId> [--json]             rebuild the report from ledgers
   runs                                list runs
   ui [--port 4177] [--open]           local web UI

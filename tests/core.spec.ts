@@ -161,6 +161,28 @@ describe('paired statistics', () => {
   })
 })
 
+describe('anytime-valid sequences', () => {
+  it('asymptotic CS shrinks with t and excludes zero for a clear effect; betting CS keeps 1/2 under the null', async () => {
+    const { asympCS, bettingCS } = await import('../src/core/stats.js')
+    const clear = Array.from({ length: 12 }, (_, i) => -20 + (i % 3) * 2)
+    const a = asympCS(clear, 0.05, 12)
+    expect(a.hi).toBeLessThan(0)
+    const early = asympCS(clear.slice(0, 3), 0.05, 12)
+    expect(early.hi - early.lo).toBeGreaterThan(a.hi - a.lo)
+    const noise = [3, -4, 2, -1, 5, -6, 1, -2, 4, -3]
+    const n = asympCS(noise, 0.05, 10)
+    expect(n.lo).toBeLessThan(0)
+    expect(n.hi).toBeGreaterThan(0)
+    const nullX = Array.from({ length: 20 }, (_, i) => (i % 2 ? 0.5 : 0.5))
+    const bnull = bettingCS(nullX)
+    expect(bnull.lo).toBeLessThanOrEqual(0.5)
+    expect(bnull.hi).toBeGreaterThanOrEqual(0.5)
+    const wins = Array.from({ length: 20 }, () => 1)
+    const bw = bettingCS(wins)
+    expect(bw.lo).toBeGreaterThan(0.5)
+  })
+})
+
 describe('hierarchical bootstrap and holdout', () => {
   it('hierarchical bootstrap widens the interval when repeats disagree and matches the scenario bootstrap with one value per scenario', async () => {
     const { bootstrapHierarchical, bootstrapMean } = await import('../src/core/stats.js')
