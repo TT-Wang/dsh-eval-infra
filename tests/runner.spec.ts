@@ -391,7 +391,7 @@ describe('replay provenance and per-trial cap', () => {
     const paths = runPaths(root, plan.id)
     writeJsonAtomic(paths.plan, plan)
     const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
-    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory({ costScale: { cand: 50 } }), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), maxUsdPerTrial: 0.0005 })
+    await executeRun(plan, scenarios, arms, { driverFactory: scriptedDriverFactory({ costScale: { cand: 50 } }), evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'), maxUsdPerTrial: 0.005 })
     const ledgers = readLedgers(paths)
     const cand = ledgers.find(l => l.arm === 'cand')!
     expect(cand.capped).toBeDefined()
