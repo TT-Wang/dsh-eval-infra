@@ -11,7 +11,7 @@ import { readdirSync } from 'node:fs'
 import { loadArmFile } from '../core/arms.js'
 import { toAtif } from '../core/atif.js'
 import { evalInfraVersion } from '../core/env.js'
-import { collectScenarios, launchRun, LaunchError, rebuildReport, resolveArmPath, type RunRequest } from '../core/orchestrate.js'
+import { collectScenarios, launchRun, LaunchError, rebuildReport, resolveArmPath, verifyRunIntegrity, type RunRequest } from '../core/orchestrate.js'
 import { describeDiff, evalProfileManifest, prepareArms } from '../core/plan.js'
 import { loadProject, type Project } from '../core/project.js'
 import type { Report } from '../core/report.js'
@@ -211,7 +211,9 @@ export class EvalApp {
         const active = this.active.get(id)
         const seqFile = join(paths.dir, 'sequential.json')
         const sequential = existsSync(seqFile) ? readJson<unknown>(seqFile) : null
-        json(res, 200, { plan, progress: active?.progress ?? progress, report, env, active: active !== undefined, logs: active?.logs ?? [], sequential })
+        let integrity: unknown = null
+        if (existsSync(join(paths.dir, 'manifest.json')) && active === undefined) { try { integrity = verifyRunIntegrity(this.project, id) } catch (e) { integrity = { ok: false, reportDiff: [e instanceof Error ? e.message : String(e)] } } }
+        json(res, 200, { plan, progress: active?.progress ?? progress, report, env, active: active !== undefined, logs: active?.logs ?? [], sequential, integrity })
         return
       }
       if (method === 'GET' && seg[2] === 'report') {
@@ -281,13 +283,33 @@ export interface HistoryCell { runs: number; passes: number; errors: number; usd
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
 export interface History {
   arms: string[]
-  scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]> }>
+  scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal: { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number } }>
   runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>
   /** Scenarios that behave the same way for every arm across the archive: worth retiring or fixing rather than re-running. */
   chronic: { flaky: string[]; failing: string[]; saturated: string[] }
 }
 
 /** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
+/**
+ * Discriminating power of a scenario across the archive: between-arm variance of
+ * the mean cost over the pooled within-arm variance (signal-to-noise; below 1 the
+ * scenario's cost differences are mostly rerun noise), plus the pass-rate spread
+ * across arms. Needs at least two arms with two trials each.
+ */
+export function scenarioSignal(arms: Array<{ arm: string; usd: number[]; passes: number[] }>): { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number } {
+  const usable = arms.filter(a => a.usd.length >= 2)
+  const trials = arms.reduce((n, a) => n + a.usd.length, 0)
+  if (usable.length < 2) return { snr: null, withinCv: null, passSpread: arms.length >= 2 ? Math.max(...arms.map(a => a.passes.reduce((x, y) => x + y, 0) / Math.max(1, a.passes.length))) - Math.min(...arms.map(a => a.passes.reduce((x, y) => x + y, 0) / Math.max(1, a.passes.length))) : null, trials }
+  const meanOf = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length
+  const varOf = (xs: number[]): number => { const m = meanOf(xs); return xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1) }
+  const means = usable.map(a => meanOf(a.usd))
+  const within = meanOf(usable.map(a => varOf(a.usd)))
+  const between = varOf(means)
+  const grand = meanOf(means)
+  const passRates = arms.map(a => meanOf(a.passes))
+  return { snr: within > 0 ? between / within : null, withinCv: grand > 0 ? Math.sqrt(within) / grand : null, passSpread: Math.max(...passRates) - Math.min(...passRates), trials }
+}
+
 export function buildHistory(runsRoot: string): History {
   const runs = listRuns(runsRoot)
   const arms = new Set<string>()
@@ -327,6 +349,7 @@ export function buildHistory(runsRoot: string): History {
       cells: Object.fromEntries([...e.cells.entries()].map(([arm, c]) => [arm, { runs: c.runs, passes: c.passes, errors: c.errors, usdMean: c.runs ? c.usd / c.runs : 0, stepsMean: c.runs ? c.steps / c.runs : 0 }])),
       runIds: [...e.runIds],
       points: Object.fromEntries([...e.points.entries()]),
+      signal: scenarioSignal([...e.points.entries()].map(([arm, pts]) => ({ arm, usd: pts.map(p => p.usd), passes: pts.map(p => (p.ok ? 1 : 0)) }))),
     })),
     runs: runs.map(r => ({ id: r.id, createdAt: r.createdAt, ...(r.label !== undefined ? { label: r.label } : {}), arms: r.arms })),
   }

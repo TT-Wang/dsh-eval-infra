@@ -108,3 +108,37 @@ What the run demonstrates: the same arms, overlays and scenarios run unchanged u
 
 - Pairwise panel: both judges tied all three pairs; panel unanimity 100%; 50% of the individual votes had order-inconsistent answers, each counted as a tie. Same conclusion as the deterministic verifiers (both arms correct), reached without either judge being allowed to convert a position preference into a win.
 - Absolute grades: 6/6 trials graded pass by both judges, matching the verifiers. No human annotations exist on this run, so the per-arm pass rates are reported as judge-only and marked uncalibrated; adding annotations from the trace page turns them into PPI++ estimates with a standard error (covered by the unit tests).
+
+
+## repeats-3 (2026-09-04, run 20260903-203845-40b3)
+
+The first run at the 3-repeat floor with a scenario count above the 5-scenario minimum: 8 dev scenarios × 3 repeats × 2 arms = 48 trials, $0.387, 11 min at concurrency 3.
+
+- Verdict: **inconclusive** (Δ% −5.7%, 95% CI −23.7% to +12.4%, 8 scenarios); MDE ≈ ±24%; q = n/N* = 0.07 (N* ≈ 114 scenarios to resolve an effect of the observed size at 80% power).
+- Pass 24/24 → 23/24: one discordant pair lost (McNemar mid-p 0.50); f9_docs_research flagged flaky (repeats disagree within the fold arm).
+- ICC of repeat cost differences ρ̂ = 0.23, design effect 1.44.
+- CUPED with archived baseline cost removed 17% of the variance: adjusted Δ% −5.7% (−22.1% to +10.7%) — shown beside the raw interval, not instead of it. First real run to exercise CUPED.
+- A/A floor from run 20260903-185811-02nc (|Δ%| 16.6%) applied as the noise band.
+
+## meter-smoke (2026-09-04, run 20260903-204617-xqvh)
+
+First run through the independent usage meter (a per-trial local proxy between the dsh runtime and api.deepseek.com, selected by an `llm-deepseek` `baseURL` overlay row that is identical in both arms): f6 × 1 × 2 arms.
+
+- `Usage provenance: 2/2 trials reconciled against the independent wire meter (max deviation 0.00%, 17 provider requests).`
+- The runtime's self-reported usage matched the provider's wire usage token for token on every request; the meter ledgers (`meter/<scenario>/<arm>/rep1.jsonl`) carry a hash chain that `verifyChain` checks.
+
+## holdout-check (2026-09-04, run 20260903-204909-fczz)
+
+`v1_verify_before_done` marked `holdout: true`; run with `--include-holdout` on 5 dev scenarios + the sealed one, 1 repeat, 12 trials, $0.059.
+
+- Verdict: cost equivalent within ±10% (−0.6%, CI −9.5% to +8.3%, 6 scenarios), grade tie; report note: `Δpass on the 5 dev scenarios +0.0% pp vs +0.0% pp on the 1 sealed scenarios` (no dev–sealed gap on this pair).
+- Usage provenance: 12/12 trials reconciled (112 provider requests, max deviation 0.00%).
+- First sealed run: `dsh-eval verify 20260903-204909-fczz` → `sealed … evidence 19a29f8de5b27825… · report: reproduces from the sealed ledgers · OK`.
+
+## budget-check (2026-09-04, run 20260903-205056-mo91)
+
+`--max-usd 0.008` on 3 scenarios × 1 repeat × 2 arms at concurrency 1: the run stopped scheduling after 3 of 6 trials (`total $0.0120 · 1.1 min · cancelled`), the finished ledgers stayed, and `run --resume 20260903-205056-mo91` completed the remaining 3 trials (`total $0.0129 · 0.9 min · done`). The final report covers all 6 trials; provenance 3/3 then 6/6 reconciled.
+
+## regrade-check (2026-09-04, run 20260903-205119-9xup)
+
+f6 × 1 × 2 arms with `--keep-workdirs`, then `dsh-eval regrade`: `regraded 2 trial(s), 0 skipped (workspace not kept), 0 verdict(s) changed; report rebuilt and evidence re-sealed`, and `dsh-eval verify` on the re-sealed run: `report: reproduces from the sealed ledgers · OK`. The manifest records the regrade with the verifier's sha256.

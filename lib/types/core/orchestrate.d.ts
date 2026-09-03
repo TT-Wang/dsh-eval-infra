@@ -1,6 +1,7 @@
 import { prepareArms, type ArmDiff } from './plan.js';
 import type { Project } from './project.js';
 import { type NoiseFloor, type Report } from './report.js';
+import { type VerifyResult } from './manifest.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
 import { runPaths, type Progress } from './store.js';
@@ -130,4 +131,30 @@ export declare function readJudgeReports(paths: ReturnType<typeof runPaths>): Re
  */
 export declare function rebuildLedgers(project: Project, id: string): Promise<number>;
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
+/** Re-derive the report from the ledgers, annotations and judge files without writing anything. */
+export declare function deriveReport(project: Project, id: string): Report;
 export declare function rebuildReport(project: Project, id: string): Report;
+/** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
+export declare function verifyRunIntegrity(project: Project, id: string): VerifyResult;
+export interface RegradeResult {
+    at: string;
+    regradable: number;
+    skipped: number;
+    changed: Array<{
+        scenario: string;
+        arm: string;
+        rep: number;
+        before: boolean | null;
+        after: boolean;
+        detail: string;
+    }>;
+    verifiers: Record<string, string>;
+}
+/**
+ * Re-run each scenario's verifier on the kept workspace of every trial (runs
+ * made with --keep-workdirs), without re-running any agent, then rebuild the
+ * report and re-seal the evidence with the regrade recorded in the manifest.
+ */
+export declare function regradeRun(project: Project, id: string, options?: {
+    log?: (line: string) => void;
+}): Promise<RegradeResult>;

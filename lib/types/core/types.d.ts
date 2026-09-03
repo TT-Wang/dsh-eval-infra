@@ -221,6 +221,13 @@ export interface RunLedger {
      * runtime's figures matched them within tolerance.
      */
     usageProvenance?: UsageProvenance;
+    /** Set when `dsh-eval regrade` re-ran the verifier on the kept workspace. */
+    regrade?: {
+        at: string;
+        previous: Verdict | null;
+    };
+    /** sha256 of the scenario's verify.py at run time (provenance for regrades). */
+    verifierSha?: string;
     sessionId: string | null;
     /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
     sessions: number;

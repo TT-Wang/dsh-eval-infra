@@ -23,7 +23,7 @@ export function HistoryView() {
       {h.scenarios.length === 0 ? <div class="empty"><p>No ledgers yet.</p></div> : (
         <div class="card">
           <table class="data">
-            <thead><tr><th>scenario</th>{h.arms.map(a => <th>{a}</th>)}<th>runs</th></tr></thead>
+            <thead><tr><th>scenario</th>{h.arms.map(a => <th>{a}</th>)}<th title="between-arm variance of mean cost over within-arm variance across the archive; below 1 the scenario's cost differences are mostly rerun noise">signal</th><th>runs</th></tr></thead>
             <tbody>
               {h.scenarios.map(s => (
                 <tr key={s.name}>
@@ -43,6 +43,7 @@ export function HistoryView() {
                       </td>
                     )
                   })}
+                  <td>{s.signal && s.signal.snr !== null ? <span class={`cls ${s.signal.snr >= 1 ? 'same' : 'both-fail'}`} title={`SNR ${s.signal.snr.toFixed(2)} · within-arm CV ${s.signal.withinCv === null ? '—' : (s.signal.withinCv * 100).toFixed(0) + '%'} · pass spread ${s.signal.passSpread === null ? '—' : (s.signal.passSpread * 100).toFixed(0) + ' pp'} over ${s.signal.trials} trials`}>{s.signal.snr >= 1 ? 'signal' : 'noise'} {s.signal.snr.toFixed(1)}</span> : <span class="muted">—</span>}</td>
                   <td class="muted small">{s.runIds.map(id => <a href={`#/run/${id}`}>{id.slice(0, 15)}</a>).reduce<ComponentChildren[]>((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}</td>
                 </tr>
               ))}

@@ -19,6 +19,10 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [annotation, setAnnotation] = useState<{ verdict: boolean | null; note: string; by: string; at: string } | null>(null)
+  const [blind, setBlind] = useState<boolean>(() => { try { return localStorage.getItem('dsh-eval-blind') === '1' } catch { return false } })
+  const toggleBlind = (): void => { const v = !blind; setBlind(v); try { localStorage.setItem('dsh-eval-blind', v ? '1' : '0') } catch { /* ignore */ } }
+  // Blind review: while on and no annotation has been saved for this trial, the arm name, machine verdict and the other arm's verdict stay hidden.
+  const masked = blind && annotation === null
   const [saving, setSaving] = useState(false)
   const annotate = async (verdict: boolean | null, remove = false): Promise<void> => {
     setSaving(true)
@@ -80,11 +84,14 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
     <section class="trace">
       <div class="page-head">
         <div>
-          <p class="crumbs"><a href={`#/run/${runId}`}>{runId}</a> / <code>{scenario}</code> / <b>{arm}</b> / rep {rep}</p>
-          <h1><span class={`cls ${ledger.error ? 'incomplete' : ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.error ? 'error' : ledger.verdict?.ok ? 'pass' : 'fail'}</span> <span class="muted small">{ledger.error ?? ledger.verdict?.detail}</span></h1>
+          <p class="crumbs"><a href={`#/run/${runId}`}>{runId}</a> / <code>{scenario}</code> / <b>{masked ? 'arm ●' : arm}</b> / rep {rep}</p>
+          {masked
+            ? <h1><span class="cls incomplete">blind review</span> <span class="muted small">arm and machine verdict hidden until you save a verdict</span></h1>
+            : <h1><span class={`cls ${ledger.error ? 'incomplete' : ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.error ? 'error' : ledger.verdict?.ok ? 'pass' : 'fail'}</span> <span class="muted small">{ledger.error ?? ledger.verdict?.detail}</span></h1>}
         </div>
         <div class="row">
-          {other && <button class={`btn ${compare ? 'primary' : ''}`} onClick={() => setCompare(!compare)}>{compare ? 'hide' : 'compare'} with {otherArm} <kbd>c</kbd></button>}
+          <button class={`btn ${blind ? 'primary' : ''}`} title="hide the arm name and machine verdicts until a verdict is saved (Braintrust-style blind review)" onClick={toggleBlind}>blind review {blind ? 'on' : 'off'}</button>
+          {other && <button class={`btn ${compare ? 'primary' : ''}`} onClick={() => setCompare(!compare)}>{compare ? 'hide' : 'compare'} with {masked ? 'arm ○' : otherArm} <kbd>c</kbd></button>}
           <a class="btn" href={api.atifUrl(runId, scenario, arm, rep)} target="_blank">ATIF</a>
         </div>
       </div>
@@ -106,7 +113,7 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
         </div>
         {compare && other && (
           <div class="card steps">
-            <h2>{otherArm} <span class="muted small">{other.ledger.verdict?.ok ? 'pass' : 'fail'} · {fmt.usd(other.ledger.totals.usd)} · {other.ledger.totals.steps} steps{divergence >= 0 ? ` · diverges at step ${divergence + 1}` : ' · same tool sequence'}</span></h2>
+            <h2>{masked ? 'arm ○' : otherArm} <span class="muted small">{masked ? 'verdict hidden' : other.ledger.verdict?.ok ? 'pass' : 'fail'} · {fmt.usd(other.ledger.totals.usd)} · {other.ledger.totals.steps} steps{divergence >= 0 ? ` · diverges at step ${divergence + 1}` : ' · same tool sequence'}</span></h2>
             <StepList trace={other.trace} selected={compare ? Math.min(selected, other.trace.length - 1) : -1} onSelect={() => { /* mirrors the main selection */ }} promptMax={promptMax} divergence={divergence} durations={otherDurations} durMax={durMax} />
           </div>
         )}
@@ -117,8 +124,10 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
           {tab === 'verdict' && (
             <div>
               <h2>Verdict</h2>
-              <p><span class={`cls ${ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.verdict?.ok ? 'pass' : 'fail'}</span></p>
-              <pre>{ledger.verdict?.detail ?? '(no verdict)'}</pre>
+              {masked
+                ? <p class="muted small">machine verdict hidden (blind review); save your own verdict below to reveal it</p>
+                : <><p><span class={`cls ${ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.verdict?.ok ? 'pass' : 'fail'}</span></p>
+                  <pre>{ledger.verdict?.detail ?? '(no verdict)'}</pre></>}
               {ledger.error && <p class="error">runtime error: {ledger.error}</p>}
               <p class="muted small">turn ends: {ledger.turns.map(x => `${x.turn}:${x.end}`).join(' · ')}</p>
               <div class="annotate">
@@ -133,7 +142,7 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
                 </div>
                 <p class="muted small">Overrides replace the verdict in the report (the machine verdict stays in the ledger and the report says how many were overridden).</p>
               </div>
-              {compare && other && <p class="muted small">{otherArm}: <span class={`cls ${other.ledger.verdict?.ok ? 'same' : 'regression'}`}>{other.ledger.verdict?.ok ? 'pass' : 'fail'}</span> {other.ledger.verdict?.detail}</p>}
+              {compare && other && !masked && <p class="muted small">{otherArm}: <span class={`cls ${other.ledger.verdict?.ok ? 'same' : 'regression'}`}>{other.ledger.verdict?.ok ? 'pass' : 'fail'}</span> {other.ledger.verdict?.detail}</p>}
             </div>
           )}
           {tab === 'raw' && <div><h2>Ledger</h2><pre>{JSON.stringify({ ...ledger, steps: `${ledger.steps.length} steps (see step tab)` }, null, 2)}</pre></div>}

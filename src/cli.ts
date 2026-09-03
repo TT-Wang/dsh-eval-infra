@@ -191,6 +191,9 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
     ...(args.flags['sequential'] === true ? { sequential: true } : {}),
     ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : {}),
+    ...(args.flags['no-meter'] === true ? { meter: false } : {}),
+    ...(num(args.flags['fault-rate']) !== undefined ? { faultRate: num(args.flags['fault-rate'])! } : {}),
+    ...(num(args.flags['fault-seed']) !== undefined ? { faultSeed: num(args.flags['fault-seed'])! } : {}),
     ...(typeof args.flags['docker-image'] === 'string' ? { dockerImage: args.flags['docker-image'] } : {}),
     ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}),
   }

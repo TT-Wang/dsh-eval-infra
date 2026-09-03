@@ -10,7 +10,8 @@ export const BASE = location.pathname.replace(/\/index\.html$/, '').replace(/\/+
 export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; armsDir: string; defaults: { repeats: number; concurrency: number } }
 export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; prompts: string[] }
 export interface ArmInfo { file: string; path: string; spec?: ArmSpec; error?: string; text: string }
-export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null }
+export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null; integrity?: RunIntegrity | null }
+export interface RunIntegrity { ok: boolean; sealedAt: string | null; evidenceSha: string | null; missing: string[]; changed: string[]; added: string[]; reportReproduces: boolean | null; reportDiff: string[] }
 export type LedgerLite = Omit<RunLedger, 'steps'> & { steps: Array<Omit<RunLedger['steps'][number], 'calls'> & { calls: string[] }> }
 
 /** A self-contained export (`dsh-eval export --html`) embeds the run; every read resolves from it and writes are refused. */
@@ -54,7 +55,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
-export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]> }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }
+export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
+export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }
 
 export interface RunRow extends RunIndexEntry { sandbox?: 'host' | 'docker'; verdicts?: Array<{ arm: string; gate: string; costReading: string; costPct: number; regressions: number; improvements: number }> }
 

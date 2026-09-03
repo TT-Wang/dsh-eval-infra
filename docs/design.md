@@ -119,11 +119,19 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 
 `dsh-eval judge --model A --model B …` forms a panel: each model is asked in both orders; a model's vote is a tie when its two orders disagree; the pair's preference is the majority of decided votes only when that majority is a strict majority of the whole panel, so a single confident judge cannot carry a panel of two. The report shows the panel's unanimity rate and the order-disagreement rate of all votes. Judges from other provider families are added in `.dsh-eval/config.json` (`judges: [{name, model, baseUrl, apiKeyEnv}]`) or inline as `model@baseUrl`. `--mode absolute` grades every trial on its own against the rubric; per-arm pass rates are then rectified with prediction-powered inference (PPI++, Angelopoulos, Duchi & Zrnic 2023): θ̂ = ȳ_labelled + λ̂ (f̄_all − f̄_labelled) with λ̂ = Cov(y,f)/((1+n/N)Var(f)) clipped to [0,1] and the standard error from the residuals, where the labels are the human annotations already stored with the run. Without labels the estimate is judge-only and marked uncalibrated.
 
+## 6e. Wire meter, sealed evidence, regrade
+
+**Meter.** The runtime's usage report comes from inside the process that hosts the component under test, so it is self-reported. Every trial can instead run through a local HTTP proxy (`src/core/meter.ts`) that forwards to the provider unchanged, records the provider's own `usage` from each response (streamed or plain) with latency and status, and chains the entries with sha256. The runtime is pointed at the proxy by an `llm-deepseek` `baseURL` overlay row that is identical in both arms, so the one-variable diff is unaffected; inside containers the row names `host.docker.internal`. After the trial the ledger totals are compared with the meter totals (1% tolerance) and the ledger carries `usageProvenance`. The report prints the provenance, and a directional or equivalence cost call is withheld when any comparable trial did not reconcile. The same proxy injects provider faults (`--fault-rate`: seeded 429s and stalls) so a component's behaviour under provider trouble can be measured; faults are counted per trial.
+
+**Seal.** When a run finishes, `manifest.json` records the sha256 of every evidence file (plan, environment, arms, ledgers, events, traces, artifacts, meter ledgers, progress, sequential trace) and one evidence sha over the set. `dsh-eval verify <run>` recomputes every hash, lists missing, changed and added files, re-derives the report from the sealed ledgers plus the current annotations and judge files, and compares the readings (gate, cost reading, grade, verdict text) with the stored report. Report, annotations and judge files are derived or added later and are checked through the re-derivation rather than by hash.
+
+**Regrade.** `dsh-eval regrade <run>` re-runs each scenario's verifier on the kept workspace of every trial (`--keep-workdirs`), without touching any agent, records old → new verdicts and the verifier hashes, rebuilds the report and re-seals with the regrade in the manifest. Ledgers store the verifier's sha at run time so a regrade can say which verifier version graded what.
+
 ## 7. What it does not do (yet)
 
-- Judges default to DeepSeek models; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's).
-- Host mode confines through dsh's own sandbox; container mode isolates through Docker mounts but cannot use dsh's in-process sandbox inside the container.
-- No cross-run trend view yet; runs are self-contained directories that can be compared by rebuilding reports.
+- A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's). No conformal abstention, no anchor-set drift attribution.
+- Host mode confines through dsh's own sandbox; container mode isolates through Docker mounts but cannot use dsh's in-process sandbox inside the container; no microVM path.
+- No prompt-perturbation floor, served-model fingerprinting, active scenario selection, simulated user, record/replay/fork, within-trial early termination, or failure attribution with rerun validation.
 - DeepSeek pricing only; other providers price at zero and are reported as unknown.
 
 ## 8. Gap checklist

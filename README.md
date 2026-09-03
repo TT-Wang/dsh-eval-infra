@@ -102,23 +102,26 @@ The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
 | `run --baseline a --arm b [--arm c] [globs] [--repeats N] [--concurrency N] [--label L] [--aa] [--allow-multi] [--resume id] [--turn-timeout S] [--keep-workdirs] [--max-usd N] [--sequential --seed N] [--include-holdout]` | the paired run; prints the report |
 | `report <id> [--json]` | rebuild the report from the ledgers |
 | `judge <id> [--model M] [--arm A] [--seed N]` | blinded pairwise judge over scenarios with `meta.judge` |
+| `verify <id> [--json]` | check the sealed evidence hashes and that the report re-derives from them (exit 1 on any change) |
+| `regrade <id>` | re-run verifiers on kept workspaces (`--keep-workdirs`), rebuild the report, re-seal |
 | `runs` | list runs |
 | `ui [--port 4177] [--open]` | local web UI |
 | `export <id> [--out dir]` | ATIF v1.8 trajectories of every trial |
 
 ## How it compares
 
-Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, LangSmith, Langfuse, Weave and Phoenix compare experiments after the fact; Inspect has epochs and bootstrap errors per log; Claude Code's `plugin eval` (early access) ablates its own plugins with and without. None of them pairs and interleaves two configurations in one run, enforces one variable, self-checks the verifier, gates on regressions, or prices with cache and calendar awareness. Details and sources: [docs/landscape.md](docs/landscape.md).
+Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, LangSmith, Langfuse, Weave and Phoenix compare experiments after the fact; Inspect has epochs, bootstrap errors and a judge panel per log; Claude Code's `plugin eval` (early access) ablates its own plugins with and without. Among tools built on dsh itself, muou000/dsh-eval pairs and interleaves cases with seeded AB/BA order and content-addressed artifacts, hccccc01333/dsh-eval replays recorded chunks keylessly, BiBoyang/dsh-eval-harness gates with TPR/TNR-validated judges, and dsheval.ai publishes a public plugin ledger. None of them combines paired interleaving with a one-variable check on the composed configuration, verifier self-checks with mutation, a regression-first gate that prices only matched passes, an A/A floor that can veto a directional call, a non-asymptotic sequential stop, usage metered on the wire and reconciled before any cost call, and sealed evidence with an independent report check. Where they are ahead is listed row by row in [docs/sota-scorecard.md](docs/sota-scorecard.md); sources in [docs/landscape.md](docs/landscape.md), [docs/landscape-2.md](docs/landscape-2.md) and the [adversarial review](docs/adversarial-review.md).
 
 ## Status and limitations
 
 Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys and states, narrowly, where it leads and where it does not. Known limits, stated rather than hidden:
 
-- Host mode confines through dsh's own sandbox; container mode isolates through Docker mounts (the container is the boundary, dsh's in-process sandbox is off inside it).
-- Judge panels across provider families need endpoints you configure; the default panel is DeepSeek-only.
+- Host mode confines through dsh's own sandbox, which dsh's SAFETY.md does not call a security boundary; use `--sandbox docker` for third-party plugins (the container is the boundary; dsh's in-process sandbox is off inside it). There is no microVM path.
+- Usage is metered on the wire by a per-trial local proxy and reconciled with the runtime's own figures; a cost call is withheld when they disagree. `--no-meter` returns to self-reported usage, and the report says so.
+- A judge from the arms' model family is refused unless `--allow-same-family`; a second-family endpoint must be configured by you. Conformal abstention and judge-drift anchors are not implemented; the length-preference share is a diagnostic, not a correction.
+- Not implemented: prompt-perturbation noise floors, served-model fingerprinting, active scenario selection, simulated users, record/replay/fork, within-trial early termination, failure attribution with rerun validation.
 - DeepSeek prices only; other providers are recorded with cost 0 and flagged.
-- Intervals below ten scenarios are Student-t; the bootstrap is used from ten. With fewer than five comparable scenarios the tool refuses to state a direction, by design.
-- Tables are not virtualized; runs with thousands of trials will render slowly.
+- Intervals below ten scenarios are Student-t; the bootstrap is used from ten. With fewer than five comparable scenarios the tool refuses to state a direction, by design. The sequential cost decision uses a non-asymptotic betting sequence and therefore needs more scenarios than a fixed-sample interval would; that is the price of validity at every look.
 
 ## Development
 
