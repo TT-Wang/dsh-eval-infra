@@ -16,7 +16,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | fresh environment per trial | ABC checklist T.4/T.6, StableToolBench | fresh workspace and runtime process per trial, isolated `DSH_HOME` | **met** |
 | provider conditions held constant | Epoch "why benchmarking is hard" | same model route recorded from the request header; bands recorded | **met** |
 | sequential / adaptive repeats (stop when decided) | anytime-valid A/B literature | not implemented | missing |
-| holdout / sealed scenario pools with a dev–sealed gap | AI Agents That Matter, ARC | not implemented (pools exist, no sealed flag) | missing |
+| holdout / sealed scenario pools with a dev–sealed gap | AI Agents That Matter, ARC | `meta.holdout` scenarios excluded unless `--include-holdout`; dev vs sealed Δpass and gap warning in the report | **met** |
 
 ## B. Verifier validity
 
@@ -53,8 +53,8 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | minimum detectable effect reported | Adding Error Bars | MDE from observed spread, in notes and forest strip | **met** |
 | pass^k / pass@k | τ-bench, Inspect reducers | per arm | **met** |
 | paired binary test | McNemar / sign test | exact sign test on discordant pairs | **met** |
-| multiple-comparison control across candidates and categories | Holm / BH | not implemented | missing |
-| hierarchical bootstrap (scenarios and repeats) | Scaffold Effects on GAIA | scenarios only | *partial* |
+| multiple-comparison control across candidates | Bonferroni / Holm / BH | intervals read at α/m across candidates, stated in the notes | **met** (per-scenario claims are not made, so no per-scenario correction is needed) |
+| hierarchical bootstrap (scenarios and repeats) | Scaffold Effects on GAIA | scenarios then repeat pairs for the cost Δ% interval | **met** |
 | Bayesian pass-rate difference with ROPE | — | not implemented | missing |
 | one-word grade (improvement / regression / tradeoff / tie) | Braintrust comparison grade | implemented | **met** |
 | honest wording when underpowered | TOST literature | "inconclusive" default; single-scenario and <3-scenario wordings | **met** |
@@ -90,10 +90,10 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | history across runs, chronic failures, cost trend | Braintrust trends | per-scenario history with pass/fail and cost sparklines | **met** |
 | static single-file export | Inspect `view bundle`, claude-tap | `export --html` | **met** |
 | ATIF interchange | Harbor | per-trial ATIF with observations | **met** |
-| side-by-side final outputs with text diff | LangSmith Diff, Braintrust | not implemented (final assistant text is in the trace, no diff view) | missing |
+| side-by-side final outputs with text diff | LangSmith Diff, Braintrust | line diff of the final assistant message per repeat in the expanded row | **met** |
 | virtualized tables for very large runs | Braintrust "10x faster" | plain tables | *partial* |
-| dark mode, density | — | dark via prefers-color-scheme; no density toggle | *partial* |
+| dark mode, density | — | dark via prefers-color-scheme; compact/comfortable toggle persisted per browser | **met** |
 
 ## Verdict (to be revised after each iteration)
 
-Not yet claimed. Open rows that block the claim: sequential repeats, sealed pools, multiple-comparison control, hierarchical bootstrap, blinded judge, output diff view. Rows marked n/a or same-world sandbox are documented limitations, not blockers, as long as they are stated plainly in the README.
+Not yet claimed. Open rows that block the claim: sequential / adaptive repeats, blinded judge (and PPI), automatic flaky-task retirement, virtualized tables for very large runs. Rows marked n/a or same-world sandbox are documented limitations, not blockers, as long as they are stated plainly in the README.

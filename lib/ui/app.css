@@ -77,3 +77,6 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .obs { margin: 4px 0 0 12px; } .obs pre { max-height: 40vh; } .obs-err { border-left: 3px solid var(--bad); }
 .sparkbars { display: inline-flex; align-items: flex-end; gap: 1px; height: 16px; margin-left: 8px; vertical-align: middle; } .sparkbars i { display: block; width: 4px; background: var(--good); border-radius: 1px; } .sparkbars i.ko { background: var(--bad); }
 .annotate { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; } .annotate textarea { width: 100%; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); margin: 6px 0; }
+.odiff pre { max-height: 40vh; font-size: 11.5px; } .odiff .ddel { color: var(--bad); } .odiff .dadd { color: var(--good); } .odiff .dsame { color: var(--muted); }
+.density { margin-left: auto; }
+html.compact table.data td, html.compact table.data th { padding: 3px 6px; } html.compact .card { padding: 8px 10px; margin-bottom: 8px; } html.compact body { font-size: 13px; }

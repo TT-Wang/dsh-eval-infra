@@ -36,6 +36,8 @@ export interface ScenarioMeta {
    * memory plugin is tested: what survives a restart is what it stored.
    */
   new_session_before_turns?: number[]
+  /** Files the strict self-check must not mutate: side products of the scenario's own scripts that no prompt asks for. */
+  strict_ignore?: string[]
 }
 
 /** A loaded scenario. */

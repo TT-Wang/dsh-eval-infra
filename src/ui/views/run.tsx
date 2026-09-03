@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
 import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../api.js'
+import type { TraceRow } from '../../core/ledger.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
@@ -236,8 +237,50 @@ function Pips({ id, scenario, arm, stats }: { id: string; scenario: string; arm:
   )
 }
 
+/** Minimal line diff (LCS) for two final outputs. */
+function lineDiff(a: string, b: string): Array<{ kind: ' ' | '-' | '+'; text: string }> {
+  const x = a.split('\n')
+  const y = b.split('\n')
+  const n = x.length
+  const m = y.length
+  if (n * m > 250_000) return [...x.map(t => ({ kind: '-' as const, text: t })), ...y.map(t => ({ kind: '+' as const, text: t }))]
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i -= 1) for (let j = m - 1; j >= 0; j -= 1) dp[i]![j] = x[i] === y[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!)
+  const out: Array<{ kind: ' ' | '-' | '+'; text: string }> = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { out.push({ kind: ' ', text: x[i]! }); i += 1; j += 1 }
+    else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) { out.push({ kind: '-', text: x[i]! }); i += 1 }
+    else { out.push({ kind: '+', text: y[j]! }); j += 1 }
+  }
+  while (i < n) { out.push({ kind: '-', text: x[i]! }); i += 1 }
+  while (j < m) { out.push({ kind: '+', text: y[j]! }); j += 1 }
+  return out
+}
+
+function OutputDiff({ id, scenario, baseline, candidate, rep }: { id: string; scenario: string; baseline: string; candidate: string; rep: number }) {
+  const [rows, setRows] = useState<Array<{ kind: ' ' | '-' | '+'; text: string }> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setRows(null)
+    const last = (t: TraceRow[]): string => t.filter(r => r.text.trim() !== '').at(-1)?.text ?? '(no final text)'
+    Promise.all([api.trace(id, scenario, baseline, rep), api.trace(id, scenario, candidate, rep)]).then(([a, b]) => setRows(lineDiff(last(a), last(b)))).catch(e => setError(String(e)))
+  }, [id, scenario, baseline, candidate, rep])
+  if (error) return <p class="error small">{error}</p>
+  if (!rows) return <p class="muted small">loading final outputs…</p>
+  const changed = rows.filter(r => r.kind !== ' ').length
+  return (
+    <div class="odiff">
+      <div class="muted small">final assistant message, rep {rep}: <b>−</b> {baseline} · <b>+</b> {candidate} · {changed === 0 ? 'identical' : `${changed} changed lines`}</div>
+      <pre>{rows.map(r => <span class={`d${r.kind === ' ' ? 'same' : r.kind === '-' ? 'del' : 'add'}`}>{r.kind} {r.text}{'\n'}</span>)}</pre>
+    </div>
+  )
+}
+
 function Expanded({ p, id, baseline, candidate }: { p: PairedScenario; id: string; baseline: string; candidate: string }) {
   const reps = Object.keys(p.baseline.byRep).map(Number).sort((a, b) => a - b)
+  const [diffRep, setDiffRep] = useState<number | null>(null)
   const b = p.behaviour
   const beh = (k: keyof typeof b.baseline): string => `${b.baseline[k].toFixed(1)} → ${b.candidate[k].toFixed(1)}`
   return (
@@ -256,12 +299,13 @@ function Expanded({ p, id, baseline, candidate }: { p: PairedScenario; id: strin
                 <td>{c ? <span class={`cls ${c.error ? 'incomplete' : c.ok ? 'same' : 'regression'}`}>{c.error ? 'error' : c.ok ? 'pass' : 'fail'}</span> : '—'}</td>
                 <td class="num">{c ? fmt.usd(c.usd) : '—'}</td><td class="num">{c?.steps ?? '—'}</td>
                 <td class="num">{a && c ? fmt.usd(c.usd - a.usd) : '—'}</td>
-                <td><a href={`#/run/${id}/trace/${p.scenario}/${baseline}/${rep}`}>trace A</a> · <a href={`#/run/${id}/trace/${p.scenario}/${candidate}/${rep}`}>trace B</a> · <a href={`#/run/${id}/trace/${p.scenario}/${candidate}/${rep}?compare=1`}>side by side</a></td>
+                <td><a href={`#/run/${id}/trace/${p.scenario}/${baseline}/${rep}`}>trace A</a> · <a href={`#/run/${id}/trace/${p.scenario}/${candidate}/${rep}`}>trace B</a> · <a href={`#/run/${id}/trace/${p.scenario}/${candidate}/${rep}?compare=1`}>side by side</a> · <a href="javascript:void 0" onClick={(e) => { e.preventDefault(); setDiffRep(diffRep === rep ? null : rep) }}>{diffRep === rep ? 'hide diff' : 'output diff'}</a></td>
               </tr>
             )
           })}
         </tbody>
       </table>
+      {diffRep !== null && <OutputDiff id={id} scenario={p.scenario} baseline={baseline} candidate={candidate} rep={diffRep} />}
       <div class="row wrap small">
         <span class="muted">behaviour {baseline} → {candidate}:</span>
         <span>tool errors {beh('toolErrors')}</span><span>repeated calls {beh('repeatedCalls')}</span><span>no-action steps {beh('noActionSteps')}</span><span>observation chars {fmt.k(b.baseline.observationChars)} → {fmt.k(b.candidate.observationChars)}</span><span>compactions {beh('compactions')}</span>

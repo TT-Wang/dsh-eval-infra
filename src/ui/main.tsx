@@ -21,8 +21,15 @@ export function navigate(to: string): void {
   location.hash = to
 }
 
+function useDensity(): [boolean, () => void] {
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem('dsh-eval-density') === 'compact' } catch { return false } })
+  useEffect(() => { document.documentElement.classList.toggle('compact', compact); try { localStorage.setItem('dsh-eval-density', compact ? 'compact' : 'comfortable') } catch { /* private mode */ } }, [compact])
+  return [compact, () => setCompact(v => !v)]
+}
+
 function App() {
   const hash = useHash()
+  const [compact, toggleDensity] = useDensity()
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
   let view
   if (parts[0] === 'new') view = <NewRunView />
@@ -40,6 +47,7 @@ function App() {
           <a href="#/new" class={parts[0] === 'new' ? 'active' : ''}>New run</a>
           <a href="#/history" class={parts[0] === 'history' ? 'active' : ''}>History</a>
         </nav>
+        <button class="btn small density" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
       </header>
       <main>{view}</main>
     </div>
