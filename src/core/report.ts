@@ -472,6 +472,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   })
   if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline: intervals are read at α = ${alpha.toFixed(4)} (Bonferroni) so the family-wise error rate stays at 5%.`)
   if (options.sequences) notes.push('Sequential mode: the cost interval is the final anytime-valid confidence sequence (valid under early stopping), which is wider than a fixed-sample bootstrap would be on the same data.')
+  if (plan.sandbox === 'docker') notes.push('Trials ran inside Docker containers: the container is the confinement boundary (workspace and eval home mounted read-write, the dsh checkout and plugins read-only); dsh\'s in-process sandbox and permission presets were off inside the container.')
   for (const c of candidates) {
     if (c.holdoutGap !== null && c.holdoutGap.devScenarios > 0) {
       const gap = c.holdoutGap.dev - c.holdoutGap.holdout

@@ -99,6 +99,8 @@ export interface RunDeps {
   /** Skip jobs whose ledger already exists (resume). */
   resume?: boolean
   workRoot?: string
+  /** Extra rows for the shared base overlay (container mode adds its rows here). */
+  baseOverlayRows?: Array<Record<string, unknown>>
   /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
   maxUsd?: number
   /**
@@ -120,12 +122,13 @@ export interface SequentialDecision {
   reason: string
 }
 
-/** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
-export function writeBaseOverlays(armsDir: string): { noNetwork: string; network: string } {
+/** Base overlays every arm shares; the scenario decides whether network tools are allowed. `extraRows` (e.g. the container rows) apply to both. */
+export function writeBaseOverlays(armsDir: string, extraRows: Array<Record<string, unknown>> = []): { noNetwork: string; network: string } {
   mkdirSync(armsDir, { recursive: true })
   const common = [
     { id: 'session-telemetry-otel', disabled: true },
     { id: 'session-title-llm', disabled: true },
+    ...extraRows,
   ]
   const noNetwork = join(armsDir, '_base-no-network.patch.yml')
   const network = join(armsDir, '_base-network.patch.yml')
@@ -161,7 +164,7 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
   const { paths } = deps
   const ordered = deps.sequential ? shuffled(scenarios, deps.sequential.seed ?? 42) : scenarios
   const jobs = planJobs(ordered, arms, plan.repeats)
-  const base = writeBaseOverlays(paths.arms)
+  const base = writeBaseOverlays(paths.arms, deps.baseOverlayRows ?? [])
   const started = new Date()
   const progress: Progress = {
     status: 'running',

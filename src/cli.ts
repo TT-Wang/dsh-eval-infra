@@ -190,6 +190,8 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(aa ? { aa: true } : {}),
     ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
     ...(args.flags['sequential'] === true ? { sequential: true } : {}),
+    ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : {}),
+    ...(typeof args.flags['docker-image'] === 'string' ? { dockerImage: args.flags['docker-image'] } : {}),
     ...(num(args.flags['seed']) !== undefined ? { seed: num(args.flags['seed'])! } : {}),
   }
   const controller = new AbortController()
@@ -338,6 +340,7 @@ function help(): number {
   run --baseline <arm> --arm <arm>... [globs] [--repeats N] [--concurrency N] [--label L]
       [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N] [--include-holdout]
       [--sequential [--seed N]]         anytime-valid early stopping over a shuffled scenario order
+      [--sandbox docker [--docker-image IMG]]   run every trial's dsh runtime inside a container (only the workspace, eval home and read-only dsh checkout are mounted)
   report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
   judge <runId> [--model M] [--arm A] blinded pairwise judge over scenarios that declare meta.judge (both orders, ties on disagreement)
   runs                                list runs

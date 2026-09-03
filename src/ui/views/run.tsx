@@ -164,7 +164,7 @@ export function RunView({ id }: { id: string }) {
           <dt>dsh-eval</dt><dd>{env?.evalInfraVersion ?? '?'} · node {env?.node ?? '?'} · {env?.platform ?? '?'}</dd>
           <dt>model / effort</dt><dd>{[...new Set(ledgers.map(l => `${l.headerModel ?? l.model} / ${l.resolvedEffort ?? 'default'}`))].join(', ') || '—'}</dd>
           <dt>prices</dt><dd>DeepSeek list as of {env?.priceTableAsOf ?? '?'}; bands seen: {[...new Set(ledgers.flatMap(l => l.steps.map(s => s.band)))].join(', ') || '—'}</dd>
-          <dt>sandbox</dt><dd>dsh workspace-write confinement (bash denied outside the trial workspace; platform temp dirs allowed) · network tools {ledgers.some(l => l.tools.includes('web_fetch')) ? 'on' : 'off'}</dd>
+          <dt>sandbox</dt><dd>{plan.sandbox === 'docker' ? 'Docker container per trial (workspace + eval home mounted rw, dsh checkout and plugins ro; container is the boundary)' : 'dsh workspace-write confinement on the host (bash denied outside the trial workspace; platform temp dirs allowed)'} · network tools {ledgers.some(l => l.tools.includes('web_fetch')) ? 'on' : 'off'}</dd>
           <dt>arms</dt><dd>{env?.diffs?.map(d => <div><b>{d.candidate}</b>: {d.variables} variable(s){env.multiVariable ? <span class="warn-text"> · multi-variable comparison</span> : null}</div>)}{Object.entries(env?.composedTreeSha ?? {}).map(([a, sha]) => <div class="muted small">{a}: tree {sha.slice(0, 12)}</div>)}</dd>
         </dl>
       </div>

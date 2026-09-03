@@ -17,6 +17,7 @@ export function NewRunView() {
   const [label, setLabel] = useState('')
   const [allowMulti, setAllowMulti] = useState(false)
   const [aa, setAa] = useState(false)
+  const [docker, setDocker] = useState(false)
   const [diff, setDiff] = useState<Array<{ candidate: string; variables: number; lines: string[] }> | null>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -78,7 +79,7 @@ export function NewRunView() {
     setBusy(true); setError(null)
     try {
       const cap = Number(maxUsd)
-      const { id } = await api.start({ baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa, ...(maxUsd !== '' && Number.isFinite(cap) && cap > 0 ? { maxUsd: cap } : {}) })
+      const { id } = await api.start({ baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa, ...(docker ? { sandbox: 'docker' } : {}), ...(maxUsd !== '' && Number.isFinite(cap) && cap > 0 ? { maxUsd: cap } : {}) })
       navigate(`/run/${id}`)
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
@@ -126,6 +127,7 @@ export function NewRunView() {
             <label>Concurrency <input type="number" min={1} max={8} value={concurrency} onInput={e => setConcurrency(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} /></label>
             <label>Label <input type="text" value={label} placeholder="optional" onInput={e => setLabel((e.target as HTMLInputElement).value)} /></label>
           </div>
+          <label class="check"><input type="checkbox" checked={docker} onChange={e => setDocker((e.target as HTMLInputElement).checked)} /> Run each trial inside a Docker container (needs a running Docker daemon; the container is the boundary — only the workspace, the eval home and the read-only dsh checkout are mounted)</label>
           <p class="muted small">Arms interleave per repeat (A B, then B A), each trial in a fresh workspace and a fresh runtime process. Three repeats is the floor; five is recommended for binary outcomes; use A/A first to learn the noise floor.</p>
           <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} ({estimate.seen}/{selected.size} scenarios have archive history; the rest use the archive mean of {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
           <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>

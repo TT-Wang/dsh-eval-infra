@@ -41,6 +41,10 @@ export interface RunRequest {
   includeHoldout?: boolean
   /** Anytime-valid sequential mode: shuffled scenario order, early stop once the paired comparison is decided. */
   sequential?: boolean
+  /** Where each trial's dsh runtime runs: on the host under dsh's own sandbox (default) or inside a Docker container. */
+  sandbox?: 'host' | 'docker'
+  /** Container image for docker mode (default node:22-bookworm-slim). */
+  dockerImage?: string
   /** Seed for the sequential shuffle (default 42). */
   seed?: number
 }
@@ -151,6 +155,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       scenarioRoot: project.scenarioRoot,
     }
     if (request.label !== undefined) plan.label = request.label
+    if (request.sandbox === 'docker') plan.sandbox = 'docker'
   }
   if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
 
@@ -190,13 +195,29 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   }
   writeJsonAtomic(paths.plan, plan)
   const env = await recordEnvironment(prepared.composed)
-  writeJsonAtomic(paths.env, { ...env, diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
+  writeJsonAtomic(paths.env, { ...env, sandbox: request.sandbox ?? 'host', ...(request.sandbox === 'docker' ? { dockerImage: request.dockerImage ?? 'node:22-bookworm-slim' } : {}), diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
   for (const [arm, text] of Object.entries(prepared.composed)) writeFileSync(join(paths.arms, `${arm}.composed.yml`), text)
 
   const runEnv: Record<string, string> = { DSH_TELEMETRY_DISABLED: '1' }
   if (apiKey !== undefined) runEnv['DEEPSEEK_API_KEY'] = apiKey
+  const sandbox = request.sandbox ?? 'host'
+  let driverFactory = hooks.driverFactory
+  let baseOverlayRows: Array<Record<string, unknown>> = []
+  if (driverFactory === undefined && sandbox === 'docker') {
+    const { dockerAvailable, dockerDriverFactory, prepareNativeShims, CONTAINER_OVERLAY_ROWS } = await import('./docker.js')
+    const { dshSourceRoot } = await import('./env.js')
+    const avail = await dockerAvailable()
+    if (!avail.ok) throw new LaunchError(`docker sandbox requested but docker is not usable: ${avail.detail}`, 'env')
+    const source = dshSourceRoot()
+    if (source === null) throw new LaunchError('docker sandbox needs a dsh source checkout (DSH_SOURCE or ~/.dsh/source/current)', 'env')
+    const arch = process.arch === 'x64' ? 'x64' : 'arm64'
+    const nativeShims = prepareNativeShims(project.home, source, arch, log)
+    log(`docker sandbox: ${avail.detail}; image ${request.dockerImage ?? 'node:22-bookworm-slim'}; ${nativeShims.length} native shim(s)`)
+    driverFactory = dockerDriverFactory({ dshSource: source, nativeShims, ...(request.dockerImage !== undefined ? { image: request.dockerImage } : {}) }, paths.dir)
+    baseOverlayRows = CONTAINER_OVERLAY_ROWS
+  }
   const deps: RunDeps = {
-    driverFactory: hooks.driverFactory ?? sdkDriverFactory(project.config.dshBin !== undefined ? { dshBin: project.config.dshBin } : {}),
+    driverFactory: driverFactory ?? sdkDriverFactory(project.config.dshBin !== undefined ? { dshBin: project.config.dshBin } : {}),
     evalHome: project.home,
     paths,
     env: runEnv,
@@ -210,6 +231,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
   if (request.resume !== undefined) deps.resume = true
   if (request.maxUsd !== undefined) deps.maxUsd = request.maxUsd
+  if (baseOverlayRows.length > 0) deps.baseOverlayRows = baseOverlayRows
   const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
   if (request.sequential) {
     deps.sequential = { seed: request.seed ?? 42, onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost Δ% ${d.cost ? `${d.cost.mean.toFixed(1)} [${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
