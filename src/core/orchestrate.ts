@@ -10,11 +10,12 @@ import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import type { Project } from './project.js'
 import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
+import { fileSha, sealRun, verifyRun, type VerifyResult } from './manifest.js'
 import { executeRun, type RunDeps } from './runner.js'
-import { listScenarios } from './scenario.js'
+import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
-import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
+import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, writeJsonAtomic, writeLedger, type Progress } from './store.js'
 import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
 
 export interface RunRequest {
@@ -263,6 +264,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
     writeJsonAtomic(paths.report, report)
     writeFileSync(paths.reportMd, renderMarkdown(report))
+    sealRun(paths, plan.id)
     return { progress, report }
   })()
   return { id, plan, diffs: prepared.diffs, scenarios, selfcheck, done }
@@ -448,7 +450,8 @@ export async function rebuildLedgers(project: Project, id: string): Promise<numb
 }
 
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
-export function rebuildReport(project: Project, id: string): Report {
+/** Re-derive the report from the ledgers, annotations and judge files without writing anything. */
+export function deriveReport(project: Project, id: string): Report {
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
@@ -474,7 +477,65 @@ export function rebuildReport(project: Project, id: string): Report {
       }
     }
   }
+  return report
+}
+
+export function rebuildReport(project: Project, id: string): Report {
+  const paths = runPaths(project.runsRoot, id)
+  const report = deriveReport(project, id)
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))
   return report
+}
+
+/** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
+export function verifyRunIntegrity(project: Project, id: string): VerifyResult {
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
+  const pick = (r: Report): Record<string, unknown> => ({
+    candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })),
+  })
+  return verifyRun(paths, () => {
+    const fresh = pick(deriveReport(project, id))
+    const stored = existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null
+    return { fresh, stored }
+  })
+}
+
+export interface RegradeResult {
+  at: string
+  regradable: number
+  skipped: number
+  changed: Array<{ scenario: string; arm: string; rep: number; before: boolean | null; after: boolean; detail: string }>
+  verifiers: Record<string, string>
+}
+
+/**
+ * Re-run each scenario's verifier on the kept workspace of every trial (runs
+ * made with --keep-workdirs), without re-running any agent, then rebuild the
+ * report and re-seal the evidence with the regrade recorded in the manifest.
+ */
+export async function regradeRun(project: Project, id: string, options: { log?: (line: string) => void } = {}): Promise<RegradeResult> {
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
+  const plan = readPlan(paths)
+  const byName = new Map(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.map(s => [s.name, s]))
+  const at = new Date().toISOString()
+  const result: RegradeResult = { at, regradable: 0, skipped: 0, changed: [], verifiers: {} }
+  for (const ledger of readLedgers(paths)) {
+    const scenario = byName.get(ledger.scenario)
+    if (!scenario || !ledger.workdir || !existsSync(ledger.workdir)) { result.skipped += 1; continue }
+    result.regradable += 1
+    const vf = join(scenario.dir, 'verify.py')
+    if (existsSync(vf)) result.verifiers[scenario.name] = fileSha(vf)
+    const before = ledger.verdict
+    const after = await scenarioVerify(scenario, ledger.workdir)
+    if ((before?.ok ?? null) !== after.ok) result.changed.push({ scenario: ledger.scenario, arm: ledger.arm, rep: ledger.rep, before: before?.ok ?? null, after: after.ok, detail: after.detail })
+    options.log?.(`${after.ok ? '✓' : '✗'} ${ledger.scenario}/${ledger.arm}#${ledger.rep}${(before?.ok ?? null) !== after.ok ? ` (was ${before?.ok ?? 'none'})` : ''}`)
+    writeLedger(paths, { ...ledger, verdict: after, regrade: { at, previous: before }, ...(result.verifiers[scenario.name] !== undefined ? { verifierSha: result.verifiers[scenario.name]! } : {}) })
+  }
+  writeJsonAtomic(join(paths.dir, `regrade-${at.replace(/[:.]/g, '-')}.json`), result)
+  rebuildReport(project, id)
+  sealRun(paths, plan.id, { at, changed: result.changed.length, regradable: result.regradable, verifiers: result.verifiers })
+  return result
 }

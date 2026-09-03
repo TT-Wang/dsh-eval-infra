@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, resolveArmPath, runJudge } from './core/orchestrate.js'
+import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
 import { ensureEvalProfile, loadProject, saveProjectConfig, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
@@ -242,6 +242,32 @@ async function cmdReport(project: Project, args: Args): Promise<number> {
   return report.candidates.some(c => c.gate === 'regressions') ? 1 : 0
 }
 
+function cmdVerify(project: Project, args: Args): number {
+  const id = args.positional[0]
+  if (id === undefined) { err('usage: dsh-eval verify <runId> [--json]'); return 3 }
+  const v = verifyRunIntegrity(project, id)
+  if (args.flags['json'] === true) { out(JSON.stringify(v, null, 2)); return v.ok ? 0 : 1 }
+  if (v.sealedAt === null) { out(`run ${id}: ${v.reportDiff[0] ?? 'not sealed'}`); return 1 }
+  out(`run ${id}: sealed ${v.sealedAt} · evidence ${v.evidenceSha!.slice(0, 16)}…`)
+  if (v.missing.length) out(`  missing (${v.missing.length}): ${v.missing.slice(0, 8).join(', ')}${v.missing.length > 8 ? ', …' : ''}`)
+  if (v.changed.length) out(`  CHANGED since seal (${v.changed.length}): ${v.changed.slice(0, 8).join(', ')}${v.changed.length > 8 ? ', …' : ''}`)
+  if (v.added.length) out(`  added after seal (${v.added.length}): ${v.added.slice(0, 8).join(', ')}${v.added.length > 8 ? ', …' : ''}`)
+  if (v.reportReproduces === null) out('  report: none stored')
+  else if (v.reportReproduces) out('  report: reproduces from the sealed ledgers')
+  else { out('  report: DOES NOT reproduce from the ledgers'); for (const d of v.reportDiff) out(`    ${d}`) }
+  out(v.ok ? '  OK' : '  FAILED')
+  return v.ok ? 0 : 1
+}
+
+async function cmdRegrade(project: Project, args: Args): Promise<number> {
+  const id = args.positional[0]
+  if (id === undefined) { err('usage: dsh-eval regrade <runId>   (needs a run made with --keep-workdirs)'); return 3 }
+  const r = await regradeRun(project, id, { log: out })
+  out(`regraded ${r.regradable} trial(s), ${r.skipped} skipped (workspace not kept), ${r.changed.length} verdict(s) changed; report rebuilt and evidence re-sealed`)
+  for (const c of r.changed) out(`  ${c.scenario}/${c.arm}#${c.rep}: ${c.before} → ${c.after} · ${c.detail}`)
+  return 0
+}
+
 function cmdRuns(project: Project): number {
   const runs = listRuns(project.runsRoot)
   if (runs.length === 0) { out(`no runs under ${project.runsRoot}/runs`); return 0 }
@@ -346,6 +372,8 @@ function help(): number {
   report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
   judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N] [--allow-same-family]
   run … [--no-meter] [--fault-rate P] [--fault-seed N]   usage meter (on by default) and provider fault injection
+  verify <runId> [--json]      check the sealed evidence hashes and that the report re-derives from them
+  regrade <runId>              re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal
                                       blinded judge over scenarios that declare meta.judge: several --model form a panel; absolute mode grades
                                       each trial and rectifies pass rates with human annotations (PPI++)
   runs                                list runs
@@ -368,6 +396,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'diff': return cmdDiff(project, args)
     case 'run': return cmdRun(project, args)
     case 'report': return cmdReport(project, args)
+    case 'verify': return cmdVerify(project, args)
+    case 'regrade': return cmdRegrade(project, args)
     case 'judge': return cmdJudge(project, args)
     case 'runs': return cmdRuns(project)
     case 'ui': return cmdUi(project, args)

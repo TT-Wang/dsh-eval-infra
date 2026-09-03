@@ -5,7 +5,8 @@
  * scripted driver. Scheduling order is fixed — scenario → repeat → arm — so
  * baseline and candidate always run back to back under the same conditions.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import yaml from 'js-yaml'
@@ -406,6 +407,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   } else {
     ledger.usageProvenance = { source: 'self-reported' }
   }
+  const verifierPath = join(scenario.dir, 'verify.py')
+  if (existsSync(verifierPath)) ledger.verifierSha = createHash('sha256').update(readFileSync(verifierPath)).digest('hex')
   mkdirSync(join(deps.paths.dir, 'ledgers', scenario.name, arm.name), { recursive: true })
   writeFileSync(join(deps.paths.dir, eventsFile), events.map(e => JSON.stringify(e)).join('\n') + (events.length ? '\n' : ''))
   writeFileSync(join(deps.paths.dir, traceFile), trace.map(t => JSON.stringify(t)).join('\n') + (trace.length ? '\n' : ''))

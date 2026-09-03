@@ -123,3 +123,46 @@ describe('judge family rule', () => {
     await expect(runJudge(p, launched.id, { models: ['deepseek-v4-pro'], chats: { 'deepseek-v4-pro': async () => ({ text: '{}', usage: { hit: 0, miss: 0, output: 0 } }) } })).rejects.toMatchObject({ code: 'usage' })
   })
 })
+
+describe('sealed evidence, verify and regrade', () => {
+  it('seals a finished run, detects tampering, and regrades kept workspaces without re-running agents', async () => {
+    const { verifyRunIntegrity, regradeRun } = await import('../src/core/orchestrate.js')
+    const { readManifest } = await import('../src/core/manifest.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { readFileSync, writeFileSync, existsSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const p = project()
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1, keepWorkdirs: true }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await launched.done
+    const paths = runPaths(p.runsRoot, launched.id)
+    const manifest = readManifest(paths)
+    expect(manifest).not.toBeNull()
+    expect(manifest!.count).toBeGreaterThan(4)
+    expect(Object.keys(manifest!.files).some(f => f.startsWith('ledgers/'))).toBe(true)
+    const clean = verifyRunIntegrity(p, launched.id)
+    expect(clean.ok).toBe(true)
+    expect(clean.reportReproduces).toBe(true)
+    expect(clean.changed).toEqual([])
+
+    // regrade: every trial kept its workspace, the verifier gives the same verdicts, the manifest records the regrade
+    const rg = await regradeRun(p, launched.id)
+    expect(rg.regradable).toBe(2)
+    expect(rg.skipped).toBe(0)
+    expect(rg.changed).toEqual([])
+    expect(Object.keys(rg.verifiers)).toEqual(['t1_write_answer'])
+    expect(readManifest(paths)!.regrades).toHaveLength(1)
+    expect(verifyRunIntegrity(p, launched.id).ok).toBe(true)
+
+    // tamper with a ledger's cost: the seal catches it and the stored report no longer follows from the evidence
+    const ledgerFile = Object.keys(readManifest(paths)!.files).find(f => f.startsWith('ledgers/') && f.endsWith('.json'))!
+    const abs = join(paths.dir, ledgerFile)
+    const ledger = JSON.parse(readFileSync(abs, 'utf8')) as { totals: { usd: number } }
+    ledger.totals.usd *= 10
+    writeFileSync(abs, JSON.stringify(ledger))
+    const tampered = verifyRunIntegrity(p, launched.id)
+    expect(tampered.ok).toBe(false)
+    expect(tampered.changed).toEqual([ledgerFile])
+    expect(tampered.reportReproduces).toBe(false)
+    expect(existsSync(join(paths.dir, 'manifest.json'))).toBe(true)
+  })
+})
