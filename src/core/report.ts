@@ -8,7 +8,7 @@
  *   3. Aggregates carry a bootstrap interval over scenarios; an interval that
  *      covers zero reads "no difference".
  */
-import { bootstrapHierarchical, bootstrapMean, mean, median, signTest, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
+import { bootstrapMean, icc, mcnemar, mean, median, resolution, sequenceSimilarity, signTest, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
 import type { RunLedger, RunPlan } from './types.js'
 
 export interface ArmScenarioStats {
@@ -46,6 +46,8 @@ export interface PairedScenario {
   flaky: boolean
   /** Distinct failure reasons per arm (verdict detail, truncated), most frequent first. */
   failures: { baseline: Array<{ reason: string; n: number }>; candidate: Array<{ reason: string; n: number }> }
+  /** Tool-sequence similarity (normalized Levenshtein over tool names): within each arm across repeats, and between the arms' paired repeats. 1 = identical. */
+  tss: { baseline: number | null; candidate: number | null; between: number | null }
   /** Repeat pairs where both arms passed (cost comparison base). */
   costPairs: number
   /** Per-pair (candidate − baseline) Δ% values behind costDiffPct, for the hierarchical bootstrap. */
@@ -124,6 +126,12 @@ export interface CandidateReport {
   noiseFloor: NoiseFloor | null
   /** Significance level used for the intervals after Bonferroni adjustment across candidates (0.05 / candidates). */
   alpha: number
+  /** Intraclass correlation of repeat cost differences within scenarios and the design effect 1 + (k−1)ρ. */
+  icc: { rho: number; designEffect: number; k: number }
+  /** Paired pass/fail: discordant counts, McNemar exact and mid-p, posterior P(candidate wins a discordant pair), posterior mass inside ±0.1 of 1/2. */
+  paired: { b: number; c: number; exactP: number; midP: number; pWin: number; inRope: number }
+  /** Resolution of the cost comparison: N* scenarios needed for 80% power at the observed effect, and q = n / N*. */
+  resolution: { nStar: number | null; q: number | null }
   /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
   holdoutGap: { dev: number; holdout: number; devScenarios: number; holdoutScenarios: number } | null
   verdict: string
@@ -260,6 +268,17 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
   const rowsC = ledgers.filter(l => l.arm === c.arm && l.scenario === scenario)
   const flakyB = b.n >= 2 && b.passes > 0 && b.passes < b.n
   const flakyC = c.n >= 2 && c.passes > 0 && c.passes < c.n
+  const seqOf = (l: RunLedger): string[] => l.steps.flatMap(st => st.calls.map(cl => cl.name))
+  const within = (rows: RunLedger[]): number | null => {
+    const seqs = rows.map(seqOf)
+    if (seqs.length < 2) return null
+    let total = 0
+    let pairsN = 0
+    for (let i = 0; i < seqs.length; i += 1) for (let j = i + 1; j < seqs.length; j += 1) { total += sequenceSimilarity(seqs[i]!, seqs[j]!); pairsN += 1 }
+    return pairsN ? total / pairsN : null
+  }
+  const betweenVals: number[] = []
+  for (const rb of rowsB) { const rc = rowsC.find(x => x.rep === rb.rep); if (rc) betweenVals.push(sequenceSimilarity(seqOf(rb), seqOf(rc))) }
   const diffs: number[] = []
   const pct: number[] = []
   const peak: number[] = []
@@ -284,6 +303,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     class: cls,
     flaky: flakyB || flakyC,
     failures: { baseline: failureReasons(rowsB), candidate: failureReasons(rowsC) },
+    tss: { baseline: within(rowsB), candidate: within(rowsC), between: betweenVals.length ? mean(betweenVals) : null },
     behaviour: { baseline: behaviourMean(rowsB), candidate: behaviourMean(rowsC) },
     costPairs: diffs.length,
     costDiffPctPairs: pct,
@@ -324,7 +344,11 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const bothFail = pairs.filter(p => p.class === 'both-fail').map(p => p.scenario)
     const incomplete = pairs.filter(p => p.class === 'incomplete').map(p => p.scenario)
     const costCI = bootstrapMean(comparable.map(p => p.costDiffUsd!), 2000, 42, alpha)
-    const costPctCI = bootstrapHierarchical(comparable.map(p => p.costDiffPctPairs), 2000, 42, alpha)
+    // Cluster bootstrap: scenarios are the resampling unit and carry all their repeat pairs (per-scenario means); Indeed 2026 measured nominal coverage for this design.
+    const costPctCI = bootstrapMean(comparable.map(p => p.costDiffPct!), 2000, 42, alpha)
+    const iccStat = icc(comparable.map(p => p.costDiffPctPairs))
+    const pairedStat = mcnemar(wins, losses)
+    const resolutionStat = resolution(comparable.map(p => p.costDiffPct!))
     const costPeakCI = bootstrapMean(comparable.map(p => p.costDiffPeakUsd ?? 0), 2000, 42, alpha)
     const costOffpeakCI = bootstrapMean(comparable.map(p => p.costDiffOffpeakUsd ?? 0), 2000, 42, alpha)
     const gate: CandidateReport['gate'] = regressions.length > 0 ? 'regressions' : incomplete.length === pairs.length ? 'incomplete' : 'pass'
@@ -397,6 +421,9 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       mdePct,
       noiseFloor,
       alpha,
+      icc: iccStat,
+      paired: pairedStat,
+      resolution: resolutionStat,
       holdoutGap,
       verdict,
     }
@@ -467,7 +494,9 @@ export function renderMarkdown(report: Report): string {
     lines.push('')
     lines.push(`Grade: **${c.grade}** · Δ pass ${fmtPct(c.passDiffCI.mean)} pp (${((1 - c.alpha) * 100).toFixed(c.alpha < 0.05 ? 1 : 0)}% CI ${fmtPct(c.passDiffCI.lo)} to ${fmtPct(c.passDiffCI.hi)})${c.flaky.length ? ` · flaky: ${c.flaky.join(', ')}` : ''}${c.mdePct !== null ? ` · MDE ≈ ±${c.mdePct.toFixed(0)}%` : ''}`)
     lines.push('')
-    lines.push(`Pass: baseline ${c.passBaseline}/${c.runsBaseline}, candidate ${c.passCandidate}/${c.runsCandidate} · pass^k ${(c.summary.baseline.passAllK * 100).toFixed(0)}% → ${(c.summary.candidate.passAllK * 100).toFixed(0)}% · discordant pairs: ${c.wins} won / ${c.losses} lost (sign test p=${c.signTestP.toFixed(2)})`)
+    lines.push(`Pass: baseline ${c.passBaseline}/${c.runsBaseline}, candidate ${c.passCandidate}/${c.runsCandidate} · pass^k ${(c.summary.baseline.passAllK * 100).toFixed(0)}% → ${(c.summary.candidate.passAllK * 100).toFixed(0)}% · discordant pairs: ${c.wins} won / ${c.losses} lost (McNemar mid-p ${c.paired.midP.toFixed(2)}, P(candidate wins a discordant pair) ${(c.paired.pWin * 100).toFixed(0)}%, ${(c.paired.inRope * 100).toFixed(0)}% of the posterior within ±0.1 of even)`)
+    lines.push('')
+    lines.push(`Design: ${c.scenarios.filter(p => p.costDiffUsd !== null).length} comparable scenarios × k≈${c.icc.k.toFixed(1)} repeat pairs · ICC of repeat cost differences ρ̂=${c.icc.rho.toFixed(2)} (design effect ${c.icc.designEffect.toFixed(2)})${c.resolution.q !== null ? ` · resolution q = n/N* = ${c.resolution.q.toFixed(2)} (N* ≈ ${c.resolution.nStar} scenarios to resolve an effect of the observed size at 80% power)` : ''}`)
     lines.push('')
     lines.push(`Per solved task: baseline ${c.summary.baseline.tokensPerSolved === null ? '—' : Math.round(c.summary.baseline.tokensPerSolved / 1000) + 'K tokens'} / ${fmtUsd(c.summary.baseline.usdPerSolved)}, candidate ${c.summary.candidate.tokensPerSolved === null ? '—' : Math.round(c.summary.candidate.tokensPerSolved / 1000) + 'K tokens'} / ${fmtUsd(c.summary.candidate.usdPerSolved)} · cache-hit share ${(c.summary.baseline.cacheHitShare * 100).toFixed(0)}% → ${(c.summary.candidate.cacheHitShare * 100).toFixed(0)}%`)
     lines.push('')
@@ -475,7 +504,7 @@ export function renderMarkdown(report: Report): string {
     lines.push('|---|---|---|---|---|---|---|---|---|---|')
     const order: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4 }
     for (const p of [...c.scenarios].sort((a, b) => order[a.class] - order[b.class] || a.scenario.localeCompare(b.scenario))) {
-      const notes = [p.flaky ? 'flaky' : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
+      const notes = [p.flaky ? 'flaky' : '', p.tss.between !== null ? `tool-seq similarity ${(p.tss.between * 100).toFixed(0)}%` : '', ...p.failures.candidate.slice(0, 1).map(f => `fails: ${f.reason.slice(0, 60)}`)].filter(Boolean).join('; ')
       lines.push(`| ${p.scenario} | ${p.baseline.passes}/${p.baseline.n} | ${p.candidate.passes}/${p.candidate.n} | ${classLabel(p.class)} | ${p.costPairs} | ${fmtUsd(p.costDiffUsd)} | ${fmtPct(p.costDiffPct)} | ${p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)} | ${p.baselineSpreadPct === null ? '—' : p.baselineSpreadPct.toFixed(0) + '%'} | ${notes} |`)
     }
     lines.push('')

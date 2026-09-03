@@ -138,3 +138,87 @@ export function tCritical(df: number): number {
   if (df < 30) return table[25]!
   return 1.96
 }
+
+/**
+ * Intraclass correlation of repeat values within scenarios (one-way ANOVA
+ * estimator) and the design effect 1 + (k − 1)ρ that inflates the variance of
+ * a mean over n·k correlated trials relative to n·k independent ones.
+ */
+export function icc(groups: number[][]): { rho: number; designEffect: number; k: number } {
+  const valid = groups.filter(g => g.length > 0)
+  const n = valid.length
+  const k = n ? valid.reduce((a, g) => a + g.length, 0) / n : 0
+  if (n < 2 || k <= 1) return { rho: 0, designEffect: 1, k }
+  const grand = mean(valid.flat())
+  const msb = valid.reduce((a, g) => a + g.length * (mean(g) - grand) ** 2, 0) / (n - 1)
+  const dfw = valid.reduce((a, g) => a + g.length, 0) - n
+  const msw = dfw > 0 ? valid.reduce((a, g) => a + g.reduce((x, v) => x + (v - mean(g)) ** 2, 0), 0) / dfw : 0
+  const rho = msb + (k - 1) * msw > 0 ? Math.max(0, Math.min(1, (msb - msw) / (msb + (k - 1) * msw))) : 0
+  return { rho, designEffect: 1 + (k - 1) * rho, k }
+}
+
+/**
+ * McNemar on discordant pairs: b = candidate passed where baseline failed,
+ * c = baseline passed where candidate failed. Returns the exact two-sided p,
+ * the mid-p (recommended by Fagerland et al. 2013), the posterior probability
+ * that the candidate wins a discordant pair (Beta(b+1, c+1)), and the share of
+ * that posterior inside a region of practical equivalence around 1/2.
+ */
+export function mcnemar(b: number, c: number, ropeHalfWidth = 0.1): { b: number; c: number; exactP: number; midP: number; pWin: number; inRope: number } {
+  const n = b + c
+  if (n === 0) return { b, c, exactP: 1, midP: 1, pWin: 0.5, inRope: 1 }
+  const pmf = (i: number): number => binom(n, i) / 2 ** n
+  const kmin = Math.min(b, c)
+  let tail = 0
+  for (let i = 0; i <= kmin; i += 1) tail += pmf(i)
+  const exactP = Math.min(1, 2 * tail)
+  const midP = Math.max(0, Math.min(1, exactP - pmf(kmin)))
+  // Beta(b+1, c+1) posterior of π = P(candidate wins a discordant pair); numeric integration on a fine grid.
+  const a = b + 1
+  const bb = c + 1
+  const steps = 2000
+  let mass = 0
+  let above = 0
+  let rope = 0
+  for (let i = 0; i < steps; i += 1) {
+    const x = (i + 0.5) / steps
+    const w = Math.exp((a - 1) * Math.log(x) + (bb - 1) * Math.log(1 - x))
+    mass += w
+    if (x > 0.5) above += w
+    if (Math.abs(x - 0.5) < ropeHalfWidth) rope += w
+  }
+  return { b, c, exactP, midP, pWin: above / mass, inRope: rope / mass }
+}
+
+/**
+ * Resolution of a paired comparison: N* is the number of scenarios at which a
+ * paired t-test would reach 80% power at α = 0.05 for the observed mean
+ * difference and spread; q = n / N*. q ≥ 1 means the design could resolve
+ * an effect of the observed size; q ≪ 1 means "inconclusive" is about the
+ * design, not the effect.
+ */
+export function resolution(values: number[]): { nStar: number | null; q: number | null } {
+  const n = values.length
+  if (n < 2) return { nStar: null, q: null }
+  const d = Math.abs(mean(values))
+  const s = stddev(values)
+  if (d === 0 || s === 0) return { nStar: null, q: null }
+  const nStar = Math.ceil(((1.96 + 0.84) * s / d) ** 2)
+  return { nStar, q: n / nStar }
+}
+
+/** Normalized Levenshtein similarity of two sequences (1 = identical). */
+export function sequenceSimilarity(a: string[], b: string[]): number {
+  const n = a.length
+  const m = b.length
+  if (n === 0 && m === 0) return 1
+  const prev = new Array<number>(m + 1)
+  const cur = new Array<number>(m + 1)
+  for (let j = 0; j <= m; j += 1) prev[j] = j
+  for (let i = 1; i <= n; i += 1) {
+    cur[0] = i
+    for (let j = 1; j <= m; j += 1) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1))
+    for (let j = 0; j <= m; j += 1) prev[j] = cur[j]!
+  }
+  return 1 - prev[m]! / Math.max(n, m)
+}

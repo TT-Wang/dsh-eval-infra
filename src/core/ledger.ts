@@ -83,6 +83,8 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
   let peakPrompt = 0
   let usdPeak = 0
   let usdOffpeak = 0
+  const seenSteps = new Set<string>()
+  const invariants: string[] = []
 
   for (const e of input.events) {
     eventCounts[e.type] = (eventCounts[e.type] ?? 0) + 1
@@ -109,6 +111,9 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
     } else if (e.type === 'assistant/message') {
       const turn = Number(d['turn'] ?? 0)
       const step = Number(d['step'] ?? 0)
+      const key = `${turn}/${step}`
+      if (seenSteps.has(key)) invariants.push(`duplicate assistant/message for turn ${turn} step ${step}: usage would be double counted`)
+      seenSteps.add(key)
       const time = e.time ?? input.startedAt.getTime()
       const message = (d['message'] ?? {}) as { content?: Block[] }
       const content = message.content ?? []
@@ -182,5 +187,6 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
     sessions: input.sessions ?? 1,
   }
   if (input.error !== undefined) ledger.error = input.error
+  if (invariants.length > 0) ledger.invariantViolations = invariants
   return { ledger, trace }
 }

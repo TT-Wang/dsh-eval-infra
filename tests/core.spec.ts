@@ -137,6 +137,30 @@ describe('report claims', () => {
   })
 })
 
+describe('paired statistics', () => {
+  it('icc, mcnemar mid-p, resolution and sequence similarity behave', async () => {
+    const { icc, mcnemar, resolution, sequenceSimilarity } = await import('../src/core/stats.js')
+    expect(icc([[1, 1.1], [5, 5.2], [9, 9.1]]).rho).toBeGreaterThan(0.9)
+    expect(icc([[1, 9], [5, 1], [9, 5]]).rho).toBe(0)
+    expect(icc([[1], [2]]).designEffect).toBe(1)
+    const m = mcnemar(8, 1)
+    expect(m.midP).toBeLessThan(0.05)
+    expect(m.pWin).toBeGreaterThan(0.95)
+    expect(mcnemar(0, 0)).toMatchObject({ exactP: 1, midP: 1, pWin: 0.5 })
+    const even = mcnemar(3, 3)
+    expect(even.pWin).toBeCloseTo(0.5, 2)
+    expect(even.inRope).toBeGreaterThan(0.3)
+    const r = resolution([-10, -12, -8, -11])
+    expect(r.nStar).toBeLessThanOrEqual(4)
+    expect(r.q).toBeGreaterThanOrEqual(1)
+    const weak = resolution([-1, 12, -8, 3])
+    expect(weak.q).toBeLessThan(1)
+    expect(sequenceSimilarity(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(1)
+    expect(sequenceSimilarity(['a', 'b', 'c'], ['a', 'x', 'c'])).toBeCloseTo(2 / 3, 6)
+    expect(sequenceSimilarity([], [])).toBe(1)
+  })
+})
+
 describe('hierarchical bootstrap and holdout', () => {
   it('hierarchical bootstrap widens the interval when repeats disagree and matches the scenario bootstrap with one value per scenario', async () => {
     const { bootstrapHierarchical, bootstrapMean } = await import('../src/core/stats.js')

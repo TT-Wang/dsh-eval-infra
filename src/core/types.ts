@@ -182,6 +182,8 @@ export interface RunLedger {
   /** Present when a human override replaced the machine verdict (the original is kept here). */
   machineVerdict?: Verdict | null
   overridden?: boolean
+  /** Accounting invariants the event stream violated (e.g. a usage sample seen twice); empty means the ledger is clean. */
+  invariantViolations?: string[]
   sessionId: string | null
   /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
   sessions: number
