@@ -67,7 +67,7 @@ bench/scenarios/<name>/
 
 1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no cost summary is offered.
 2. **Cost pairs.** Only repeat-pairs where both arms passed count. Δ$ and Δ% are per-scenario means over those pairs.
-3. **Interval.** The per-scenario Δ% is bootstrapped over scenarios (B=2000, seeded). *Cheaper* / *more expensive* need the interval to exclude zero; *equivalent* needs it inside ±10%; anything else is *inconclusive*, which is the honest default with few scenarios.
+3. **Interval.** The per-scenario Δ% is bootstrapped over scenarios (B=2000, seeded). *Cheaper* / *more expensive* need at least three comparable scenarios and an interval that excludes zero; *equivalent* needs three scenarios and an interval inside ±10%; anything else is *inconclusive*, which is the honest default with few scenarios.
 4. **Bands.** Runs straddling the DeepSeek peak/off-peak boundary get a note; use the fixed-band columns.
 5. **Repeats.** Three is the floor; five is recommended for binary outcomes; run `--aa` first to see what "no change" looks like on your setup.
 
