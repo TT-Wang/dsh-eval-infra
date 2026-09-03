@@ -2,7 +2,7 @@
 
 Paired A/B evaluation for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) components — plugins, system prompts, loop and context designs, tool sets, memory backends, safety guards. Two configurations of the agent run the same scenarios back to back through the real dsh SDK runtime; the tool checks the verifiers before the first trial, refuses comparisons that change more than one thing, gates on regressions before it talks about cost, prices every call the way DeepSeek bills it, and rebuilds every number from the ledgers on disk.
 
-English | [中文](README.zh.md) · [design](docs/design.md) · [landscape survey](docs/landscape.md) · [methodology](docs/methodology.md)
+English | [中文](README.zh.md) · [design](docs/design.md) · [results](docs/results.md) · [landscape survey](docs/landscape.md) · [methodology](docs/methodology.md)
 
 ## What you get
 

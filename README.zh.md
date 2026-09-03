@@ -2,7 +2,7 @@
 
 给 [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) 组件做**配对 A/B 评测**的基础设施:插件、系统提示、loop 与上下文设计、工具集、记忆后端、安全防护。两套配置在真实的 dsh SDK 运行时里背靠背跑同一批场景;工具在第一次试验之前先验卷子,拒绝一次改两处的对照,先看正确性再谈成本,按 DeepSeek 的真实计费方式(缓存命中/未命中、峰谷)给每次调用定价,所有数字都能从磁盘上的账本重算。
 
-[English](README.md) · [设计文档](docs/design.md) · [竞品调研](docs/landscape.md) · [方法论](docs/methodology.md)
+[English](README.md) · [设计文档](docs/design.md) · [结果记录](docs/results.md) · [竞品调研](docs/landscape.md) · [方法论](docs/methodology.md)
 
 ## 能做什么
 

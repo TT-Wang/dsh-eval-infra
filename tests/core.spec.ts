@@ -86,3 +86,26 @@ describe('dotenv', () => {
     expect(parseDotenv('# c\nexport A="x y"\nB=\'z\'\nC=plain\n')).toEqual({ A: 'x y', B: 'z', C: 'plain' })
   })
 })
+
+describe('ground-truth stash', () => {
+  it('moves <workdir>/.truth out during the run and restores it for verify', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { stashTruth } = await import('../src/core/runner.js')
+    const work = mkdtempSync(join(tmpdir(), 'dsh-eval-truth-'))
+    const stashRoot = mkdtempSync(join(tmpdir(), 'dsh-eval-stash-'))
+    try {
+      expect(stashTruth(work, stashRoot)).toBeUndefined()
+      mkdirSync(join(work, '.truth'))
+      writeFileSync(join(work, '.truth', 'answer.json'), '{"x":1}')
+      const restore = stashTruth(work, stashRoot)!
+      expect(existsSync(join(work, '.truth'))).toBe(false)
+      restore()
+      expect(existsSync(join(work, '.truth', 'answer.json'))).toBe(true)
+    } finally {
+      rmSync(work, { recursive: true, force: true })
+      rmSync(stashRoot, { recursive: true, force: true })
+    }
+  })
+})
