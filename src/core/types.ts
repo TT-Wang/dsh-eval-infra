@@ -25,6 +25,12 @@ export interface ScenarioMeta {
   /** Who wrote it — surfaced in reports so author-provided scenarios are visible. */
   author?: string
   /**
+   * Sealed holdout: excluded from runs unless `--include-holdout` is given, and
+   * reported separately so tuning a change against the dev pool shows up as a
+   * dev–holdout gap. Authors should not run these while iterating.
+   */
+  holdout?: boolean
+  /**
    * 1-based turn numbers before which the runner ends the session and starts a
    * fresh runtime process on the same workspace and eval home. This is how a
    * memory plugin is tested: what survives a restart is what it stored.

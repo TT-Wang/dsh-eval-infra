@@ -37,6 +37,8 @@ export interface RunRequest {
   aa?: boolean
   /** Budget cap in USD; the run stops scheduling trials once exceeded. */
   maxUsd?: number
+  /** Include sealed holdout scenarios (meta.holdout) in the run. */
+  includeHoldout?: boolean
 }
 
 export interface LaunchHooks {
@@ -76,11 +78,12 @@ export function resolveArmPath(project: Project, ref: string): string {
   throw new LaunchError(`arm not found: ${ref} (looked for a file, then ${project.armsDir}/${ref}.yml)`, 'arms')
 }
 
-export function collectScenarios(project: Project, request: Pick<RunRequest, 'scenarios' | 'categories' | 'tags'>): { scenarios: Scenario[]; invalid: Array<{ dir: string; error: string }> } {
-  const filter: { names?: string[]; categories?: string[]; tags?: string[] } = {}
+export function collectScenarios(project: Project, request: Pick<RunRequest, 'scenarios' | 'categories' | 'tags' | 'includeHoldout'>): { scenarios: Scenario[]; invalid: Array<{ dir: string; error: string }> } {
+  const filter: { names?: string[]; categories?: string[]; tags?: string[]; includeHoldout?: boolean } = {}
   if (request.scenarios && request.scenarios.length) filter.names = request.scenarios
   if (request.categories && request.categories.length) filter.categories = request.categories
   if (request.tags && request.tags.length) filter.tags = request.tags
+  if (request.includeHoldout) filter.includeHoldout = true
   const roots = [project.scenarioRoot, ...(project.config.pools ?? []).map(p => resolve(project.root, p))]
   const seen = new Set<string>()
   const scenarios: Scenario[] = []
@@ -148,7 +151,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
 
   const { scenarios, invalid } = request.resume !== undefined
-    ? collectScenarios(project, { scenarios: plan.scenarios })
+    ? collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true })
     : collectScenarios(project, request)
   for (const i of invalid) log(`!! skipping invalid scenario ${i.dir}: ${i.error}`)
   if (scenarios.length === 0) throw new LaunchError(`no scenarios matched under ${project.scenarioRoot}`, 'usage')
@@ -206,7 +209,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
 
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id) })
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)) })
     if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
     writeJsonAtomic(paths.report, report)
     writeFileSync(paths.reportMd, renderMarkdown(report))
@@ -237,7 +240,8 @@ export function rebuildReport(project: Project, id: string): Report {
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id) })
+  const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), holdout })
   writeJsonAtomic(paths.report, report)
   writeFileSync(paths.reportMd, renderMarkdown(report))
   return report

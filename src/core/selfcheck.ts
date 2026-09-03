@@ -64,17 +64,22 @@ export async function selfcheckScenario(scenario: Scenario, workRoot = tmpdir(),
       result.detail = solved.ok ? '' : solved.detail.slice(0, 300)
       if (options.strict && solved.ok) {
         const after = snapshot(workdir)
-        const produced = [...after.keys()].filter(f => before.get(f) !== after.get(f)).sort().slice(0, options.maxMutations ?? 40)
+        const ignore = new Set(scenario.meta.strict_ignore ?? [])
+        const produced = [...after.keys()].filter(f => before.get(f) !== after.get(f) && !ignore.has(f)).sort().slice(0, options.maxMutations ?? 40)
         const weak: string[] = []
         for (const rel of produced) {
           const path = join(workdir, rel)
           const original = readFileSync(path)
           unlinkSync(path)
           const deleted = await scenarioVerify(scenario, workdir)
-          writeFileSync(path, '')
-          const blanked = await scenarioVerify(scenario, workdir)
+          // Blanking an intentionally empty file is a no-op, so only the deletion mutation applies there.
+          let blankedOk = false
+          if (original.length > 0) {
+            writeFileSync(path, '')
+            blankedOk = (await scenarioVerify(scenario, workdir)).ok
+          }
           writeFileSync(path, original)
-          if (deleted.ok || blanked.ok) weak.push(`${rel}${deleted.ok ? ' (deletion unnoticed)' : ''}${blanked.ok ? ' (blanking unnoticed)' : ''}`)
+          if (deleted.ok || blankedOk) weak.push(`${rel}${deleted.ok ? ' (deletion unnoticed)' : ''}${blankedOk ? ' (blanking unnoticed)' : ''}`)
         }
         result.mutated = produced.length
         result.nonDiscriminating = weak

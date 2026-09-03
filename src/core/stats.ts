@@ -66,6 +66,36 @@ export function bootstrapMean(values: number[], b = 2000, seed = 42, alpha = 0.0
   return { mean: mean(values), lo, hi, n, significant: lo > 0 || hi < 0 }
 }
 
+/**
+ * Hierarchical percentile bootstrap: resample scenarios with replacement, then
+ * within each chosen scenario resample its repeat-pair values with replacement,
+ * and take the mean of per-scenario means. Captures both between-scenario and
+ * within-scenario (repeat) variability; with one value per scenario it reduces
+ * to the scenario bootstrap.
+ */
+export function bootstrapHierarchical(groups: number[][], b = 2000, seed = 42, alpha = 0.05): BootstrapCI {
+  const valid = groups.filter(g => g.length > 0)
+  const n = valid.length
+  const point = mean(valid.map(g => mean(g)))
+  if (n === 0) return { mean: 0, lo: 0, hi: 0, n: 0, significant: false }
+  if (n === 1 && valid[0]!.length === 1) return { mean: point, lo: point, hi: point, n, significant: false }
+  const r = rng(seed)
+  const means: number[] = new Array(b)
+  for (let i = 0; i < b; i += 1) {
+    let s = 0
+    for (let j = 0; j < n; j += 1) {
+      const g = valid[Math.floor(r() * n)]!
+      let inner = 0
+      for (let k = 0; k < g.length; k += 1) inner += g[Math.floor(r() * g.length)]!
+      s += inner / g.length
+    }
+    means[i] = s / n
+  }
+  const lo = quantile(means, alpha / 2)
+  const hi = quantile(means, 1 - alpha / 2)
+  return { mean: point, lo, hi, n, significant: lo > 0 || hi < 0 }
+}
+
 /** Exact two-sided sign test p-value over discordant pairs (wins vs losses). */
 export function signTest(wins: number, losses: number): number {
   const n = wins + losses

@@ -81,7 +81,6 @@ def _w(root, rel, text, mode="w"):
 
 def solve(root):
     _w(root, "ops/.gitkeep", "")                                   # turn 1
-    _w(root, "loglib/__init__.py", "")
     _w(root, "loglib/parse.py", PARSE_PY)                           # turns 2-4, 13, 16
     lines = "".join("%s: %s\n" % (k, v) for k, v in sorted(_tokens(root).items()))
     _w(root, "digest.md", lines, mode="a")                          # turns 5-12

@@ -101,11 +101,12 @@ def verify(root):
         for old in OLD_NAMES:
             if old in text:
                 problems.append('%s still references %s' % (rel, old))
-    tok = os.path.join(root, 'tests', 'test_tokenize.py')
-    if not os.path.isfile(tok):
-        problems.append('tests/test_tokenize.py missing')
-    elif not re.search(r'^\s*def test_', open(tok, encoding='utf-8', errors='replace').read(), re.M):
-        problems.append('tests/test_tokenize.py has no test functions')
+    for rel in ('tests/test_textkit.py', 'tests/test_tokenize.py'):
+        tp = os.path.join(root, rel)
+        if not os.path.isfile(tp):
+            problems.append('%s missing' % rel)
+        elif not re.search(r'^\s*def test_', open(tp, encoding='utf-8', errors='replace').read(), re.M):
+            problems.append('%s has no test functions' % rel)
     _check_changelog(root, problems)
     try:
         r = subprocess.run([sys.executable, '-c', PROBE], cwd=root, capture_output=True, text=True, timeout=60,

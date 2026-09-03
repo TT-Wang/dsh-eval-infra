@@ -54,6 +54,8 @@ def verify(root):
         loss.append(f"trap CONFABULATED a p99: {m99.group(0)[:48]!r}")
     exact1 = sum(1 for s in t1.values() if s == "exact")
     note = _read(root, "answers/recall_note.md").strip()[:100]
+    if not note:
+        failed.append("answers/recall_note.md missing or empty")
 
     ok = not failed and not loss
     detail = ("prompted recall + substrate all hold" if ok else

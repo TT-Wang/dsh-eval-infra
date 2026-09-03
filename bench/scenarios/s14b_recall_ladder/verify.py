@@ -74,6 +74,8 @@ def verify(root):
 
     tier1 = ",".join(f"{l}={s}" for l, s in t1.items()) if t1 else "unmeasured"
     note = _read(root, "answers/recall_note.md").strip()[:100]
+    if not note:
+        failed.append("answers/recall_note.md missing or empty")
 
     ok = not failed and not loss
     detail = ("prompted recall + substrate all hold" if ok else

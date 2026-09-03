@@ -137,6 +137,41 @@ describe('report claims', () => {
   })
 })
 
+describe('hierarchical bootstrap and holdout', () => {
+  it('hierarchical bootstrap widens the interval when repeats disagree and matches the scenario bootstrap with one value per scenario', async () => {
+    const { bootstrapHierarchical, bootstrapMean } = await import('../src/core/stats.js')
+    const single = [[-10], [-12], [-8], [-11]]
+    const a = bootstrapHierarchical(single, 1000, 7)
+    const b = bootstrapMean(single.map(g => g[0]!), 1000, 7)
+    expect(a.mean).toBeCloseTo(b.mean, 6)
+    expect(Math.abs((a.hi - a.lo) - (b.hi - b.lo))).toBeLessThan(2)
+    const noisy = [[-30, 10], [-32, 8], [-28, 12], [-31, 9]]
+    const c = bootstrapHierarchical(noisy, 1000, 7)
+    expect(c.hi - c.lo).toBeGreaterThan(a.hi - a.lo)
+    expect(c.mean).toBeCloseTo(-10.25, 2)
+  })
+  it('reads intervals at alpha/m with several candidates and reports the dev–holdout gap', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, ok: boolean, usd: number) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail: '' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }, { name: 'c' }], scenarios: ['d1', 'd2', 'h1'], repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const ledgers = [
+      mk('d1', 'a', false, 1), mk('d1', 'b', true, 1), mk('d1', 'c', true, 1),
+      mk('d2', 'a', false, 1), mk('d2', 'b', true, 1), mk('d2', 'c', true, 1),
+      mk('h1', 'a', true, 1), mk('h1', 'b', false, 1), mk('h1', 'c', true, 1),
+    ]
+    const rep = buildReport(plan, ledgers, { holdout: new Set(['h1']) })
+    expect(rep.candidates[0]!.alpha).toBeCloseTo(0.025, 6)
+    expect(rep.notes.join(' ')).toMatch(/Bonferroni/)
+    const b = rep.candidates[0]!
+    expect(b.holdoutGap).toEqual({ dev: 100, holdout: -100, devScenarios: 2, holdoutScenarios: 1 })
+    expect(rep.notes.join(' ')).toMatch(/tuned to the dev pool/)
+    expect(b.scenarios.find(p => p.scenario === 'h1')!.holdout).toBe(true)
+  })
+})
+
 describe('ground-truth stash', () => {
   it('moves <workdir>/.truth out during the run and restores it for verify', async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs')

@@ -11,5 +11,8 @@
   "oracle": "required",
   "stressor": "tool-born results (never in user prose) + one-shot source + native context pressure + graded recall ladder",
   "max_steps_per_turn": 12,
-  "use_code_index": false
+  "use_code_index": false,
+  "strict_ignore": [
+    ".bench_done"
+  ]
 }

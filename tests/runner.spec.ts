@@ -22,6 +22,19 @@ describe('scenarios', () => {
     expect(invalid).toEqual([])
     expect(listScenarios(FIXTURES, { names: ['t1*'] }).scenarios).toHaveLength(1)
   })
+  it('excludes holdout scenarios unless asked', () => {
+    const { scenarios } = listScenarios(FIXTURES)
+    const t1 = scenarios.find(s => s.name === 't1_write_answer')!
+    t1.meta.holdout = true
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-eval-holdout-')); tmp.push(dir)
+    const { mkdirSync, writeFileSync, cpSync } = require('node:fs') as typeof import('node:fs')
+    cpSync(join(FIXTURES, 't1_write_answer'), join(dir, 't1_write_answer'), { recursive: true })
+    mkdirSync(join(dir, 't1_write_answer'), { recursive: true })
+    const meta = JSON.parse(readFileSync(join(dir, 't1_write_answer', 'meta.json'), 'utf8')) as Record<string, unknown>
+    writeFileSync(join(dir, 't1_write_answer', 'meta.json'), JSON.stringify({ ...meta, holdout: true }))
+    expect(listScenarios(dir).scenarios).toHaveLength(0)
+    expect(listScenarios(dir, { includeHoldout: true }).scenarios).toHaveLength(1)
+  })
   it('strict selfcheck reports oracle outputs the verifier ignores', async () => {
     const { selfcheckScenario } = await import('../src/core/selfcheck.js')
     const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })

@@ -8,7 +8,7 @@
  *   3. Aggregates carry a bootstrap interval over scenarios; an interval that
  *      covers zero reads "no difference".
  */
-import { bootstrapMean, mean, median, signTest, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
+import { bootstrapHierarchical, bootstrapMean, mean, median, signTest, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
 import type { RunLedger, RunPlan } from './types.js'
 
 export interface ArmScenarioStats {
@@ -48,6 +48,10 @@ export interface PairedScenario {
   failures: { baseline: Array<{ reason: string; n: number }>; candidate: Array<{ reason: string; n: number }> }
   /** Repeat pairs where both arms passed (cost comparison base). */
   costPairs: number
+  /** Per-pair (candidate − baseline) Δ% values behind costDiffPct, for the hierarchical bootstrap. */
+  costDiffPctPairs: number[]
+  /** Scenario is in the sealed holdout pool (meta.holdout). */
+  holdout: boolean
   /** Mean of per-pair (candidate − baseline) USD over costPairs; null when no pair. */
   costDiffUsd: number | null
   costDiffPct: number | null
@@ -118,6 +122,10 @@ export interface CandidateReport {
   mdePct: number | null
   /** Noise floor from the most recent A/A run on the same baseline, when one exists in the archive. */
   noiseFloor: NoiseFloor | null
+  /** Significance level used for the intervals after Bonferroni adjustment across candidates (0.05 / candidates). */
+  alpha: number
+  /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
+  holdoutGap: { dev: number; holdout: number; devScenarios: number; holdoutScenarios: number } | null
   verdict: string
 }
 
@@ -138,6 +146,8 @@ export interface ReportOptions {
   minScenarios?: number
   /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
   noiseFloors?: Record<string, NoiseFloor>
+  /** Scenario names in the sealed holdout pool. */
+  holdout?: Set<string>
 }
 
 function behaviourMean(rows: RunLedger[]): BehaviourMean {
@@ -244,7 +254,7 @@ function classify(b: ArmScenarioStats, c: ArmScenarioStats, repeats: number): Pa
   return 'same'
 }
 
-function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats, repeats: number, ledgers: RunLedger[] = []): PairedScenario {
+function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats, repeats: number, ledgers: RunLedger[] = [], holdout = false): PairedScenario {
   const cls = classify(b, c, repeats)
   const rowsB = ledgers.filter(l => l.arm === b.arm && l.scenario === scenario)
   const rowsC = ledgers.filter(l => l.arm === c.arm && l.scenario === scenario)
@@ -276,6 +286,8 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     failures: { baseline: failureReasons(rowsB), candidate: failureReasons(rowsC) },
     behaviour: { baseline: behaviourMean(rowsB), candidate: behaviourMean(rowsC) },
     costPairs: diffs.length,
+    costDiffPctPairs: pct,
+    holdout,
     costDiffUsd: diffs.length ? mean(diffs) : null,
     costDiffPct: pct.length ? mean(pct) : null,
     costDiffPeakUsd: peak.length ? mean(peak) : null,
@@ -290,8 +302,11 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   const minScenarios = options.minScenarios ?? 3
   const scenarios = [...new Set([...plan.scenarios, ...ledgers.map(l => l.scenario)])]
   const notes: string[] = []
+  // Bonferroni across candidates: each candidate's intervals are read at alpha / m so the family-wise error stays at 5%.
+  const alpha = 0.05 / Math.max(1, plan.candidates.length)
+  const holdoutSet = options.holdout ?? new Set<string>()
   const candidates: CandidateReport[] = plan.candidates.map((cand) => {
-    const pairs = scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(cand.name, s, ledgers), plan.repeats, ledgers))
+    const pairs = scenarios.map(s => pairScenario(s, armScenarioStats(plan.baseline.name, s, ledgers), armScenarioStats(cand.name, s, ledgers), plan.repeats, ledgers, holdoutSet.has(s)))
     const comparable = pairs.filter(p => p.costDiffUsd !== null)
     let wins = 0
     let losses = 0
@@ -308,13 +323,16 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const improvements = pairs.filter(p => p.class === 'improvement').map(p => p.scenario)
     const bothFail = pairs.filter(p => p.class === 'both-fail').map(p => p.scenario)
     const incomplete = pairs.filter(p => p.class === 'incomplete').map(p => p.scenario)
-    const costCI = bootstrapMean(comparable.map(p => p.costDiffUsd!))
-    const costPctCI = bootstrapMean(comparable.filter(p => p.costDiffPct !== null).map(p => p.costDiffPct!))
-    const costPeakCI = bootstrapMean(comparable.map(p => p.costDiffPeakUsd ?? 0))
-    const costOffpeakCI = bootstrapMean(comparable.map(p => p.costDiffOffpeakUsd ?? 0))
+    const costCI = bootstrapMean(comparable.map(p => p.costDiffUsd!), 2000, 42, alpha)
+    const costPctCI = bootstrapHierarchical(comparable.map(p => p.costDiffPctPairs), 2000, 42, alpha)
+    const costPeakCI = bootstrapMean(comparable.map(p => p.costDiffPeakUsd ?? 0), 2000, 42, alpha)
+    const costOffpeakCI = bootstrapMean(comparable.map(p => p.costDiffOffpeakUsd ?? 0), 2000, 42, alpha)
     const gate: CandidateReport['gate'] = regressions.length > 0 ? 'regressions' : incomplete.length === pairs.length ? 'incomplete' : 'pass'
     const complete = pairs.filter(p => p.class !== 'incomplete')
-    const passDiffCI = bootstrapMean(complete.map(p => (p.candidate.passRate - p.baseline.passRate) * 100))
+    const passDiffCI = bootstrapMean(complete.map(p => (p.candidate.passRate - p.baseline.passRate) * 100), 2000, 42, alpha)
+    const dev = complete.filter(p => !p.holdout)
+    const held = complete.filter(p => p.holdout)
+    const holdoutGap = held.length > 0 ? { dev: mean(dev.map(p => (p.candidate.passRate - p.baseline.passRate) * 100)), holdout: mean(held.map(p => (p.candidate.passRate - p.baseline.passRate) * 100)), devScenarios: dev.length, holdoutScenarios: held.length } : null
     const flaky = pairs.filter(p => p.flaky).map(p => p.scenario)
     const pctDiffs = comparable.map(p => p.costDiffPct!)
     const mdePct = pctDiffs.length >= 3 ? (tCritical(pctDiffs.length - 1) + 0.84) * stddev(pctDiffs) / Math.sqrt(pctDiffs.length) : null
@@ -378,9 +396,18 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       flaky,
       mdePct,
       noiseFloor,
+      alpha,
+      holdoutGap,
       verdict,
     }
   })
+  if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline: intervals are read at α = ${alpha.toFixed(4)} (Bonferroni) so the family-wise error rate stays at 5%.`)
+  for (const c of candidates) {
+    if (c.holdoutGap !== null && c.holdoutGap.devScenarios > 0) {
+      const gap = c.holdoutGap.dev - c.holdoutGap.holdout
+      notes.push(`${c.arm}: Δpass on the ${c.holdoutGap.devScenarios} dev scenarios ${fmtPct(c.holdoutGap.dev)} pp vs ${fmtPct(c.holdoutGap.holdout)} pp on the ${c.holdoutGap.holdoutScenarios} sealed scenarios${Math.abs(gap) >= 10 ? ' — a gap this large suggests the change was tuned to the dev pool' : ''}.`)
+    }
+  }
   for (const c of candidates) {
     if (c.flaky.length > 0) notes.push(`${c.arm}: repeats disagree within an arm on ${c.flaky.join(', ')} — noisy scenarios for this setup; a regression there needs more repeats before it counts.`)
     if (c.mdePct !== null) notes.push(`${c.arm}: with ${c.scenarios.filter(p => p.costDiffUsd !== null).length} comparable scenarios this design can detect a cost effect of about ±${c.mdePct.toFixed(0)}% (95% confidence, 80% power); smaller effects will read inconclusive.`)
@@ -438,7 +465,7 @@ export function renderMarkdown(report: Report): string {
     lines.push('')
     lines.push(`**${c.verdict}**`)
     lines.push('')
-    lines.push(`Grade: **${c.grade}** · Δ pass ${fmtPct(c.passDiffCI.mean)} pp (95% CI ${fmtPct(c.passDiffCI.lo)} to ${fmtPct(c.passDiffCI.hi)})${c.flaky.length ? ` · flaky: ${c.flaky.join(', ')}` : ''}${c.mdePct !== null ? ` · MDE ≈ ±${c.mdePct.toFixed(0)}%` : ''}`)
+    lines.push(`Grade: **${c.grade}** · Δ pass ${fmtPct(c.passDiffCI.mean)} pp (${((1 - c.alpha) * 100).toFixed(c.alpha < 0.05 ? 1 : 0)}% CI ${fmtPct(c.passDiffCI.lo)} to ${fmtPct(c.passDiffCI.hi)})${c.flaky.length ? ` · flaky: ${c.flaky.join(', ')}` : ''}${c.mdePct !== null ? ` · MDE ≈ ±${c.mdePct.toFixed(0)}%` : ''}`)
     lines.push('')
     lines.push(`Pass: baseline ${c.passBaseline}/${c.runsBaseline}, candidate ${c.passCandidate}/${c.runsCandidate} · pass^k ${(c.summary.baseline.passAllK * 100).toFixed(0)}% → ${(c.summary.candidate.passAllK * 100).toFixed(0)}% · discordant pairs: ${c.wins} won / ${c.losses} lost (sign test p=${c.signTestP.toFixed(2)})`)
     lines.push('')

@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -125,14 +125,14 @@ async function cmdAdd(project: Project, args: Args): Promise<number> {
   return runDsh(['plugin', '--profile', project.config.profile, 'add', target], { DSH_HOME: project.home })
 }
 
-function scenarioFilter(args: Args): { scenarios: string[]; categories: string[]; tags: string[] } {
-  return { scenarios: args.positional, categories: list(args.flags['category']), tags: list(args.flags['tag']) }
+function scenarioFilter(args: Args): { scenarios: string[]; categories: string[]; tags: string[]; includeHoldout?: boolean } {
+  return { scenarios: args.positional, categories: list(args.flags['category']), tags: list(args.flags['tag']), ...(args.flags['include-holdout'] === true ? { includeHoldout: true } : {}) }
 }
 
 function cmdScenarios(project: Project, args: Args): number {
   const { scenarios, invalid } = collectScenarios(project, scenarioFilter(args))
   out(`root: ${project.scenarioRoot}`)
-  for (const s of scenarios) out(`  ${s.name.padEnd(28)} turns=${String(s.prompts.length).padStart(2)} ${(s.meta.category ?? '-').padEnd(10)} oracle=${s.hasOracle ? 'yes' : 'no '} ${s.meta.stressor ?? ''}`)
+  for (const s of scenarios) out(`  ${s.name.padEnd(28)} turns=${String(s.prompts.length).padStart(2)} ${(s.meta.category ?? '-').padEnd(10)} oracle=${s.hasOracle ? 'yes' : 'no '}${s.meta.holdout ? ' HOLDOUT' : ''} ${s.meta.stressor ?? ''}`)
   for (const i of invalid) out(`  !! ${i.dir}: ${i.error}`)
   out(`${scenarios.length} scenario(s)`)
   return 0
@@ -320,7 +320,7 @@ function help(): number {
   selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output and requires a fail
   diff <baseline> <candidate>...      composed-tree diff between arms
   run --baseline <arm> --arm <arm>... [globs] [--repeats N] [--concurrency N] [--label L]
-      [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N]
+      [--allow-multi] [--skip-selfcheck] [--keep-workdirs] [--turn-timeout S] [--resume <id>] [--dry-run] [--aa] [--max-usd N] [--include-holdout]
   report <runId> [--json]             rebuild the report from ledgers
   runs                                list runs
   ui [--port 4177] [--open]           local web UI

@@ -45,6 +45,8 @@ export interface ScenarioFilter {
   names?: string[]
   categories?: string[]
   tags?: string[]
+  /** Include sealed holdout scenarios (meta.holdout); default false. */
+  includeHoldout?: boolean
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -67,6 +69,7 @@ export function listScenarios(root: string, filter: ScenarioFilter = {}): { scen
       const s = loadScenario(dir)
       if (filter.categories && filter.categories.length > 0 && !filter.categories.includes(s.meta.category ?? '')) continue
       if (filter.tags && filter.tags.length > 0 && !(s.meta.tags ?? []).some(t => filter.tags!.includes(t))) continue
+      if (s.meta.holdout && !filter.includeHoldout) continue
       scenarios.push(s)
     } catch (error) {
       invalid.push({ dir, error: error instanceof Error ? error.message : String(error) })

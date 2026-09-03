@@ -233,6 +233,11 @@ def verify(workdir):
     for cat in ("text.py", "spacing.py", "tokens.py"):
         if not os.path.isfile(os.path.join(pkg, "filters", cat)):
             return (False, f"pipeline/filters/{cat} is missing")
+    seed_test = os.path.join(workdir, "tests", "test_seed.py")
+    if not os.path.isfile(seed_test):
+        return (False, "tests/test_seed.py is missing (turn 8 updates the seed tests, it does not drop them)")
+    if not open(seed_test, encoding="utf-8", errors="replace").read().strip():
+        return (False, "tests/test_seed.py is empty")
     try:
         proc = subprocess.run(
             [PY, "-c", PROBE],
