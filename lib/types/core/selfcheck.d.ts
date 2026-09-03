@@ -10,6 +10,16 @@ export interface SelfcheckResult {
     turns: number;
     detail: string;
     error?: string;
+    /** Strict mode: files the oracle produced whose removal or blanking the verifier does NOT notice. */
+    nonDiscriminating?: string[];
+    /** Strict mode: number of oracle-produced files checked. */
+    mutated?: number;
 }
-export declare function selfcheckScenario(scenario: Scenario, workRoot?: string): Promise<SelfcheckResult>;
-export declare function selfcheckAll(scenarios: Scenario[], concurrency?: number): Promise<SelfcheckResult[]>;
+export interface SelfcheckOptions {
+    /** Mutation sweep: for every file the oracle created or changed, delete it (and separately blank it) and require the verifier to fail. */
+    strict?: boolean;
+    /** Cap on files mutated per scenario in strict mode (default 40). */
+    maxMutations?: number;
+}
+export declare function selfcheckScenario(scenario: Scenario, workRoot?: string, options?: SelfcheckOptions): Promise<SelfcheckResult>;
+export declare function selfcheckAll(scenarios: Scenario[], concurrency?: number, options?: SelfcheckOptions): Promise<SelfcheckResult[]>;

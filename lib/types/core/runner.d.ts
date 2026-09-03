@@ -61,6 +61,8 @@ export interface RunDeps {
     /** Skip jobs whose ledger already exists (resume). */
     resume?: boolean;
     workRoot?: string;
+    /** Stop scheduling new trials once the run's spend exceeds this many USD (finished trials are kept). */
+    maxUsd?: number;
 }
 /** Base overlays every arm shares; the scenario decides whether network tools are allowed. */
 export declare function writeBaseOverlays(armsDir: string): {

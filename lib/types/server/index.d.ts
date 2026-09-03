@@ -33,12 +33,18 @@ export interface HistoryCell {
     usdMean: number;
     stepsMean: number;
 }
+export interface HistoryPoint {
+    runId: string;
+    usd: number;
+    ok: boolean;
+}
 export interface History {
     arms: string[];
     scenarios: Array<{
         name: string;
         cells: Record<string, HistoryCell>;
         runIds: string[];
+        points: Record<string, HistoryPoint[]>;
     }>;
     runs: Array<{
         id: string;

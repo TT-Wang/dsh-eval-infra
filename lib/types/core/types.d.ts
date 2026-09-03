@@ -24,11 +24,19 @@ export interface ScenarioMeta {
     /** Who wrote it — surfaced in reports so author-provided scenarios are visible. */
     author?: string;
     /**
+     * Sealed holdout: excluded from runs unless `--include-holdout` is given, and
+     * reported separately so tuning a change against the dev pool shows up as a
+     * dev–holdout gap. Authors should not run these while iterating.
+     */
+    holdout?: boolean;
+    /**
      * 1-based turn numbers before which the runner ends the session and starts a
      * fresh runtime process on the same workspace and eval home. This is how a
      * memory plugin is tested: what survives a restart is what it stored.
      */
     new_session_before_turns?: number[];
+    /** Files the strict self-check must not mutate: side products of the scenario's own scripts that no prompt asks for. */
+    strict_ignore?: string[];
 }
 /** A loaded scenario. */
 export interface Scenario {
@@ -158,8 +166,19 @@ export interface RunLedger {
     /** Counts of session event types worth watching (compaction/start, ...). */
     eventCounts: Record<string, number>;
     verdict: Verdict | null;
+    /** Behaviour signature: tool errors, repeated calls, no-action steps, observation volume, compactions. */
+    behaviour: {
+        toolErrors: number;
+        repeatedCalls: number;
+        noActionSteps: number;
+        observationChars: number;
+        compactions: number;
+    };
     /** Set when the run itself failed (runtime crash, timeout) — the verdict is then null. */
     error?: string;
+    /** Present when a human override replaced the machine verdict (the original is kept here). */
+    machineVerdict?: Verdict | null;
+    overridden?: boolean;
     sessionId: string | null;
     /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
     sessions: number;
@@ -187,6 +206,8 @@ export interface RunPlan {
 export interface RunEnvironment {
     dshVersion: string | null;
     dshSource: string | null;
+    /** Git revision of the dsh source checkout, when available. */
+    dshRevision: string | null;
     evalInfraVersion: string;
     node: string;
     platform: string;

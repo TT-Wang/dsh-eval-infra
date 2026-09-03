@@ -11,4 +11,6 @@ export declare function resolveApiKey(env?: NodeJS.ProcessEnv): string | undefin
 export declare function dshVersion(bin?: string): Promise<string | null>;
 /** The dsh source checkout the local install points at, when discoverable. */
 export declare function dshSourceRoot(): string | null;
+/** Git revision of the dsh source checkout, when it is a git worktree. */
+export declare function dshSourceRevision(root: string | null): Promise<string | null>;
 export declare function evalInfraVersion(): string;

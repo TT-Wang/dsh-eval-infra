@@ -48,5 +48,19 @@ export interface Progress {
     error?: string;
 }
 export declare function listRuns(root: string): RunIndexEntry[];
+/** A human override of one trial's verdict (or a note without override). */
+export interface Annotation {
+    /** `true` = mark pass, `false` = mark fail, `null` = note only. */
+    verdict: boolean | null;
+    note: string;
+    by: string;
+    at: string;
+}
+export type Annotations = Record<string, Annotation>;
+export declare function annotationKey(scenario: string, arm: string, rep: number): string;
+export declare function readAnnotations(paths: RunPaths): Annotations;
+export declare function writeAnnotations(paths: RunPaths, annotations: Annotations): void;
+/** Apply overrides to ledgers (a copy); the ledger keeps the machine verdict under `machineVerdict`. */
+export declare function applyAnnotations(ledgers: RunLedger[], annotations: Annotations): RunLedger[];
 export declare function readPlan(paths: RunPaths): RunPlan;
 export declare function readEnvironment(paths: RunPaths): RunEnvironment | undefined;

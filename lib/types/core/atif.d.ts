@@ -19,6 +19,12 @@ export interface AtifStep {
             raw: string;
         };
     }>;
+    observation?: {
+        results: Array<{
+            source_call_id: string;
+            content: string;
+        }>;
+    };
     metrics?: {
         prompt_tokens: number;
         completion_tokens: number;

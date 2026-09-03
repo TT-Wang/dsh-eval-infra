@@ -1,6 +1,6 @@
 import { prepareArms, type ArmDiff } from './plan.js';
 import type { Project } from './project.js';
-import { type Report } from './report.js';
+import { type NoiseFloor, type Report } from './report.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
 import { type Progress } from './store.js';
@@ -23,6 +23,10 @@ export interface RunRequest {
     resume?: string;
     /** A/A: run the baseline against an identical copy of itself to measure the noise floor. */
     aa?: boolean;
+    /** Budget cap in USD; the run stops scheduling trials once exceeded. */
+    maxUsd?: number;
+    /** Include sealed holdout scenarios (meta.holdout) in the run. */
+    includeHoldout?: boolean;
 }
 export interface LaunchHooks {
     log?: (line: string) => void;
@@ -51,7 +55,7 @@ export interface Launched {
     }>;
 }
 export declare function resolveArmPath(project: Project, ref: string): string;
-export declare function collectScenarios(project: Project, request: Pick<RunRequest, 'scenarios' | 'categories' | 'tags'>): {
+export declare function collectScenarios(project: Project, request: Pick<RunRequest, 'scenarios' | 'categories' | 'tags' | 'includeHoldout'>): {
     scenarios: Scenario[];
     invalid: Array<{
         dir: string;
@@ -60,5 +64,7 @@ export declare function collectScenarios(project: Project, request: Pick<RunRequ
 };
 /** Prepare everything, then start the run in the background; `done` resolves with the report. */
 export declare function launchRun(project: Project, request: RunRequest, hooks?: LaunchHooks): Promise<Launched>;
+/** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
+export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
 /** Rebuild the report of a finished (or partial) run from its ledgers. */
 export declare function rebuildReport(project: Project, id: string): Report;

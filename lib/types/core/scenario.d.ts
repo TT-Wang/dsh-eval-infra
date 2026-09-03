@@ -8,6 +8,8 @@ export interface ScenarioFilter {
     names?: string[];
     categories?: string[];
     tags?: string[];
+    /** Include sealed holdout scenarios (meta.holdout); default false. */
+    includeHoldout?: boolean;
 }
 /** List scenarios under a root directory (one level deep), optionally filtered. Invalid scenarios are reported, not thrown. */
 export declare function listScenarios(root: string, filter?: ScenarioFilter): {

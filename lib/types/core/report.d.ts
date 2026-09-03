@@ -41,6 +41,7 @@ export interface ArmScenarioStats {
         steps: number;
         usdPeak: number;
         usdOffpeak: number;
+        overridden?: boolean;
     }>;
 }
 export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete';
@@ -49,11 +50,33 @@ export interface PairedScenario {
     baseline: ArmScenarioStats;
     candidate: ArmScenarioStats;
     class: PairClass;
+    /** Repeats disagree within at least one arm — the scenario is noisy for this setup. */
+    flaky: boolean;
+    /** Distinct failure reasons per arm (verdict detail, truncated), most frequent first. */
+    failures: {
+        baseline: Array<{
+            reason: string;
+            n: number;
+        }>;
+        candidate: Array<{
+            reason: string;
+            n: number;
+        }>;
+    };
     /** Repeat pairs where both arms passed (cost comparison base). */
     costPairs: number;
+    /** Per-pair (candidate − baseline) Δ% values behind costDiffPct, for the hierarchical bootstrap. */
+    costDiffPctPairs: number[];
+    /** Scenario is in the sealed holdout pool (meta.holdout). */
+    holdout: boolean;
     /** Mean of per-pair (candidate − baseline) USD over costPairs; null when no pair. */
     costDiffUsd: number | null;
     costDiffPct: number | null;
+    /** Mean behaviour signature per arm (tool errors, repeated calls, no-action steps, observation chars, compactions). */
+    behaviour: {
+        baseline: BehaviourMean;
+        candidate: BehaviourMean;
+    };
     /** Same difference re-priced at a fixed band, immune to peak/off-peak drift. */
     costDiffPeakUsd: number | null;
     costDiffOffpeakUsd: number | null;
@@ -61,6 +84,14 @@ export interface PairedScenario {
     /** Within-arm spread of the baseline cost on passed runs (max−min)/mean, a noise indicator. */
     baselineSpreadPct: number | null;
 }
+export interface BehaviourMean {
+    toolErrors: number;
+    repeatedCalls: number;
+    noActionSteps: number;
+    observationChars: number;
+    compactions: number;
+}
+export type Grade = 'improvement' | 'regression' | 'tradeoff' | 'tie' | 'inconclusive';
 export interface ArmSummary {
     arm: string;
     runs: number;
@@ -106,14 +137,48 @@ export interface CandidateReport {
     gate: 'pass' | 'regressions' | 'incomplete';
     /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
     costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none';
+    /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
+    passDiffCI: BootstrapCI;
+    /** One-word grade combining correctness and cost: improvement / regression / tradeoff / tie / inconclusive. */
+    grade: Grade;
+    /** Scenarios whose repeats disagree within an arm. */
+    flaky: string[];
+    /** Minimum detectable cost effect (percent of baseline) for this design at 95% confidence and 80% power, from the observed per-scenario spread; null with fewer than 3 comparable scenarios. */
+    mdePct: number | null;
+    /** Noise floor from the most recent A/A run on the same baseline, when one exists in the archive. */
+    noiseFloor: NoiseFloor | null;
+    /** Significance level used for the intervals after Bonferroni adjustment across candidates (0.05 / candidates). */
+    alpha: number;
+    /** Dev vs sealed-holdout pass-rate difference (candidate − baseline), when holdout scenarios exist. */
+    holdoutGap: {
+        dev: number;
+        holdout: number;
+        devScenarios: number;
+        holdoutScenarios: number;
+    } | null;
     verdict: string;
+}
+export interface NoiseFloor {
+    runId: string;
+    scenarios: number;
+    /** Mean of |Δ%| across scenarios in the A/A run. */
+    meanAbsPct: number;
+    /** 95% bootstrap interval of Δ% in the A/A run. */
+    lo: number;
+    hi: number;
 }
 export interface ReportOptions {
     /** Smallest cost effect of interest in percent; a CI inside ±sesoi reads "equivalent" (default 10). */
     sesoiPct?: number;
     /** Comparable scenarios needed before any directional or equivalence claim (default 3); fewer reads "inconclusive". */
     minScenarios?: number;
+    /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
+    noiseFloors?: Record<string, NoiseFloor>;
+    /** Scenario names in the sealed holdout pool. */
+    holdout?: Set<string>;
 }
+/** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
+export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | null;
 export interface Report {
     schema: 'dsh-eval-report/1';
     runId: string;

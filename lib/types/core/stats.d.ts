@@ -22,6 +22,14 @@ export interface BootstrapCI {
  * per-scenario paired cost difference). B resamples with replacement.
  */
 export declare function bootstrapMean(values: number[], b?: number, seed?: number, alpha?: number): BootstrapCI;
+/**
+ * Hierarchical percentile bootstrap: resample scenarios with replacement, then
+ * within each chosen scenario resample its repeat-pair values with replacement,
+ * and take the mean of per-scenario means. Captures both between-scenario and
+ * within-scenario (repeat) variability; with one value per scenario it reduces
+ * to the scenario bootstrap.
+ */
+export declare function bootstrapHierarchical(groups: number[][], b?: number, seed?: number, alpha?: number): BootstrapCI;
 /** Exact two-sided sign test p-value over discordant pairs (wins vs losses). */
 export declare function signTest(wins: number, losses: number): number;
 /** Wilson score interval for a pass rate. */
@@ -29,3 +37,6 @@ export declare function wilson(passes: number, n: number, z?: number): {
     lo: number;
     hi: number;
 };
+export declare function stddev(xs: number[]): number;
+/** Two-sided 97.5% Student t quantile for small degrees of freedom (table up to 30, then normal). */
+export declare function tCritical(df: number): number;
