@@ -60,3 +60,11 @@ The baseline already met both contracts, so the verification sentence bought not
 | t1_tool_choice_grep | 2/2 | 2/2 | same | +2.0% | 55% |
 
 The agent answered c1 with targeted reads rather than a whole-file read, so nothing large reached the fold; t1's baseline spread of 55% between its own two repeats shows why two repeats decide nothing.
+
+**Memory · A/A on `m1_cross_session_recall`** (baseline vs a copy of itself): 4 trials, $0.029, two runtime sessions per trial (`new_session_before_turns: [3]`).
+
+| scenario | baseline | baseline-aa | class |
+|---|---|---|---|
+| m1_cross_session_recall | 0/2 | 0/2 | both fail |
+
+Every trial's verdict detail reads `handoff.md missing/wrong: ['codename'] (6/7 recalled)`: the six facts written to disk in turn 1 came back after the restart, the codename that lived only in the previous session's conversation did not. That is the discriminating signal a memory plugin has to beat — a candidate that recalls 7/7 turns this row into an *improvement*.
