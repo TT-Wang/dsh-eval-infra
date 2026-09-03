@@ -1,0 +1,1 @@
+{"name": "t1_write_answer", "turns": 2, "category": "test", "stressor": "fixture: write answer.txt with the sum, then append DONE"}

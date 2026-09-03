@@ -1,0 +1,58 @@
+{
+  "name": "@dsh-external/dsh-eval-infra",
+  "description": "Paired A/B evaluation infrastructure for DeepSeek Harness (dsh) plugin developers: scenarios with deterministic verifiers, arms as profile patch overlays, interleaved repeated runs through the real SDK runtime, DeepSeek-priced ledgers, never-worse gating, a CLI, and a local web UI",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "bin": {
+    "dsh-eval": "lib/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*",
+    "bench/**/*",
+    "docs/**/*"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TT-Wang/dsh-eval-infra.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs",
+    "build:ui": "node scripts/build-ui.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "link:dsh": "node scripts/link-dsh.mjs"
+  },
+  "license": "BSD-3-Clause",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1-rc.1",
+    "@deepseek-ai/dsh-sdk-client": "^0.1.0-rc.1 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "^0.0.1-rc.1 || ^0.1.0-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1 || ^0.1.0-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "preact": "^10.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.10"
+  }
+}

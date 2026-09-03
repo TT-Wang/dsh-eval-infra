@@ -1,0 +1,15 @@
+{
+  "name": "s15c_strict_amnesia",
+  "turns": 17,
+  "category": "context",
+  "tags": [
+    "compaction",
+    "tool-results",
+    "strict",
+    "trap"
+  ],
+  "oracle": "required",
+  "stressor": "tool-born results (never in ANY reply: T1 forbids restating; no number-eliciting turns before exam) + one-shot source + forced pre-exam compaction + graded recall ladder + byte-verified eviction gate (offline, via llm-request tap)",
+  "max_steps_per_turn": 12,
+  "use_code_index": false
+}

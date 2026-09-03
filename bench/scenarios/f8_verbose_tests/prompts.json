@@ -1,0 +1,2 @@
+["The render package's test suite is red. Run `python3 -m pytest` from the repo root (pytest.ini already sets the options the team uses), fix every failure by changing code under render/ only (tests/ is correct and must not be modified), and keep running the suite until it is green. Reply DONE with the final pass count.",
+ "Which test functions were failing before your changes? Write their names (function names only, one per line, sorted) to failing.txt."]

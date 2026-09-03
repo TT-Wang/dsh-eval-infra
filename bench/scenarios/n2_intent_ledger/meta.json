@@ -1,0 +1,13 @@
+{
+  "name": "n2_intent_ledger",
+  "turns": 11,
+  "category": "context",
+  "tags": [
+    "intent-ledger",
+    "corrections",
+    "flood"
+  ],
+  "oracle": "required",
+  "max_steps_per_turn": 12,
+  "stressor": "net-of-corrections intent state across flood; final task restates nothing"
+}

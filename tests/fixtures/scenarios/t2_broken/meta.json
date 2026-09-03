@@ -1,0 +1,1 @@
+{"name": "t2_broken", "turns": 1, "category": "test", "stressor": "fixture: verifier accepts anything (must be caught by selfcheck)"}

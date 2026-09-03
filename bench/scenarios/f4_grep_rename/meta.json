@@ -1,0 +1,1 @@
+{"name": "f4_grep_rename", "turns": 2, "max_steps_per_turn": 60, "stressor": "an identifier used ~350 times across ~80 files with look-alike decoys; grep output is thousands of lines; rename must be exact and keep the suite green; follow-up asks the original occurrence counts", "category": "tools", "tags": ["grep", "rename", "decoys"], "oracle": "required"}

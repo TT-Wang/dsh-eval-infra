@@ -1,0 +1,2 @@
+["The build is broken. Run `python3 build.py` from the repo root, fix every error it reports by editing files under modules/ (do not edit build.py or anything under tests/), and re-run until the build succeeds with exit code 0. Warnings are fine to leave. Do not stop to ask; reply DONE with the number of files you changed when the build is green.",
+ "For the changelog: list the module files that had build errors, one path per line sorted, in broken.txt — and the total number of warnings the final successful build printed, as a single integer in warnings.txt."]

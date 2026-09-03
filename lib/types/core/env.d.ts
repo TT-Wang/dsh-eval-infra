@@ -1,0 +1,14 @@
+/** Parse a dotenv-style file into a map (quotes stripped, `export` allowed). */
+export declare function parseDotenv(text: string): Record<string, string>;
+/** The user's real dsh home (credentials live there); eval runs use a separate home. */
+export declare function userDshHome(): string;
+/**
+ * Resolve the DeepSeek API key: process env first, then `$DSH_HOME/.env`, then `~/.dsh/.env`.
+ * Returns undefined when none is found; callers decide whether that is fatal.
+ */
+export declare function resolveApiKey(env?: NodeJS.ProcessEnv): string | undefined;
+/** `dsh --version` output, or null when the CLI is unavailable. */
+export declare function dshVersion(bin?: string): Promise<string | null>;
+/** The dsh source checkout the local install points at, when discoverable. */
+export declare function dshSourceRoot(): string | null;
+export declare function evalInfraVersion(): string;

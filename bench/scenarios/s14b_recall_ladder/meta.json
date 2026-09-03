@@ -1,0 +1,14 @@
+{
+  "name": "s14b_recall_ladder",
+  "turns": 17,
+  "category": "context",
+  "tags": [
+    "compaction",
+    "recall-ladder",
+    "trap"
+  ],
+  "oracle": "required",
+  "stressor": "incidental facts + native context-pressure + graded recall ladder (autonomous / prompted / unreachable)",
+  "max_steps_per_turn": 12,
+  "use_code_index": false
+}

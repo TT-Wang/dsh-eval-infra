@@ -1,0 +1,2 @@
+["Rename the identifier `legacy_session_token` to `auth_session_token` across the whole repo (code and tests). Only that exact identifier: `legacy_session_tokens` (plural), `session_token`, `LEGACY_SESSION_TOKEN` and anything else stays as it is. When done, `python3 -m pytest -q` must pass. Reply DONE with the number of files you changed.",
+ "For the changelog: how many occurrences of the old identifier were there before the rename, and in how many files? Write counts.json as {\"occurrences\": N, \"files\": M}."]

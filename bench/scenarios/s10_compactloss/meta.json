@@ -1,0 +1,14 @@
+{
+  "name": "s10_compactloss",
+  "turns": 76,
+  "category": "context",
+  "tags": [
+    "compaction",
+    "loss-probes",
+    "long"
+  ],
+  "oracle": "none",
+  "stressor": "forced transcript-compaction + assistant/tool-history-only information loss probes",
+  "max_steps_per_turn": 12,
+  "use_code_index": false
+}

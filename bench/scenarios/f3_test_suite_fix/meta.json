@@ -1,0 +1,1 @@
+{"name": "f3_test_suite_fix", "turns": 2, "max_steps_per_turn": 60, "stressor": "a 25-module package with 400 tests and 5 planted bugs; every verbose test run prints ~400 lines plus tracebacks; the fix loop is run→read→edit→run; follow-up asks which tests failed initially", "category": "coding", "tags": ["tests", "fix-loop", "verbose-output"], "oracle": "required"}

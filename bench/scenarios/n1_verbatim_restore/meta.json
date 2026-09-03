@@ -1,0 +1,13 @@
+{
+  "name": "n1_verbatim_restore",
+  "turns": 12,
+  "category": "context",
+  "tags": [
+    "verbatim",
+    "flood",
+    "compaction"
+  ],
+  "oracle": "required",
+  "max_steps_per_turn": 12,
+  "stressor": "verbatim restore across compaction; sole carrier is the conversation"
+}

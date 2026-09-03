@@ -1,0 +1,224 @@
+/**
+ * One entry point for "start a run": used by the CLI and by the web API so
+ * both follow the same discipline — scenarios self-checked, arms composed and
+ * diffed through dsh, environment recorded, ledgers written, report built.
+ */
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { loadArmFile, type ArmError } from './arms.js'
+import { resolveApiKey } from './env.js'
+import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
+import type { Project } from './project.js'
+import { buildReport, renderMarkdown, type Report } from './report.js'
+import { executeRun, type RunDeps } from './runner.js'
+import { listScenarios } from './scenario.js'
+import { sdkDriverFactory } from './sdk-driver.js'
+import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
+import { newRunId, readLedgers, readPlan, runPaths, writeJsonAtomic, type Progress } from './store.js'
+import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
+
+export interface RunRequest {
+  /** Arm file path, or a name resolved against the project's arms dir. */
+  baseline: string
+  candidates: string[]
+  scenarios?: string[]
+  categories?: string[]
+  tags?: string[]
+  repeats?: number
+  concurrency?: number
+  label?: string
+  allowMulti?: boolean
+  skipSelfcheck?: boolean
+  keepWorkdirs?: boolean
+  turnTimeoutS?: number
+  /** Resume an existing run id (skips finished jobs). */
+  resume?: string
+  /** A/A: run the baseline against an identical copy of itself to measure the noise floor. */
+  aa?: boolean
+}
+
+export interface LaunchHooks {
+  log?: (line: string) => void
+  onProgress?: (p: Progress) => void
+  onLedger?: (l: RunLedger) => void
+  signal?: AbortSignal
+  /** Test seam: replace the SDK driver. */
+  driverFactory?: RunDeps['driverFactory']
+  /** Test seam: replace the dsh CLI used to compose trees. */
+  invoke?: Parameters<typeof prepareArms>[2]['invoke']
+}
+
+export class LaunchError extends Error {
+  constructor(message: string, readonly code: 'usage' | 'selfcheck' | 'arms' | 'env' = 'usage') {
+    super(message)
+  }
+}
+
+export interface Launched {
+  id: string
+  plan: RunPlan
+  diffs: ArmDiff[]
+  scenarios: Scenario[]
+  selfcheck: SelfcheckResult[]
+  /** Resolves with the final report when the run ends (or is cancelled). */
+  done: Promise<{ progress: Progress; report: Report }>
+}
+
+export function resolveArmPath(project: Project, ref: string): string {
+  const direct = resolve(project.root, ref)
+  if (existsSync(direct) && /\.(ya?ml|json)$/.test(direct)) return direct
+  for (const ext of ['.yml', '.yaml', '.json']) {
+    const p = join(project.armsDir, ref + ext)
+    if (existsSync(p)) return p
+  }
+  throw new LaunchError(`arm not found: ${ref} (looked for a file, then ${project.armsDir}/${ref}.yml)`, 'arms')
+}
+
+export function collectScenarios(project: Project, request: Pick<RunRequest, 'scenarios' | 'categories' | 'tags'>): { scenarios: Scenario[]; invalid: Array<{ dir: string; error: string }> } {
+  const filter: { names?: string[]; categories?: string[]; tags?: string[] } = {}
+  if (request.scenarios && request.scenarios.length) filter.names = request.scenarios
+  if (request.categories && request.categories.length) filter.categories = request.categories
+  if (request.tags && request.tags.length) filter.tags = request.tags
+  const roots = [project.scenarioRoot, ...(project.config.pools ?? []).map(p => resolve(project.root, p))]
+  const seen = new Set<string>()
+  const scenarios: Scenario[] = []
+  const invalid: Array<{ dir: string; error: string }> = []
+  for (const root of roots) {
+    const r = listScenarios(root, filter)
+    for (const s of r.scenarios) if (!seen.has(s.name)) { seen.add(s.name); scenarios.push(s) }
+    invalid.push(...r.invalid)
+  }
+  return { scenarios, invalid }
+}
+
+/** Prepare everything, then start the run in the background; `done` resolves with the report. */
+export async function launchRun(project: Project, request: RunRequest, hooks: LaunchHooks = {}): Promise<Launched> {
+  const log = hooks.log ?? ((): void => {})
+  const profile = project.config.profile
+  if (!evalProfileManifest(project.home, profile).exists) {
+    throw new LaunchError(`eval profile "${profile}" is not initialised under ${project.home}; run: dsh-eval init [--plugin <path>]`, 'env')
+  }
+  const apiKey = resolveApiKey()
+  if (apiKey === undefined && hooks.driverFactory === undefined) {
+    throw new LaunchError('DEEPSEEK_API_KEY not found (env, $DSH_HOME/.env or ~/.dsh/.env)', 'env')
+  }
+
+  let plan: RunPlan
+  let id: string
+  let baselineSpec: ArmSpec
+  let candidateSpecs: ArmSpec[]
+  const sources: Record<string, string> = {}
+  if (request.resume !== undefined) {
+    id = request.resume
+    const paths = runPaths(project.runsRoot, id)
+    if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found under ${paths.root}`, 'usage')
+    plan = readPlan(paths)
+    baselineSpec = plan.baseline
+    candidateSpecs = plan.candidates
+  } else {
+    if (request.candidates.length === 0 && !request.aa) throw new LaunchError('at least one candidate arm is required', 'usage')
+    const baselinePath = resolveArmPath(project, request.baseline)
+    baselineSpec = loadArmFile(baselinePath)
+    sources[baselineSpec.name] = baselinePath
+    if (request.aa) {
+      const twin: ArmSpec = { ...baselineSpec, name: `${baselineSpec.name}-aa`, description: `identical copy of ${baselineSpec.name} (A/A noise floor)` }
+      sources[twin.name] = baselinePath
+      candidateSpecs = [twin]
+    } else candidateSpecs = request.candidates.map((c) => {
+      const p = resolveArmPath(project, c)
+      const spec = loadArmFile(p)
+      sources[spec.name] = p
+      return spec
+    })
+    id = newRunId()
+    plan = {
+      id,
+      createdAt: new Date().toISOString(),
+      baseline: baselineSpec,
+      candidates: candidateSpecs,
+      scenarios: [],
+      repeats: request.repeats ?? project.config.repeats,
+      concurrency: request.concurrency ?? project.config.concurrency,
+      scenarioRoot: project.scenarioRoot,
+    }
+    if (request.label !== undefined) plan.label = request.label
+  }
+  if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
+
+  const { scenarios, invalid } = request.resume !== undefined
+    ? collectScenarios(project, { scenarios: plan.scenarios })
+    : collectScenarios(project, request)
+  for (const i of invalid) log(`!! skipping invalid scenario ${i.dir}: ${i.error}`)
+  if (scenarios.length === 0) throw new LaunchError(`no scenarios matched under ${project.scenarioRoot}`, 'usage')
+  plan.scenarios = scenarios.map(s => s.name)
+
+  let selfcheck: SelfcheckResult[] = []
+  if (!request.skipSelfcheck) {
+    log(`selfcheck: ${scenarios.length} scenario(s)…`)
+    selfcheck = await selfcheckAll(scenarios)
+    const broken = selfcheck.filter(r => !r.ok)
+    for (const r of selfcheck) log(`  ${r.ok ? 'OK ' : 'BAD'} ${r.name.padEnd(28)} blank→${r.blankPasses === null ? '?' : r.blankPasses ? 'PASS?!' : 'fail'} oracle→${r.oraclePasses === null ? 'n/a' : r.oraclePasses ? 'pass' : 'FAIL'} ${r.error ?? r.detail}`)
+    if (broken.length > 0) throw new LaunchError(`${broken.length} scenario(s) failed selfcheck: ${broken.map(b => b.name).join(', ')} (fix them or pass --skip-selfcheck)`, 'selfcheck')
+  }
+
+  const paths = runPaths(project.runsRoot, id)
+  mkdirSync(paths.dir, { recursive: true })
+  const prepareOptions: Parameters<typeof prepareArms>[2] = { evalHome: project.home, armsDir: paths.arms, sources }
+  if (hooks.invoke !== undefined) prepareOptions.invoke = hooks.invoke
+  let prepared: Awaited<ReturnType<typeof prepareArms>>
+  try {
+    prepared = await prepareArms(baselineSpec, candidateSpecs, prepareOptions)
+  } catch (error) {
+    throw new LaunchError(`could not compose arms through dsh: ${(error as ArmError).message}`, 'arms')
+  }
+  for (const d of prepared.diffs) {
+    log(`arm ${d.candidate} vs ${prepared.baseline.name}: ${d.variables} variable(s)`)
+    for (const line of describeDiff(d)) log(`    ${line}`)
+    if (d.variables === 0 && !request.aa) log(`!! arm ${d.candidate} is identical to the baseline; this is an A/A run in effect`)
+    if (d.variables > 1 && !request.allowMulti) {
+      throw new LaunchError(`arm ${d.candidate} differs from ${prepared.baseline.name} in ${d.variables} variables; a fair A/B changes one thing (pass --allow-multi to run anyway, the report will be marked multi-variable)`, 'arms')
+    }
+  }
+  writeJsonAtomic(paths.plan, plan)
+  const env = await recordEnvironment(prepared.composed)
+  writeJsonAtomic(paths.env, { ...env, diffs: prepared.diffs, multiVariable: prepared.diffs.some(d => d.variables > 1) })
+  for (const [arm, text] of Object.entries(prepared.composed)) writeFileSync(join(paths.arms, `${arm}.composed.yml`), text)
+
+  const runEnv: Record<string, string> = { DSH_TELEMETRY_DISABLED: '1' }
+  if (apiKey !== undefined) runEnv['DEEPSEEK_API_KEY'] = apiKey
+  const deps: RunDeps = {
+    driverFactory: hooks.driverFactory ?? sdkDriverFactory(project.config.dshBin !== undefined ? { dshBin: project.config.dshBin } : {}),
+    evalHome: project.home,
+    paths,
+    env: runEnv,
+    log,
+    workRoot: join(project.evalDir, 'work'),
+  }
+  if (hooks.signal !== undefined) deps.signal = hooks.signal
+  if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
+  if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
+  if (request.keepWorkdirs) deps.keepWorkdirs = true
+  if (request.turnTimeoutS !== undefined) deps.turnTimeoutMs = request.turnTimeoutS * 1000
+  if (request.resume !== undefined) deps.resume = true
+
+  const done = (async (): Promise<{ progress: Progress; report: Report }> => {
+    const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
+    const report = buildReport(plan, readLedgers(paths))
+    if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
+    writeJsonAtomic(paths.report, report)
+    writeFileSync(paths.reportMd, renderMarkdown(report))
+    return { progress, report }
+  })()
+  return { id, plan, diffs: prepared.diffs, scenarios, selfcheck, done }
+}
+
+/** Rebuild the report of a finished (or partial) run from its ledgers. */
+export function rebuildReport(project: Project, id: string): Report {
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
+  const plan = readPlan(paths)
+  const report = buildReport(plan, readLedgers(paths))
+  writeJsonAtomic(paths.report, report)
+  writeFileSync(paths.reportMd, renderMarkdown(report))
+  return report
+}
