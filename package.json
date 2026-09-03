@@ -27,7 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs",
     "build:ui": "node scripts/build-ui.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.ui.json --noEmit",
     "test": "vitest run",
     "link:dsh": "node scripts/link-dsh.mjs"
   },
@@ -42,9 +42,15 @@
     "@deepseek-ai/dsh-llm": "^0.0.1-rc.1 || ^0.1.0-rc.1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-llm": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
