@@ -93,7 +93,7 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 - Per scenario and arm: n runs, passes, Wilson 95% interval, cost list, means, medians, peak-prompt max.
 - Classification: `regression` (baseline majority pass, candidate majority fail), `improvement` (reverse), `same`, `both-fail`, `incomplete`.
 - Cost pairs: repeat i of baseline with repeat i of candidate when both passed; per-scenario mean Δ$ and Δ% and Δsteps; fixed-band Δ at peak and at off-peak.
-- Candidate aggregate: mean over comparable scenarios of the per-scenario Δ; 95% percentile bootstrap over scenarios; `significant` when the interval excludes zero; `equivalent` when it lies inside ±SESOI (10%) with ≥2 scenarios; otherwise `inconclusive`. A single comparable scenario is reported as a point with no interval.
+- Candidate aggregate: mean over comparable scenarios of the per-scenario Δ; Student-t interval below ten scenarios, percentile cluster bootstrap from ten; `significant` when the interval excludes zero and, when an A/A floor with ≥5 scenarios exists, stays outside its |Δ%| band; `equivalent` when it lies inside ±SESOI (10%); any direction or equivalence needs ≥5 comparable scenarios; otherwise `inconclusive`. A single comparable scenario is reported as a point with no interval.
 - Discordant pairs: exact two-sided sign test.
 - pass^k: share of scenarios where every repeat passed; pass@k: share with at least one pass.
 - Δpass: per-scenario pass-rate difference in percentage points, bootstrapped over scenarios like cost.

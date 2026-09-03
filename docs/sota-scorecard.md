@@ -49,7 +49,7 @@ Legend: **met** · *partial* · missing · n/a (out of scope by design, with the
 | cost compared only on both-pass pairs | — | implemented | **met** |
 | bootstrap CI over scenarios for cost and pass difference | Scaffold Effect, Adding Error Bars | percentile bootstrap, B=2000, seeded | **met** |
 | equivalence reading (TOST-like band) | Lakens TOST | ±10% SESOI band; "equivalent" only inside it with ≥3 scenarios | **met** |
-| minimum sample before a directional claim | Adding Error Bars power analysis | ≥3 comparable scenarios | **met** |
+| minimum sample before a directional claim | Adding Error Bars power analysis; Resolution Diagnostics | ≥5 comparable scenarios, t-interval below 10, and no directional call inside the measured A/A noise band | **met** |
 | minimum detectable effect and resolution reported | Adding Error Bars; Resolution Diagnostics (2605.30315) | MDE from observed spread; N* and q = n/N* next to every cost verdict | **met** |
 | pass^k / pass@k | τ-bench, Inspect reducers | per arm | **met** |
 | paired binary test | McNemar mid-p (Fagerland 2013) | exact and mid-p on discordant pairs, Beta(b+1,c+1) posterior P(win) and ROPE mass | **met** |

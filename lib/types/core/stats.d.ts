@@ -30,6 +30,15 @@ export declare function bootstrapMean(values: number[], b?: number, seed?: numbe
  * to the scenario bootstrap.
  */
 export declare function bootstrapHierarchical(groups: number[][], b?: number, seed?: number, alpha?: number): BootstrapCI;
+/**
+ * Interval for a mean over few units: Student-t for n < 10 (a percentile
+ * bootstrap of three or four values has almost no distinct resamples and
+ * understates the width), percentile bootstrap otherwise. Both are read at the
+ * same alpha so multiplicity adjustment applies uniformly.
+ */
+export declare function smallSampleCI(values: number[], b?: number, seed?: number, alpha?: number): BootstrapCI;
+/** Inverse normal CDF (Acklam's rational approximation), good to ~1e-9. */
+export declare function normalQuantile(p: number): number;
 /** Exact two-sided sign test p-value over discordant pairs (wins vs losses). */
 export declare function signTest(wins: number, losses: number): number;
 /** Wilson score interval for a pass rate. */

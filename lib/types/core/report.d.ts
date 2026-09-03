@@ -212,7 +212,7 @@ export interface NoiseFloor {
 export interface ReportOptions {
     /** Smallest cost effect of interest in percent; a CI inside ±sesoi reads "equivalent" (default 10). */
     sesoiPct?: number;
-    /** Comparable scenarios needed before any directional or equivalence claim (default 3); fewer reads "inconclusive". */
+    /** Comparable scenarios needed before any directional or equivalence claim (default 5); fewer reads "inconclusive". */
     minScenarios?: number;
     /** Noise floors from A/A runs, keyed by baseline arm name (the caller looks them up in the archive). */
     noiseFloors?: Record<string, NoiseFloor>;

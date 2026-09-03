@@ -37,6 +37,17 @@ describe('usage normalization', () => {
 })
 
 describe('stats', () => {
+  it('small-sample interval is a t-interval below ten units and normal quantiles are accurate', async () => {
+    const { smallSampleCI, normalQuantile } = await import('../src/core/stats.js')
+    expect(normalQuantile(0.975)).toBeCloseTo(1.95996, 4)
+    expect(normalQuantile(0.9875)).toBeCloseTo(2.2414, 3)
+    const ci = smallSampleCI([-10, -12, -8, -11, -9])
+    expect(ci.mean).toBeCloseTo(-10, 6)
+    expect(ci.hi).toBeLessThan(0)
+    const adj = smallSampleCI([-10, -12, -8, -11, -9], 2000, 42, 0.025)
+    expect(adj.hi - adj.lo).toBeGreaterThan(ci.hi - ci.lo)
+    expect(smallSampleCI([1]).significant).toBe(false)
+  })
   it('bootstrap interval covers zero for noise and excludes it for a clear effect', () => {
     const noise = [0.1, -0.2, 0.05, -0.1, 0.15, -0.05, 0.02, -0.03]
     expect(bootstrapMean(noise).significant).toBe(false)
@@ -88,7 +99,7 @@ describe('dotenv', () => {
 })
 
 describe('report claims', () => {
-  it('needs at least three comparable scenarios before calling a direction', async () => {
+  it('needs at least five comparable scenarios before calling a direction', async () => {
     const { buildReport } = await import('../src/core/report.js')
     const mk = (scenario: string, arm: string, usd: number) => ({
       schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
@@ -100,13 +111,22 @@ describe('report claims', () => {
     expect(two.candidates[0]!.verdict).toMatch(/Only 2 comparable scenarios/)
     const plan3 = { ...plan, scenarios: ['s1', 's2', 's3'] }
     const three = buildReport(plan3, [mk('s1', 'a', 1), mk('s1', 'b', 1.2), mk('s2', 'a', 1), mk('s2', 'b', 1.15), mk('s3', 'a', 1), mk('s3', 'b', 1.25)])
-    expect(three.candidates[0]!.costReading).toBe('more-expensive')
-    const flat = buildReport(plan3, [mk('s1', 'a', 1), mk('s1', 'b', 1.01), mk('s2', 'a', 1), mk('s2', 'b', 0.99), mk('s3', 'a', 1), mk('s3', 'b', 1.02)])
+    expect(three.candidates[0]!.costReading).toBe('inconclusive')          // three scenarios never support a direction
+    expect(three.candidates[0]!.verdict).toMatch(/Only 3 comparable scenarios/)
+    const names5 = ['s1', 's2', 's3', 's4', 's5']
+    const plan5 = { ...plan, scenarios: names5 }
+    const five = buildReport(plan5, names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1.15 + i * 0.02)]))
+    expect(five.candidates[0]!.costReading).toBe('more-expensive')
+    expect(five.candidates[0]!.grade).toBe('regression')
+    expect(five.candidates[0]!.mdePct).toBeGreaterThan(0)
+    const flat = buildReport(plan5, names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1 + (i % 2 ? 0.01 : -0.01))]))
     expect(flat.candidates[0]!.costReading).toBe('equivalent')
     expect(flat.candidates[0]!.grade).toBe('tie')
-    expect(three.candidates[0]!.grade).toBe('regression')
-    expect(three.candidates[0]!.mdePct).toBeGreaterThan(0)
     expect(flat.candidates[0]!.passDiffCI.mean).toBe(0)
+    // a directional interval that reaches into a measured A/A noise band is not a call
+    const noisy = buildReport(plan5, names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1.15 + i * 0.02)]), { noiseFloors: { a: { runId: 'aa', scenarios: 5, meanAbsPct: 16, lo: -20, hi: 20 } } })
+    expect(noisy.candidates[0]!.costReading).toBe('inconclusive')
+    expect(noisy.candidates[0]!.verdict).toMatch(/noise band/)
   })
   it('flags flaky scenarios, groups failure reasons, and carries an A/A noise floor into the notes', async () => {
     const { buildReport, noiseFloorOf } = await import('../src/core/report.js')
