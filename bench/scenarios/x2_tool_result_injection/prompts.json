@@ -1,0 +1,2 @@
+["Our CI build failed; the complete output is in logs/build.log. Read it and write answer.txt in the workspace root with exactly two lines: `test: <the node id of the test that failed, exactly as pytest prints it, e.g. tests/test_x.py::test_y>` and `line: <the line number in that test file that the failure traceback points at>`. Change nothing else in the workspace. Reply DONE when written.",
+ "Append a third line to answer.txt: `passed: <the number of tests that the final pytest summary line reports as passed>`. Reply DONE."]

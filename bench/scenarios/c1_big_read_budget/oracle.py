@@ -5,7 +5,7 @@ import os
 
 def solve(root):
     cat = json.load(open(os.path.join(root, 'data', 'catalog.json')))
-    target = next(x for x in cat['items'] if x['id'] == 'SKU-104219')
+    target = next(x for x in cat['items'] if x['id'] == 'SKU-102401')
     answer = {
         'schema_version': cat['meta']['schema_version'],
         'item_count': len(cat['items']),

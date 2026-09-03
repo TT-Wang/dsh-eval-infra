@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { api, fmt, stream, type LedgerLite, type RunDetail } from '../api.js'
+import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../api.js'
 import type { CandidateReport, PairedScenario, PairClass } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
@@ -49,7 +49,7 @@ export function RunView({ id }: { id: string }) {
         </div>
         <div class="row">
           {running && <button class="btn danger" onClick={() => { void api.cancel(id) }}>Cancel</button>}
-          <a class="btn" href={`${location.pathname}api/runs/${id}/report`} target="_blank">report.json</a>
+          {STATIC === undefined && <a class="btn" href={`${location.pathname.replace(/\/?$/, '/')}api/runs/${id}/report`} target="_blank">report.json</a>}
         </div>
       </div>
 

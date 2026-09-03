@@ -100,11 +100,25 @@ def _iso_parses(value):
         return False
 
 
+PROBE_FILES = ["verify_%s.jsonl" % c for c in "abcdef"]
+
+
+def _clean_probe_files(workdir):
+    """The probes below write their own notes files into the workdir; a stale
+    copy from an earlier verify run (the selfcheck runs verify twice on one
+    workdir) would make ``rec()`` return the old record, so start clean."""
+    for name in PROBE_FILES:
+        p = os.path.join(workdir, name)
+        if os.path.exists(p):
+            os.remove(p)
+
+
 def verify(workdir):
     for rel in (os.path.join("notes", "store.py"), os.path.join("notes", "cli.py")):
         if not os.path.isfile(os.path.join(workdir, rel)):
             return (False, rel + " is missing")
 
+    _clean_probe_files(workdir)
     p = _Probe(workdir)
     check = p.check
 
@@ -253,6 +267,7 @@ def verify(workdir):
     check("ZQNORM1" in out, "t8_flagless_exact_still_works")
     check("ZQNORM3" not in out, "t8_flagless_no_hidden_normalization")
 
+    _clean_probe_files(workdir)
     if p.fails:
         detail = ",".join(p.fails)
         msg = "FAILS: " + detail

@@ -8,7 +8,7 @@ SEED = 20260904
 CATEGORIES = ['optics', 'fasteners', 'electrical', 'plumbing', 'tools', 'safety', 'packaging', 'adhesives']
 WORDS = ['alloy', 'bracket', 'carbon', 'dual', 'edge', 'flux', 'grip', 'hex', 'inline', 'jet', 'kit', 'lens',
          'mount', 'nano', 'orbit', 'pro', 'quad', 'rail', 'seal', 'torque', 'ultra', 'vent', 'wide', 'zinc']
-TARGET = 'SKU-104219'
+TARGET = 'SKU-102401'
 
 
 def _item(r, i):
@@ -29,7 +29,7 @@ def _item(r, i):
 
 def generate():
     r = random.Random(SEED)
-    items = [_item(r, i) for i in range(1800)]
+    items = [_item(r, i) for i in range(1200)]
     return {
         'meta': {'schema_version': '7.4.2', 'generated_at': '2026-09-01T00:00:00Z', 'source': 'erp-export'},
         'items': items,

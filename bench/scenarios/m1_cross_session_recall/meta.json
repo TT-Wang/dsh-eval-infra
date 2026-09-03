@@ -1,0 +1,11 @@
+{
+  "name": "m1_cross_session_recall",
+  "turns": 3,
+  "category": "memory",
+  "tags": ["memory", "cross-session", "recall", "chat-only-fact"],
+  "stressor": "turn 3 runs in a fresh runtime session (new_session_before_turns: [3]) and asks for seven facts from earlier turns: six were written to notes/kickoff.md on request (recoverable from disk by any agent) and one, the release codename, was given only in chat in turn 2 with an instruction not to write it down -- only an agent with memory across sessions can produce it; a stale notes/old_kickoff_2025.md with the same keys and different values is the decoy",
+  "max_steps_per_turn": 60,
+  "network": false,
+  "oracle": "required",
+  "new_session_before_turns": [3]
+}
