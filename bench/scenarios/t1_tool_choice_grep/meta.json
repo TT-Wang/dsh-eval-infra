@@ -1,0 +1,10 @@
+{
+  "name": "t1_tool_choice_grep",
+  "turns": 2,
+  "category": "tools",
+  "tags": ["grep", "tool-choice", "many-files", "decoys"],
+  "stressor": "300 small modules where the exact answer is one anchored regex away (grep/glob) but reading files one by one costs hundreds of steps; decoys reward a precise pattern: comment-only and docstring mentions, a call without a definition, handle_retry_async / _handle_retry look-alikes, and a markdown file quoting the definition",
+  "max_steps_per_turn": 60,
+  "network": false,
+  "oracle": "required"
+}

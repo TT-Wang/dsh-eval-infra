@@ -154,7 +154,18 @@ export class EvalApp {
       json(res, 200, { version: evalInfraVersion(), project: project.root, home: project.home, profile: project.config.profile, profileReady: profile.exists, plugins: Object.keys(profile.dependencies), scenarioRoot: project.scenarioRoot, armsDir: project.armsDir, defaults: { repeats: project.config.repeats, concurrency: project.config.concurrency } })
       return
     }
-    if (method === 'GET' && path === '/runs') { json(res, 200, listRuns(project.runsRoot)); return }
+    if (method === 'GET' && path === '/runs') {
+      json(res, 200, listRuns(project.runsRoot).map((r) => {
+        const reportPath = runPaths(project.runsRoot, r.id).report
+        if (!existsSync(reportPath)) return r
+        try {
+          const rep = readJson<Report>(reportPath)
+          return { ...r, verdicts: rep.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, costPct: c.costPctCI.mean, regressions: c.regressions.length, improvements: c.improvements.length })) }
+        } catch { return r }
+      }))
+      return
+    }
+    if (method === 'GET' && path === '/history') { json(res, 200, buildHistory(project.runsRoot)); return }
     if (method === 'GET' && path === '/scenarios') {
       const { scenarios, invalid } = collectScenarios(project, {})
       json(res, 200, { scenarios: scenarios.map(s => ({ name: s.name, dir: s.dir, meta: s.meta, turns: s.prompts.length, hasOracle: s.hasOracle, prompts: s.prompts })), invalid })
@@ -244,6 +255,45 @@ export class EvalApp {
     }
     void url
     json(res, 404, { error: `no route ${method} ${path}` })
+  }
+}
+
+export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
+export interface History {
+  arms: string[]
+  scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[] }>
+  runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>
+}
+
+/** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
+export function buildHistory(runsRoot: string): History {
+  const runs = listRuns(runsRoot)
+  const arms = new Set<string>()
+  const byScenario = new Map<string, { cells: Map<string, { runs: number; passes: number; errors: number; usd: number; steps: number }>; runIds: Set<string> }>()
+  for (const r of runs) {
+    const paths = runPaths(runsRoot, r.id)
+    for (const l of readLedgers(paths)) {
+      arms.add(l.arm)
+      const entry = byScenario.get(l.scenario) ?? { cells: new Map(), runIds: new Set() }
+      const cell = entry.cells.get(l.arm) ?? { runs: 0, passes: 0, errors: 0, usd: 0, steps: 0 }
+      cell.runs += 1
+      if (l.verdict?.ok && l.error === undefined) cell.passes += 1
+      if (l.error !== undefined) cell.errors += 1
+      cell.usd += l.totals.usd
+      cell.steps += l.totals.steps
+      entry.cells.set(l.arm, cell)
+      entry.runIds.add(r.id)
+      byScenario.set(l.scenario, entry)
+    }
+  }
+  return {
+    arms: [...arms].sort(),
+    scenarios: [...byScenario.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, e]) => ({
+      name,
+      cells: Object.fromEntries([...e.cells.entries()].map(([arm, c]) => [arm, { runs: c.runs, passes: c.passes, errors: c.errors, usdMean: c.runs ? c.usd / c.runs : 0, stepsMean: c.runs ? c.steps / c.runs : 0 }])),
+      runIds: [...e.runIds],
+    })),
+    runs: runs.map(r => ({ id: r.id, createdAt: r.createdAt, ...(r.label !== undefined ? { label: r.label } : {}), arms: r.arms })),
   }
 }
 

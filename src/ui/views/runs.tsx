@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'preact/hooks'
-import { api, fmt, type Meta } from '../api.js'
-import type { RunIndexEntry } from '../../core/types.js'
+import { api, fmt, type Meta, type RunRow } from '../api.js'
 
 export function RunsView() {
-  const [runs, setRuns] = useState<RunIndexEntry[] | null>(null)
+  const [runs, setRuns] = useState<RunRow[] | null>(null)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -30,7 +29,7 @@ export function RunsView() {
         </div>
       ) : (
         <table class="data">
-          <thead><tr><th>run</th><th>status</th><th>arms</th><th class="num">scenarios</th><th class="num">repeats</th><th class="num">trials</th><th class="num">cost</th><th>label</th></tr></thead>
+          <thead><tr><th>run</th><th>status</th><th>arms</th><th class="num">scenarios</th><th class="num">repeats</th><th class="num">trials</th><th class="num">cost</th><th>label</th><th>verdict</th></tr></thead>
           <tbody>
             {runs.map(r => (
               <tr key={r.id}>
@@ -42,6 +41,7 @@ export function RunsView() {
                 <td class="num">{r.completed}/{r.total}</td>
                 <td class="num">{fmt.usd(r.usd, 3)}</td>
                 <td>{r.label ?? ''}</td>
+                <td>{(r.verdicts ?? []).map(v => <div><span class={`cls ${v.gate === 'regressions' ? 'regression' : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'cheaper' ? 'improvement' : 'same'}`}>{v.arm}: {v.gate === 'regressions' ? `${v.regressions} regression${v.regressions === 1 ? '' : 's'}` : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'none' ? 'no pairs' : `${v.costReading} ${fmt.pct(v.costPct)}`}</span>{v.improvements ? <span class="muted small"> +{v.improvements} improved</span> : null}</div>)}</td>
               </tr>
             ))}
           </tbody>

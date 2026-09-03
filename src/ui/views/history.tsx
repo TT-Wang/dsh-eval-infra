@@ -1,0 +1,44 @@
+import type { ComponentChildren } from 'preact'
+import { useEffect, useState } from 'preact/hooks'
+import { api, fmt, type History } from '../api.js'
+
+/** Scenario × arm over every run: chronic failures, flaky scenarios and cost drift stand out here. */
+export function HistoryView() {
+  const [h, setH] = useState<History | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { api.history().then(setH).catch(e => setError(String(e))) }, [])
+  if (error) return <p class="error">{error}</p>
+  if (!h) return <p class="muted">loading…</p>
+  return (
+    <section>
+      <div class="page-head"><div><h1>Scenario history</h1><p class="muted">{h.scenarios.length} scenarios × {h.arms.length} arms over {h.runs.length} runs · pass / runs, mean cost, mean steps</p></div></div>
+      {h.scenarios.length === 0 ? <div class="empty"><p>No ledgers yet.</p></div> : (
+        <div class="card">
+          <table class="data">
+            <thead><tr><th>scenario</th>{h.arms.map(a => <th>{a}</th>)}<th>runs</th></tr></thead>
+            <tbody>
+              {h.scenarios.map(s => (
+                <tr key={s.name}>
+                  <td><code>{s.name}</code></td>
+                  {h.arms.map((a) => {
+                    const c = s.cells[a]
+                    if (!c) return <td class="muted">—</td>
+                    const rate = c.runs ? c.passes / c.runs : 0
+                    const flaky = c.runs >= 2 && c.passes > 0 && c.passes < c.runs
+                    return (
+                      <td>
+                        <span class={`cls ${rate === 1 ? 'same' : rate === 0 ? 'regression' : 'both-fail'}`}>{c.passes}/{c.runs}{flaky ? ' flaky' : ''}</span>
+                        <span class="muted small"> {fmt.usd(c.usdMean)} · {c.stepsMean.toFixed(0)} steps{c.errors ? ` · ${c.errors} err` : ''}</span>
+                      </td>
+                    )
+                  })}
+                  <td class="muted small">{s.runIds.map(id => <a href={`#/run/${id}`}>{id.slice(0, 15)}</a>).reduce<ComponentChildren[]>((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}

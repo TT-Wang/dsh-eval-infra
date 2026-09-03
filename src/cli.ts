@@ -240,11 +240,52 @@ async function cmdUi(project: Project, args: Args): Promise<number> {
   return 0
 }
 
+function exportHtml(project: Project, id: string, outFile: string): number {
+  const paths = runPaths(project.runsRoot, id)
+  const uiDir = resolve(new URL('../lib/ui/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+  const candidates = [uiDir, resolve(new URL('./ui/', import.meta.url).pathname)]
+  const dir = candidates.find(d => existsSync(join(d, 'app.js')))
+  if (dir === undefined) { err('UI bundle not built; run: npm run build'); return 3 }
+  const plan = readPlan(paths)
+  const ledgers = readLedgers(paths)
+  const full: Record<string, unknown> = {}
+  const traces: Record<string, unknown> = {}
+  for (const l of ledgers) {
+    const key = `${l.scenario}|${l.arm}|${l.rep}`
+    full[key] = l
+    const traceFile = join(paths.dir, l.traceFile)
+    traces[key] = existsSync(traceFile) ? readFileSync(traceFile, 'utf8').split('\n').filter(Boolean).map(x => JSON.parse(x) as unknown) : []
+  }
+  const report = existsSync(paths.report) ? readJson<Report>(paths.report) : rebuildReport(project, id)
+  const progress = existsSync(paths.progress) ? readJson<unknown>(paths.progress) : null
+  const env = existsSync(paths.env) ? readJson<unknown>(paths.env) : null
+  const runRow = listRuns(project.runsRoot).find(r => r.id === id)
+  const bundle = {
+    meta: { version: evalInfraVersion(), project: project.root, home: '', profile: project.config.profile, profileReady: true, plugins: [], scenarioRoot: '', armsDir: '', defaults: { repeats: plan.repeats, concurrency: plan.concurrency } },
+    runs: runRow ? [{ ...runRow, verdicts: report.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, costPct: c.costPctCI.mean, regressions: c.regressions.length, improvements: c.improvements.length })) }] : [],
+    run: { plan, progress, report, env, active: false, logs: [] },
+    ledgers: ledgers.map(l => ({ ...l, steps: l.steps.map(s => ({ ...s, calls: s.calls.map(c => c.name) })) })),
+    full,
+    traces,
+    history: { arms: [], scenarios: [], runs: [] },
+  }
+  const css = readFileSync(join(dir, 'app.css'), 'utf8')
+  const js = readFileSync(join(dir, 'app.js'), 'utf8')
+  const data = JSON.stringify(bundle).replace(/<\/script/gi, '<\\/script')
+  const html = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>dsh-eval ${id}</title><style>${css}</style></head><body><div id="app"></div><script>window.__DSH_EVAL_STATIC__=${data}</script><script type="module">${js}</script></body></html>`
+  mkdirSync(resolve(outFile, '..'), { recursive: true })
+  writeFileSync(outFile, html)
+  out(`${ledgers.length} trials → ${outFile} (${(html.length / 1024).toFixed(0)} KB, self-contained)`)
+  return 0
+}
+
 function cmdExport(project: Project, args: Args): number {
   const id = args.positional[0]
-  if (id === undefined) { err('usage: dsh-eval export <runId> [--out <dir>]'); return 3 }
+  if (id === undefined) { err('usage: dsh-eval export <runId> [--out <dir>] [--html <file>]'); return 3 }
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) { err(`run ${id} not found`); return 3 }
+  if (typeof args.flags['html'] === 'string') return exportHtml(project, id, resolve(args.flags['html']))
+  if (args.flags['html'] === true) return exportHtml(project, id, join(paths.dir, 'report.html'))
   const plan = readPlan(paths)
   const outDir = typeof args.flags['out'] === 'string' ? resolve(args.flags['out']) : join(paths.dir, 'atif')
   mkdirSync(outDir, { recursive: true })
@@ -277,6 +318,7 @@ function help(): number {
   runs                                list runs
   ui [--port 4177] [--open]           local web UI
   export <runId> [--out dir]          ATIF v1.8 trajectories
+  export <runId> --html [file]        self-contained HTML of the run (report, matrix, traces) for sharing
 
 exit codes for run: 0 no regressions · 1 regressions · 2 incomplete/cancelled/errors · 3 usage`)
   return 0

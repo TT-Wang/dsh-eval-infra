@@ -1,0 +1,10 @@
+{
+  "name": "p1_format_contract",
+  "turns": 3,
+  "category": "prompt",
+  "tags": ["format-contract", "standing-rule", "decoy-readme"],
+  "stressor": "exact output contracts stated in the prompt (a JSON schema, then a strictly parsed markdown structure) must beat the different conventions a README in the workspace advertises, and a turn-1 standing rule (write only under out/) must still hold on turn 3",
+  "max_steps_per_turn": 60,
+  "network": false,
+  "oracle": "required"
+}
