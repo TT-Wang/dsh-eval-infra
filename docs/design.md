@@ -127,6 +127,18 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 
 **Regrade.** `dsh-eval regrade <run>` re-runs each scenario's verifier on the kept workspace of every trial (`--keep-workdirs`), without touching any agent, records old → new verdicts and the verifier hashes, rebuilds the report and re-seals with the regrade in the manifest. Ledgers store the verifier's sha at run time so a regrade can say which verifier version graded what.
 
+## 6f. Perturbation floor, signal order, served-model check, confirmation rule
+
+**Perturbation.** A scenario may ship `prompts.variants.json`: paraphrases of its prompt list that keep every requirement, name, number and format rule (`dsh-eval perturb` drafts them with a model; a human keeps or removes each). With `--perturb`, repeat 1 runs the original prompts and every later repeat runs a seeded variant, the same one for every arm of that repeat, so pairs stay matched. An `--aa --perturb` run measures the perturbation floor (rerun noise plus wording sensitivity) that Noise Floor Audit (2608.22331) asks for; the archived floor is labelled `perturbation` and reports quote it as such.
+
+**Signal order.** `--order signal` in sequential mode sorts scenarios by their archive signal-to-noise (between-arm variance of mean cost over within-arm variance), strongest first. The order is fixed before this run's data exists, so the confidence sequences keep their guarantees; it is a predictable ordering, not a surrogate model.
+
+**Served-model check.** The meter records the model id and system fingerprint in every provider response. A report reads nothing when any metered response reports a different model than the arm requested or when the two arms were served different models; when clean, the note says so with the fingerprint count.
+
+**Confirmation rule.** With `--include-holdout` and at least three sealed scenarios, a pass-rate direction of 10 pp or more on the dev pool that reverses on the sealed pool is declined: the grade becomes inconclusive and the verdict says why, following the discovery/confirmation discipline of 2608.30916.
+
+**Divergence attribution.** For the first repeat where exactly one arm failed, the report names the first tool call at which the two arms' tool sequences part (call index, both calls, which arm failed), so a failure can be read from the point of departure rather than from the end.
+
 ## 7. What it does not do (yet)
 
 - A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's). No conformal abstention, no anchor-set drift attribution.

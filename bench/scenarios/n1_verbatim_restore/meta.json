@@ -9,5 +9,6 @@
   ],
   "oracle": "required",
   "max_steps_per_turn": 12,
-  "stressor": "verbatim restore across compaction; sole carrier is the conversation"
+  "stressor": "verbatim restore across compaction; sole carrier is the conversation",
+  "holdout": true
 }

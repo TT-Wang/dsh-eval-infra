@@ -102,6 +102,7 @@ The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
 | `run --baseline a --arm b [--arm c] [globs] [--repeats N] [--concurrency N] [--label L] [--aa] [--allow-multi] [--resume id] [--turn-timeout S] [--keep-workdirs] [--max-usd N] [--sequential --seed N] [--include-holdout]` | the paired run; prints the report |
 | `report <id> [--json]` | rebuild the report from the ledgers |
 | `judge <id> [--model M] [--arm A] [--seed N]` | blinded pairwise judge over scenarios with `meta.judge` |
+| `perturb <globs> [--n N] [--model M]` | write semantics-preserving paraphrases of a scenario's prompts (`prompts.variants.json`) for `--perturb`; review them by hand |
 | `verify <id> [--json]` | check the sealed evidence hashes and that the report re-derives from them (exit 1 on any change) |
 | `regrade <id>` | re-run verifiers on kept workspaces (`--keep-workdirs`), rebuild the report, re-seal |
 | `runs` | list runs |

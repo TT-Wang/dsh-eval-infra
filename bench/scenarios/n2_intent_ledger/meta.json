@@ -9,5 +9,6 @@
   ],
   "oracle": "required",
   "max_steps_per_turn": 12,
-  "stressor": "net-of-corrections intent state across flood; final task restates nothing"
+  "stressor": "net-of-corrections intent state across flood; final task restates nothing",
+  "holdout": true
 }

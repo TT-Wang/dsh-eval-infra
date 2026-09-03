@@ -357,3 +357,15 @@ describe('paraphrase variants', () => {
     expect(r.usd).toBeGreaterThan(0)
   })
 })
+
+describe('project prices', () => {
+  it('merges configured models over the built-in DeepSeek table and leaves the table alone otherwise', async () => {
+    const { projectPrices, DEFAULT_CONFIG } = await import('../src/core/project.js')
+    const { DEEPSEEK_PRICES, priceUsage } = await import('../src/core/pricing.js')
+    expect(projectPrices(DEFAULT_CONFIG)).toBeUndefined()
+    const table = projectPrices({ ...DEFAULT_CONFIG, prices: { asOf: '2026-09-04', models: { 'gpt-5.2': { hit: { peak: 1, offpeak: 1 }, miss: { peak: 2, offpeak: 2 }, output: { peak: 8, offpeak: 8 } } } } })!
+    expect(Object.keys(table.models)).toEqual(expect.arrayContaining(['deepseek-v4-flash', 'gpt-5.2']))
+    expect(table.peak).toEqual(DEEPSEEK_PRICES.peak)
+    expect(priceUsage('gpt-5.2', 'peak', { hit: 1e6, miss: 1e6, output: 1e6, reasoning: 0 }, table)).toBeCloseTo(11, 6)
+  })
+})

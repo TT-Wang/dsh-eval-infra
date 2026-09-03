@@ -146,3 +146,9 @@ f6 × 1 × 2 arms with `--keep-workdirs`, then `dsh-eval regrade`: `regraded 2 t
 ## fault-check-2 (2026-09-04, run 20260903-205605-tvbz)
 
 `--fault-rate 0.3` through the meter on f6 + p1 × 1 × 2 arms: `52 provider requests, 13 injected faults` (seeded 429s and stalls answered by the meter instead of the provider). All four trials passed; dsh's retry layer absorbed every fault, at the price of longer wall time (f6 baseline 49 s vs 24 s unfaulted) and unchanged usage (4/4 reconciled, 0.00% deviation, since faulted requests carry no usage). Total $0.0204. First exercise of fault injection.
+
+## sequential-signal (2026-09-04, run 20260903-210317-otgh)
+
+`--sequential --seed 7 --order signal` on 6 scenarios × 1 repeat: the order came from the archive's per-scenario signal-to-noise (c1, x1, p1, x2, f6, t1 — strongest first), fixed before any of this run's data was seen. The deciding sequence is now the hedged betting confidence sequence on the winsorized cost ratio: after 6 scenarios it was 1.02 [0.56, 1.46] (undecided), while the asymptotic Δ% sequence read +1.6% [−40.5%, +43.7%]. Both arms passed 6/6; 12/12 trials reconciled against the meter (100 requests); served-model check clean (one provider fingerprint). $0.053.
+
+For comparison, on the earlier sequential-check run the finite-sample sequence after 6 scenarios was 0.64–1.48 where the asymptotic one had been −5.5% to +24.8%; the exact sequence is wider, which is the price of validity at every look.

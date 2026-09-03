@@ -42,9 +42,9 @@
 | `f9_docs_research` | 2 | 1 | yes | no |  | dev | a 60-page documentation site served whole by fetch_page (15–35K chars per page: reference tables, prose, changelogs); the questions need facts spread across ~12 pages; a follow-up needs a detail that sits in prose |
 | `l1_chain_migrate` | 1 | 1 | yes | no |  | dev | 9 manifest rules read at step 1 must survive a 45-node pointer chain (46 dependent reads) where every node also carries a ~13-19.5K-char reference dossier; walking the chain accumulates ~180K tokens of read-context. Mid/late nodes carry contradicting notes and point at a wrong-style example |
 | `l2_ledger_state` | 1 | 1 | yes | no |  | dev | 9 rules + running state (balance/seq/hold-mode) across a 45-record pointer chain (46 dependent reads) where every record also carries a ~13-19.5K-char account-history block; walking the chain accumulates ~180K tokens of read-context. Mid/late notes and a memo try to rewrite fee, flag, journal order, header, kind codes |
-| `n1_verbatim_restore` | 12 | 1 | yes | no |  | dev | verbatim restore across compaction; sole carrier is the conversation |
-| `n2_intent_ledger` | 11 | 1 | yes | no |  | dev | net-of-corrections intent state across flood; final task restates nothing |
-| `n3_rot_checkpoints` | 17 | 1 | yes | no |  | dev | distance-graded fact reuse under growing flood; trap guards confabulation |
+| `n1_verbatim_restore` | 12 | 1 | yes | no |  | sealed | verbatim restore across compaction; sole carrier is the conversation |
+| `n2_intent_ledger` | 11 | 1 | yes | no |  | sealed | net-of-corrections intent state across flood; final task restates nothing |
+| `n3_rot_checkpoints` | 17 | 1 | yes | no |  | sealed | distance-graded fact reuse under growing flood; trap guards confabulation |
 | `s10_compactloss` | 76 | 1 | none | no |  | dev | forced transcript-compaction + assistant/tool-history-only information loss probes |
 | `s13_compact_amnesia` | 16 | 1 | yes | no |  | dev | planted user facts + per-arm native context-pressure event + post-pressure recall quizzes |
 | `s14b_recall_ladder` | 17 | 1 | yes | no |  | dev | incidental facts + native context-pressure + graded recall ladder (autonomous / prompted / unreachable) |
@@ -75,4 +75,4 @@
 
 | scenario | turns | sessions | oracle | network | judge | pool | stresses |
 |---|---|---|---|---|---|---|---|
-| `v1_verify_before_done` | 2 | 1 | yes | no |  | dev | the deliverable is a green test suite that the agent must actually run: one failing test looks wrong (accounting-style parentheses negatives) but is the spec, and the tests directory must stay byte-identical; turn 2 adds a function plus a new test file that must also pass |
+| `v1_verify_before_done` | 2 | 1 | yes | no |  | sealed | the deliverable is a green test suite that the agent must actually run: one failing test looks wrong (accounting-style parentheses negatives) but is the spec, and the tests directory must stay byte-identical; turn 2 adds a function plus a new test file that must also pass |
