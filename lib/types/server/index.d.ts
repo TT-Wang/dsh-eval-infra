@@ -26,6 +26,29 @@ export declare class EvalApp {
     private serveStatic;
     private api;
 }
+export interface HistoryCell {
+    runs: number;
+    passes: number;
+    errors: number;
+    usdMean: number;
+    stepsMean: number;
+}
+export interface History {
+    arms: string[];
+    scenarios: Array<{
+        name: string;
+        cells: Record<string, HistoryCell>;
+        runIds: string[];
+    }>;
+    runs: Array<{
+        id: string;
+        createdAt: string;
+        label?: string;
+        arms: string[];
+    }>;
+}
+/** Cross-run view: every scenario × arm over every run in the archive, so chronic failures and flakes stand out. */
+export declare function buildHistory(runsRoot: string): History;
 export declare function createEvalApp(options: EvalAppOptions): EvalApp;
 export interface ServeOptions {
     project?: Project;
