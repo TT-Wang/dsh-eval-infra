@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../api.js'
 import type { TraceRow } from '../../core/ledger.js'
 import { VirtualRows } from '../virtual.js'
+import { useDetail } from '../detail.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
@@ -11,6 +12,7 @@ const LABEL: Record<PairClass, string> = { regression: 'regression', improvement
 const GRADE_TONE: Record<Grade, string> = { improvement: 'good', regression: 'bad', tradeoff: 'warn', tie: 'neutral', inconclusive: 'neutral' }
 
 export function RunView({ id }: { id: string }) {
+  const [detailed] = useDetail()
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [ledgers, setLedgers] = useState<LedgerLite[]>([])
   const [logs, setLogs] = useState<string[]>([])
@@ -73,8 +75,8 @@ export function RunView({ id }: { id: string }) {
         </div>
       )}
 
-      {report && report.candidates.map(c => <Verdict key={c.arm} c={c} baseline={report.baseline} />)}
-      {detail.sequential && detail.sequential.decisions.length > 0 && (
+      {report && report.candidates.map(c => <Verdict key={c.arm} c={c} baseline={report.baseline} runId={id} detailed={detailed} />)}
+      {detailed && detail.sequential && detail.sequential.decisions.length > 0 && (
         <div class="card">
           <h2>Sequential decisions <span class="muted small">seed {detail.sequential.seed} · anytime-valid sequences after each scenario</span></h2>
           <table class="data"><thead><tr><th class="num">scenarios</th><th>cost Δ% sequence</th><th>pass sequence (0.5 = even)</th><th>decision</th></tr></thead>
@@ -155,9 +157,14 @@ export function RunView({ id }: { id: string }) {
         </div>
       ))}
 
-      {report && report.notes.length > 0 && <div class="card notes"><h2>Notes</h2><ul>{report.notes.map(n => <li>{n}</li>)}</ul></div>}
+      {report && report.notes.length > 0 && (
+        <div class="card notes">
+          <h2>Notes {!detailed && <span class="muted small">warnings only · switch to detailed for all {report.notes.length}</span>}</h2>
+          <ul>{(detailed ? report.notes : report.notes.filter(n => /withheld|NOT reconciled|MISMATCH|DIFFERS|WARNING|DRIFT|below the 3-repeat floor|multi-variable|flaky|Declined/i.test(n))).map(n => <li>{n}</li>)}</ul>
+        </div>
+      )}
 
-      <div class="card">
+      {detailed && <div class="card">
         <h2>Environment</h2>
         <dl class="facts">
           <dt>dsh</dt><dd>{env?.dshVersion ?? '?'}{env?.dshRevision ? <span class="muted small"> @ {env.dshRevision}</span> : null} <span class="muted small">{env?.dshSource ?? ''}</span></dd>
@@ -171,12 +178,12 @@ export function RunView({ id }: { id: string }) {
           {plan.perturb && <><dt>prompts</dt><dd>perturbation on: repeats above 1 ran seeded paraphrase variants, identical across arms</dd></>}
           <dt>arms</dt><dd>{env?.diffs?.map(d => <div><b>{d.candidate}</b>: {d.variables} variable(s){env.multiVariable ? <span class="warn-text"> · multi-variable comparison</span> : null}</div>)}{Object.entries(env?.composedTreeSha ?? {}).map(([a, sha]) => <div class="muted small">{a}: tree {sha.slice(0, 12)}</div>)}</dd>
         </dl>
-      </div>
+      </div>}
 
-      <div class="card">
+      {(detailed || running) && <div class="card">
         <h2 class="row between"><span>Log</span><button class="btn small" onClick={() => setShowLogs(!showLogs)}>{showLogs ? 'hide' : 'show'} ({logs.length})</button></h2>
         {showLogs && <pre class="log">{logs.join('\n')}</pre>}
-      </div>
+      </div>}
     </section>
   )
 }
@@ -211,12 +218,48 @@ function Forest({ c }: { c: CandidateReport }) {
   )
 }
 
-function Verdict({ c, baseline }: { c: CandidateReport; baseline: string }) {
+/** One line a reader can act on, without statistics vocabulary. */
+function plainVerdict(c: CandidateReport): string {
+  const pct = (x: number): string => `${Math.abs(x).toFixed(0)}%`
+  const regressions = c.scenarios.filter(p => p.class === 'regression')
+  if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. Cost is not compared until that is fixed.`
+  if (c.gate === 'incomplete') return `Some trials did not finish, so there is nothing to compare yet.`
+  if (c.costReading === 'cheaper') return `${c.arm} is cheaper by about ${pct(c.costPctCI.mean)} and breaks nothing.`
+  if (c.costReading === 'more-expensive') return `${c.arm} costs about ${pct(c.costPctCI.mean)} more and breaks nothing.`
+  if (c.costReading === 'equivalent') return `No real difference: cost is within ±10% and nothing broke.`
+  if (c.costReading === 'none') return `No scenario where both arms passed, so there is nothing to price.`
+  return `Not enough evidence yet. The measured difference is ${c.costPctCI.mean < 0 ? '−' : '+'}${pct(c.costPctCI.mean)}, but it could as easily be noise.`
+}
+
+/** The single most useful thing to do next, with the command that does it. */
+function nextStep(c: CandidateReport, runId: string, baseline: string): { text: string; cmd?: string } {
+  const comparable = c.scenarios.filter(p => p.costDiffPct !== null).length
+  const regression = c.scenarios.find(p => p.class === 'regression')
+  if (regression) return { text: `Look at where the two arms diverge on ${regression.scenario}, then confirm the failure is real and not luck.`, cmd: `dsh-eval rerun ${runId} ${regression.scenario} --fork` }
+  if (c.costReading === 'cheaper' || c.costReading === 'more-expensive' || c.costReading === 'equivalent') return { text: 'This result is usable. Bundle it if someone else needs to check it.', cmd: `dsh-eval publish ${runId}` }
+  if (comparable > 0 && comparable < 5) return { text: `Only ${comparable} scenario${comparable === 1 ? '' : 's'} could be compared; five is the minimum before any direction is stated. Run more of the library.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' 'x*' --repeats 3` }
+  if (c.noiseFloor === null) return { text: 'Measure what "no change" looks like on your setup first; every direction is judged against that floor.', cmd: `dsh-eval run --baseline ${baseline} --aa 'f*' --repeats 3` }
+  return { text: `This design can only detect a difference of about ±${c.mdePct === null ? '?' : c.mdePct.toFixed(0)}%. Add repeats or scenarios to see smaller ones.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' --repeats 5` }
+}
+
+function Verdict({ c, baseline, runId, detailed }: { c: CandidateReport; baseline: string; runId: string; detailed: boolean }) {
   const s = c.summary
+  const step = nextStep(c, runId, baseline)
   return (
     <div class={`verdict ${GRADE_TONE[c.grade]}`}>
       <div class="verdict-head"><span class={`grade ${c.grade}`}>{c.grade}</span> <b>{c.arm}</b> vs {baseline}</div>
-      <p class="verdict-text">{c.verdict}</p>
+      <p class="verdict-text">{detailed ? c.verdict : plainVerdict(c)}</p>
+      {!detailed && (
+        <>
+          <div class="cards simple">
+            <Stat label="scenarios passed" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
+            <Stat label="cost per solved task" a={fmt.usd(s.baseline.usdPerSolved)} b={fmt.usd(s.candidate.usdPerSolved)} />
+            <Stat label="cost difference" a={fmt.pct(c.costPctCI.mean)} b={c.costReading === 'inconclusive' || c.costReading === 'none' ? 'not conclusive' : c.costReading} />
+          </div>
+          <p class="next-step"><b>Next:</b> {step.text}{step.cmd ? <><br /><code>{step.cmd}</code></> : null}</p>
+        </>
+      )}
+      {detailed && (
       <div class="verdict-grid">
         <div class="cards">
           <Stat label="pass" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
@@ -240,6 +283,7 @@ function Verdict({ c, baseline }: { c: CandidateReport; baseline: string }) {
         </div>
         <div class="forest-wrap"><Forest c={c} /><div class="muted small">grey band ±10% (smallest effect of interest) · dashed lines: minimum detectable effect for this design</div></div>
       </div>
+      )}
     </div>
   )
 }

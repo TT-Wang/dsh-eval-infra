@@ -2,6 +2,7 @@ import { render } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { RunsView } from './views/runs.js'
 import { NewRunView } from './views/new-run.js'
+import { useDetail } from './detail.js'
 import { RunView } from './views/run.js'
 import { TraceView } from './views/trace.js'
 import { HistoryView } from './views/history.js'
@@ -30,6 +31,7 @@ function useDensity(): [boolean, () => void] {
 function App() {
   const hash = useHash()
   const [compact, toggleDensity] = useDensity()
+  const [detailed, toggleDetail] = useDetail()
   const [pathPart, query = ''] = hash.replace(/^#\/?/, '').split('?')
   const parts = (pathPart ?? '').split('/').filter(Boolean).map(decodeURIComponent)
   const preset = Object.fromEntries(new URLSearchParams(query).entries())
@@ -49,7 +51,7 @@ function App() {
           <a href="#/new" class={parts[0] === 'new' ? 'active' : ''}>New run</a>
           <a href="#/history" class={parts[0] === 'history' ? 'active' : ''}>History</a>
         </nav>
-        <button class="btn small density" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
+        <button class="btn small" title="switch between the plain summary and the full statistics, notes, environment and logs" onClick={toggleDetail}>{detailed ? 'simple' : 'detailed'}</button><button class="btn small density" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
       </header>
       <main>{view}</main>
     </div>
