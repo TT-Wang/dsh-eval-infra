@@ -1,3 +1,8 @@
+/** Rows a bundle patch turns off and rows it inserts, read from the plugin's own patch file. */
+export declare function summarisePatch(text: string): {
+    replaces: string[];
+    inserts: string[];
+};
 export interface DiscoveredPlugin {
     /** Package name, the value an arm row's `name` takes. */
     name: string;
@@ -11,6 +16,15 @@ export interface DiscoveredPlugin {
     installed: boolean;
     /** Declares `dsh.bundle`: a profile layer, not a single row. */
     bundle: boolean;
+    /**
+     * Absolute path of the patch file a bundle plugin ships. A replacement plugin
+     * declares here what it turns off and what it inserts, so an arm can apply the
+     * author's own patch instead of making the user rediscover the conflict.
+     */
+    bundlePatch?: string;
+    /** What that patch does, summarised: rows it disables and rows it inserts. */
+    replaces?: string[];
+    inserts?: string[];
     /** Declares `dsh.client`: ships a browser half too. */
     client: boolean;
     /** Suggested row id for an insert patch. */

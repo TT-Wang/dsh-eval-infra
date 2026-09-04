@@ -242,3 +242,50 @@ describe('arm design model', () => {
     expect(armToYaml(exotic)).toContain('{"remove":["tool-web"]}')
   })
 })
+
+describe('replacement plugins', () => {
+  it('reads a plugin\'s own patch, counts it as one variable, and says which file each row came from', async () => {
+    const { summarisePatch } = await import('../src/core/plugins.js')
+    const { rowsTouchedBy, describeDiff } = await import('../src/core/plan.js')
+    const { designFromSpec, armToYaml, variableCount } = await import('../src/ui/arm-model.js')
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const patch = [
+      '- id: agent-loop', '  disabled: true',
+      '- id: compaction-basic', '  disabled: true',
+      '- insert:', '    - id: slice-agent-loop', "      name: '@x/slice'", '',
+    ].join('\n')
+    expect(summarisePatch(patch)).toEqual({ replaces: ['agent-loop', 'compaction-basic'], inserts: ['slice-agent-loop'] })
+    expect(summarisePatch('not: a list')).toEqual({ replaces: [], inserts: [] })
+
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-eval-patch-'))
+    const file = join(dir, 'cordis.patch.yml')
+    writeFileSync(file, patch)
+    expect(rowsTouchedBy(file).sort()).toEqual(['agent-loop', 'compaction-basic', 'slice-agent-loop'])
+    expect(rowsTouchedBy(join(dir, 'absent.yml'))).toEqual([])
+
+    // three rows move, but one file did it, so the one-variable rule sees one decision
+    const diff: import('../src/core/plan.js').ArmDiff = {
+      candidate: 'slice',
+      rows: [
+        { id: 'agent-loop', kind: 'changed' as const, fields: ['disabled'] },
+        { id: 'compaction-basic', kind: 'changed' as const, fields: ['disabled'] },
+        { id: 'slice-agent-loop', kind: 'added' as const, fields: [], after: { name: '@x/slice' } },
+      ],
+      route: [],
+      variables: 1,
+      patchSources: [{ file, rows: ['agent-loop', 'compaction-basic', 'slice-agent-loop'] }],
+    }
+    const lines = describeDiff(diff)
+    expect(lines.every(l => l.includes('via'))).toBe(true)
+
+    // the designer carries the whole patch as one card and writes it back as a patch file
+    const design = designFromSpec({ name: 'slice', patchFiles: [file] }, [{ name: '@x/slice', bundlePatch: file, replaces: ['agent-loop', 'compaction-basic'], inserts: ['slice-agent-loop'] }])
+    expect(design.rows).toHaveLength(1)
+    expect(design.rows[0]).toMatchObject({ kind: 'bundle', name: '@x/slice' })
+    expect(variableCount(design)).toBe(1)
+    expect(armToYaml(design)).toContain(`patchFiles:\n  - ${file}`)
+  })
+})

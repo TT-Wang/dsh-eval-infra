@@ -35,7 +35,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -278,6 +278,25 @@ async function cmdPerturb(project: Project, args: Args): Promise<number> {
   return 0
 }
 
+async function cmdPreflight(project: Project, args: Args): Promise<number> {
+  const arm = args.positional[0]
+  if (arm === undefined) { err('usage: dsh-eval preflight <arm> [--scenario z0_env_smoke] [--dry]'); return 3 }
+  const { preflightArm } = await import('./core/preflight.js')
+  const r = await preflightArm(project, arm, {
+    ...(typeof args.flags['scenario'] === 'string' ? { scenario: args.flags['scenario'] } : {}),
+    ...(args.flags['dry'] === true ? { dry: true } : {}),
+    log: out,
+  })
+  out('')
+  for (const s of r.stages) out(`  ${s.ok ? 'OK  ' : 'FAIL'} ${s.name.padEnd(8)} ${s.detail}`)
+  if (r.rows.length > 0) for (const row of r.rows) out(`       row ${row.id}: ${row.present ? (row.enabled ? 'mounted' : 'present but disabled') : 'MISSING from the composed tree'}${row.inBaseline ? ' · ALSO in the baseline, so it is in both arms' : ''}`)
+  for (const line of r.diff) out(`       ${line}`)
+  if (r.smoke !== undefined && r.smoke.ok) out(`       tools available to the agent: ${r.smoke.tools.length} (${r.smoke.tools.slice(0, 6).join(', ')}${r.smoke.tools.length > 6 ? ', …' : ''})`)
+  if (r.smoke !== undefined && !r.smoke.ok) out(`       the full stack is in the trial's ledger under .dsh-eval/runs`)
+  out(r.ok ? `${arm} loads and runs` : `${arm} is not ready`)
+  return r.ok ? 0 : 1
+}
+
 async function cmdProbe(project: Project, args: Args): Promise<number> {
   const { probeRoute } = await import('./core/orchestrate.js')
   const v = await probeRoute(project, {
@@ -454,6 +473,7 @@ SET UP
   selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
   diff <baseline> <candidate>...      composed-tree diff between arms
   perturb <globs> [--n N]             draft paraphrases of a scenario's prompts (prompts.variants.json) for --perturb
+  preflight <arm> [--scenario S] [--dry]   compose the arm, check its rows mounted, then boot a runtime and run one turn (--dry stops before spending)
   probe [--model M] [--samples N] [--enroll]   fingerprint the route's served model against an enrolled reference (exit 1 when it differs)
 
 RUN
@@ -502,6 +522,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'verify': return cmdVerify(project, args)
     case 'perturb': return cmdPerturb(project, args)
     case 'probe': return cmdProbe(project, args)
+    case 'preflight': return cmdPreflight(project, args)
     case 'regrade': return cmdRegrade(project, args)
     case 'rerun': return cmdRerun(project, args)
     case 'publish': return cmdPublish(project, args)

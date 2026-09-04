@@ -55,7 +55,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
-export interface PluginInfo { name: string; version?: string; description?: string; path: string; source: 'profile' | 'local' | 'global'; installed: boolean; bundle: boolean; client: boolean; rowId: string }
+export interface PluginInfo { name: string; version?: string; description?: string; path: string; source: 'profile' | 'local' | 'global'; installed: boolean; bundle: boolean; bundlePatch?: string; replaces?: string[]; inserts?: string[]; client: boolean; rowId: string }
+export interface Preflight {
+  arm: string; baseline: string; ok: boolean
+  stages: Array<{ name: 'compose' | 'mounted' | 'runs'; ok: boolean; detail: string }>
+  rows: Array<{ id: string; name?: string; present: boolean; enabled: boolean; inBaseline: boolean }>
+  diff: string[]; variables: number
+  smoke?: { scenario: string; ok: boolean; usd: number; steps: number; tools: string[]; error?: string; wallMs: number }
+}
 export interface RowInfo { id: string; name?: string; disabled: boolean; configKeys: string[]; config?: Record<string, unknown> }
 export interface Pattern { kind: 'failure' | 'behaviour'; signature: string; count: number; scenarios: string[]; arms: string[]; runs: string[]; firstSeen: string; lastSeen: string; example: string; share: number; armSkew: number }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
@@ -68,7 +75,9 @@ export const api = {
   history: () => req<History>('/history'),
   runs: () => req<RunRow[]>('/runs'),
   plugins: () => req<{ plugins: PluginInfo[] }>('/plugins'),
+  preflight: (arm: string, dry: boolean) => req<Preflight>('/preflight', { method: 'POST', body: JSON.stringify({ arm, dry }) }),
   rows: (arm: string) => req<{ arm: string; rows: RowInfo[] }>(`/rows?arm=${encodeURIComponent(arm)}`),
+  savePatch: (name: string, text: string) => req<{ saved: string }>(`/patch/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),
   saveArm: (name: string, text: string) => req<{ saved: string; spec: unknown }>(`/arms/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),
   deleteArm: (name: string) => req<{ deleted: string }>(`/arms/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   run: (id: string) => req<RunDetail>(`/runs/${id}`),

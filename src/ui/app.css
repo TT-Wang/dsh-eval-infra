@@ -15,6 +15,7 @@
 .row-insert { border-left-color: hsl(var(--primary)); }
 .row-disable { border-left-color: hsl(var(--destructive)); }
 .row-other { border-left-color: hsl(var(--muted-foreground)); }
+.row-bundle { border-left-color: #b26a00; }
 
 /* ---------- trial matrix ---------- */
 .pip { display: inline-block; width: 10px; height: 10px; border-radius: 999px; margin-right: 3px; background: hsl(var(--muted)); vertical-align: middle; }

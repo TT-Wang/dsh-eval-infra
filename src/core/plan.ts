@@ -3,6 +3,7 @@
  * through dsh itself, count the variables that differ between baseline and
  * candidate, and record the environment facts a reader needs to trust the run.
  */
+import yaml from 'js-yaml'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { armOverlays, diffComposedRows, diffRoute, dumpComposedTree, parseComposedRows, resolveArm, sha256, type ComposedRows, type DshInvoker, type RowDiff } from './arms.js'
@@ -15,8 +16,14 @@ export interface ArmDiff {
   candidate: string
   rows: RowDiff[]
   route: string[]
-  /** Number of independent variables: differing rows plus differing route fields. */
+  /**
+   * Independent variables, not differing rows. A plugin that replaces part of dsh
+   * ships one patch file that turns several rows off and inserts itself; applying
+   * that file is one decision, so every row it accounts for counts once together.
+   */
   variables: number
+  /** Patch files the arm applied, with the rows each accounts for. */
+  patchSources?: Array<{ file: string; rows: string[] }>
 }
 
 export interface PreparedArms {
@@ -55,7 +62,17 @@ export async function prepareArms(baseline: ArmSpec, candidates: ArmSpec[], opti
   const diffs: ArmDiff[] = resolvedCandidates.map((cand) => {
     const rows = diffComposedRows(trees.get(resolvedBaseline.name)!, trees.get(cand.name)!)
     const route = diffRoute(resolvedBaseline, cand)
-    return { candidate: cand.name, rows, route, variables: rows.length + route.length }
+    const patchSources: Array<{ file: string; rows: string[] }> = []
+    const claimed = new Set<string>()
+    // Files applied by either arm: removing a plugin on the baseline side is one
+    // decision that moves several rows, exactly like adding it on the other side.
+    for (const file of [...resolvedBaseline.patchFilePaths, ...cand.patchFilePaths]) {
+      const touched = rowsTouchedBy(file).filter(id => rows.some(r => r.id === id) && !claimed.has(id))
+      for (const id of touched) claimed.add(id)
+      if (touched.length > 0) patchSources.push({ file, rows: touched })
+    }
+    const loose = rows.filter(r => !claimed.has(r.id)).length
+    return { candidate: cand.name, rows, route, variables: loose + patchSources.length + route.length, ...(patchSources.length > 0 ? { patchSources } : {}) }
   })
   return { baseline: resolvedBaseline, candidates: resolvedCandidates, diffs, composed, trees }
 }
@@ -77,12 +94,35 @@ export async function recordEnvironment(composed: Record<string, string>): Promi
 }
 
 /** Human-readable one-line-per-difference summary of an arm diff. */
+/** Row ids a patch file affects: what one applied file accounts for in the diff. */
+export function rowsTouchedBy(file: string): string[] {
+  if (!existsSync(file)) return []
+  let parsed: unknown
+  try { parsed = yaml.load(readFileSync(file, 'utf8')) } catch { return [] }
+  if (!Array.isArray(parsed)) return []
+  const ids: string[] = []
+  for (const row of parsed) {
+    if (row === null || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    if (typeof r['id'] === 'string') ids.push(r['id'])
+    if (Array.isArray(r['insert'])) {
+      for (const entry of r['insert']) {
+        if (entry !== null && typeof entry === 'object' && typeof (entry as Record<string, unknown>)['id'] === 'string') ids.push((entry as Record<string, unknown>)['id'] as string)
+      }
+    }
+  }
+  return ids
+}
+
 export function describeDiff(diff: ArmDiff): string[] {
   const out: string[] = []
+  const bySource = new Map<string, string>()
+  for (const source of diff.patchSources ?? []) for (const id of source.rows) bySource.set(id, source.file.split('/').slice(-2).join('/'))
   for (const r of diff.rows) {
-    if (r.kind === 'added') out.push(`+ row ${r.id} (${String((r.after as Record<string, unknown> | undefined)?.['name'] ?? '')})`)
-    else if (r.kind === 'removed') out.push(`− row ${r.id}`)
-    else out.push(`~ row ${r.id}: ${r.fields.join(', ')}`)
+    const via = bySource.has(r.id) ? ` · via ${bySource.get(r.id)!}` : ''
+    if (r.kind === 'added') out.push(`+ row ${r.id} (${String((r.after as Record<string, unknown> | undefined)?.['name'] ?? '')})${via}`)
+    else if (r.kind === 'removed') out.push(`− row ${r.id}${via}`)
+    else out.push(`~ row ${r.id}: ${r.fields.join(', ')}${via}`)
   }
   for (const f of diff.route) out.push(`~ route ${f}`)
   if (out.length === 0) out.push('(identical composition — the arms do not differ)')

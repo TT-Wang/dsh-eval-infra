@@ -7,9 +7,18 @@
 
 export interface InsertRow { kind: 'insert'; id: string; name: string; config?: Record<string, unknown> }
 export interface DisableRow { kind: 'disable'; id: string }
+/** Turn a row back on: what an arm needs when the profile itself disabled it. */
+export interface EnableRow { kind: 'enable'; id: string }
 export interface ConfigRow { kind: 'config'; id: string; config: Record<string, unknown> }
 export interface RawRow { kind: 'raw'; row: unknown }
-export type DesignRow = InsertRow | DisableRow | ConfigRow | RawRow
+/**
+ * A plugin that replaces part of dsh ships its own patch: it turns some stock
+ * rows off and inserts itself. Applying that file is one decision by the user
+ * even though it moves several rows, so the designer carries it as one card and
+ * the one-variable rule counts it once.
+ */
+export interface BundleRow { kind: 'bundle'; name: string; path: string; replaces: string[]; inserts: string[] }
+export type DesignRow = InsertRow | DisableRow | EnableRow | ConfigRow | RawRow | BundleRow
 
 export interface ArmDesign {
   name: string
@@ -25,11 +34,19 @@ interface ArmSpecLike {
   model?: string
   effort?: string
   patches?: unknown[]
+  patchFiles?: string[]
 }
 
+/** Plugin facts the designer needs to describe a patch file it did not write. */
+export interface BundleSource { name: string; bundlePatch?: string; replaces?: string[]; inserts?: string[] }
+
 /** Read an arm file's parsed spec into the designer's model. */
-export function designFromSpec(spec: ArmSpecLike): ArmDesign {
+export function designFromSpec(spec: ArmSpecLike, plugins: BundleSource[] = []): ArmDesign {
   const rows: DesignRow[] = []
+  for (const file of spec.patchFiles ?? []) {
+    const plugin = plugins.find(p => p.bundlePatch === file)
+    rows.push({ kind: 'bundle', name: plugin?.name ?? file, path: file, replaces: plugin?.replaces ?? [], inserts: plugin?.inserts ?? [] })
+  }
   for (const patch of spec.patches ?? []) {
     if (patch === null || typeof patch !== 'object') { rows.push({ kind: 'raw', row: patch }); continue }
     const p = patch as Record<string, unknown>
@@ -53,6 +70,7 @@ export function designFromSpec(spec: ArmSpecLike): ArmDesign {
       }
     }
     if (typeof p['id'] === 'string' && p['disabled'] === true) { rows.push({ kind: 'disable', id: p['id'] }); continue }
+    if (typeof p['id'] === 'string' && p['disabled'] === false && Object.keys(p).length === 2) { rows.push({ kind: 'enable', id: p['id'] }); continue }
     if (typeof p['id'] === 'string' && p['config'] !== null && typeof p['config'] === 'object' && Object.keys(p).length === 2) {
       rows.push({ kind: 'config', id: p['id'], config: p['config'] as Record<string, unknown> })
       continue
@@ -90,10 +108,15 @@ export function armToYaml(design: ArmDesign): string {
   if (design.description !== undefined && design.description.trim() !== '') lines.push(`description: ${design.description.trim()}`)
   if (design.model !== undefined) lines.push(`model: ${design.model}`)
   if (design.effort !== undefined) lines.push(`effort: ${design.effort}`)
-  const modelled = design.rows.filter(r => r.kind !== 'raw')
+  const bundles = design.rows.filter((r): r is BundleRow => r.kind === 'bundle')
+  if (bundles.length > 0) {
+    lines.push('patchFiles:')
+    for (const b of bundles) lines.push(`  - ${b.path}   # ${b.name}`)
+  }
+  const modelled = design.rows.filter(r => r.kind !== 'raw' && r.kind !== 'bundle')
   const raw = design.rows.filter((r): r is RawRow => r.kind === 'raw')
   if (modelled.length === 0 && raw.length === 0) {
-    if (design.model === undefined && design.effort === undefined) lines.push('patches: []')
+    if (design.model === undefined && design.effort === undefined && bundles.length === 0) lines.push('patches: []')
     return lines.join('\n') + '\n'
   }
   lines.push('patches:')
@@ -111,6 +134,7 @@ export function armToYaml(design: ArmDesign): string {
   }
   for (const row of modelled) {
     if (row.kind === 'disable') lines.push(`  - id: ${row.id}`, '    disabled: true')
+    if (row.kind === 'enable') lines.push(`  - id: ${row.id}`, '    disabled: false')
     if (row.kind === 'config') {
       lines.push(`  - id: ${row.id}`, '    config:')
       lines.push(...configBlock(row.config, '      '))
@@ -120,11 +144,26 @@ export function armToYaml(design: ArmDesign): string {
   return lines.join('\n') + '\n'
 }
 
+/**
+ * The arm-A side of a plugin the profile itself activates. When a plugin is
+ * installed as a profile layer it lands in both arms, so the comparison is made
+ * by removing it from the baseline: turn off what it inserted and turn back on
+ * what it replaced.
+ */
+export function inverseOf(plugin: { inserts?: string[]; replaces?: string[] }): DesignRow[] {
+  return [
+    ...(plugin.inserts ?? []).map((id): DesignRow => ({ kind: 'disable', id })),
+    ...(plugin.replaces ?? []).map((id): DesignRow => ({ kind: 'enable', id })),
+  ]
+}
+
 /** A one-line, human description of a row, for the card in the designer. */
 export function describeRow(row: DesignRow): string {
   switch (row.kind) {
     case 'insert': return row.name
+    case 'bundle': return row.replaces.length > 0 ? `replaces ${row.replaces.join(', ')}` : 'applies the plugin\'s own patch'
     case 'disable': return `${row.id} turned off`
+    case 'enable': return `${row.id} turned back on`
     case 'config': return `${row.id}: ${Object.entries(row.config).map(([k, v]) => `${k} = ${String(v)}`).join(', ')}`
     default: return 'custom patch row'
   }

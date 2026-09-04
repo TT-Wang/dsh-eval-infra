@@ -10,8 +10,29 @@
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
+import yaml from 'js-yaml'
 import { evalProfileManifest } from './plan.js'
+
+/** Rows a bundle patch turns off and rows it inserts, read from the plugin's own patch file. */
+export function summarisePatch(text: string): { replaces: string[]; inserts: string[] } {
+  const replaces: string[] = []
+  const inserts: string[] = []
+  let parsed: unknown
+  try { parsed = yaml.load(text) } catch { return { replaces, inserts } }
+  if (!Array.isArray(parsed)) return { replaces, inserts }
+  for (const row of parsed) {
+    if (row === null || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    if (typeof r['id'] === 'string' && r['disabled'] === true) replaces.push(r['id'])
+    if (Array.isArray(r['insert'])) {
+      for (const entry of r['insert']) {
+        if (entry !== null && typeof entry === 'object' && typeof (entry as Record<string, unknown>)['id'] === 'string') inserts.push((entry as Record<string, unknown>)['id'] as string)
+      }
+    }
+  }
+  return { replaces, inserts }
+}
 
 export interface DiscoveredPlugin {
   /** Package name, the value an arm row's `name` takes. */
@@ -26,6 +47,15 @@ export interface DiscoveredPlugin {
   installed: boolean
   /** Declares `dsh.bundle`: a profile layer, not a single row. */
   bundle: boolean
+  /**
+   * Absolute path of the patch file a bundle plugin ships. A replacement plugin
+   * declares here what it turns off and what it inserts, so an arm can apply the
+   * author's own patch instead of making the user rediscover the conflict.
+   */
+  bundlePatch?: string
+  /** What that patch does, summarised: rows it disables and rows it inserts. */
+  replaces?: string[]
+  inserts?: string[]
   /** Declares `dsh.client`: ships a browser half too. */
   client: boolean
   /** Suggested row id for an insert patch. */
@@ -57,8 +87,20 @@ function describe(dir: string, source: DiscoveredPlugin['source'], installedName
   if (m === null || !looksLikePlugin(m)) return null
   const name = m['name'] as string
   const dsh = (m['dsh'] ?? {}) as Record<string, unknown>
+  const bundleDecl = (dsh['bundle'] ?? {}) as Record<string, unknown>
+  let bundlePatch: string | undefined
+  let summary: { replaces: string[]; inserts: string[] } | undefined
+  if (typeof bundleDecl['patch'] === 'string') {
+    const patchPath = isAbsolute(bundleDecl['patch']) ? bundleDecl['patch'] : resolve(dir, bundleDecl['patch'])
+    if (existsSync(patchPath)) {
+      bundlePatch = patchPath
+      try { summary = summarisePatch(readFileSync(patchPath, 'utf8')) } catch { summary = undefined }
+    }
+  }
   return {
     name,
+    ...(bundlePatch !== undefined ? { bundlePatch } : {}),
+    ...(summary !== undefined ? { replaces: summary.replaces, inserts: summary.inserts } : {}),
     ...(typeof m['version'] === 'string' ? { version: m['version'] } : {}),
     ...(typeof m['description'] === 'string' ? { description: m['description'] } : {}),
     path: dir,

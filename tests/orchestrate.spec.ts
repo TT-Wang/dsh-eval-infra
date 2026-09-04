@@ -248,3 +248,43 @@ describe('cli entry point', () => {
     expect(await run(cli)).toBe(await run(link))
   })
 })
+
+describe('preflight', () => {
+  it('checks composition and mounting, then boots a runtime, and names the cause when one refuses', async () => {
+    const { preflightArm, explainRuntimeFailure } = await import('../src/core/preflight.js')
+    const { writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const p = project()
+    // an arm that inserts a row and then turns it off: it never reaches the agent, and no run is spent finding out
+    writeFileSync(join(p.armsDir, 'ghost.yml'), "name: ghost\npatches:\n  - insert:\n      - id: ghost-row\n        name: '@x/ghost'\n  - id: ghost-row\n    disabled: true\n")
+    const ghost = await preflightArm(p, 'ghost', { dry: true, invoke: fakeDsh })
+    expect(ghost.stages.map(s => s.name)).toEqual(['compose', 'mounted'])
+    expect(ghost.stages[1]!.ok).toBe(false)
+    expect(ghost.stages[1]!.detail).toContain('present but disabled')
+    expect(ghost.rows[0]).toMatchObject({ id: 'ghost-row', present: true, enabled: false, inBaseline: false })
+    expect(ghost.ok).toBe(false)
+
+    // the real candidate composes and mounts; --dry stops before the live turn
+    const dry = await preflightArm(p, 'persona', { dry: true, invoke: fakeDsh })
+    expect(dry.ok).toBe(true)
+    expect(dry.smoke).toBeUndefined()
+    expect(dry.stages.find(s => s.name === 'compose')!.detail).toContain('variable')
+
+    // the live stage runs a scenario through the driver and reports what it cost
+    const live = await preflightArm(p, 'persona', { invoke: fakeDsh, driverFactory: scriptedDriverFactory(), scenario: 't1_write_answer' })
+    expect(live.stages.map(s => s.name)).toEqual(['compose', 'mounted', 'runs'])
+    expect(live.ok).toBe(true)
+    expect(live.smoke?.scenario).toBe('t1_write_answer')
+    expect(live.smoke!.usd).toBeGreaterThan(0)
+
+    // a crashing runtime fails the third stage, and the cause is pulled out of the trace
+    const crashing = await preflightArm(p, 'persona', { invoke: fakeDsh, driverFactory: scriptedDriverFactory({ crashing: ['persona'] }), scenario: 't1_write_answer' })
+    expect(crashing.ok).toBe(false)
+    expect(crashing.stages.find(s => s.name === 'runs')!.ok).toBe(false)
+
+    expect(explainRuntimeFailure('dsh profile "eval": JSON-RPC input closed\nexit code: 1\nstderr tail:\nError: dsh: plugin tree failed to load: duplicate loader entry id: slice-agent-loop\n    at Foo'))
+      .toBe('dsh: plugin tree failed to load: duplicate loader entry id: slice-agent-loop')
+    expect(explainRuntimeFailure('something odd\nTypeError: deps.driverFactory is not a function')).toBe('deps.driverFactory is not a function')
+    expect(explainRuntimeFailure('just one line')).toBe('just one line')
+  })
+})
