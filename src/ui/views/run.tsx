@@ -217,30 +217,42 @@ export function RunView({ id }: { id: string }) {
 
 /** Forest strip: point estimate with its interval on a shared ±axis; the SESOI band and the A/A floor are drawn behind it. */
 function Forest({ c }: { c: CandidateReport }) {
+  // A pixel-like coordinate space scaled uniformly: a percentage-width viewBox with
+  // preserveAspectRatio="none" stretches the glyphs, which is what made this strip unreadable.
+  const W = 1000
+  const ROW = 46
+  const PAD_BOTTOM = 26
   const lim = Math.max(20, Math.abs(c.costPctCI.lo), Math.abs(c.costPctCI.hi), Math.abs(c.noiseFloor?.lo ?? 0), Math.abs(c.noiseFloor?.hi ?? 0), c.mdePct ?? 0) * 1.15
-  const x = (v: number): number => 50 + v / lim * 48
+  const x = (v: number): number => W / 2 + (v / lim) * (W / 2 - 24)
   const rows: Array<{ label: string; lo: number; hi: number; mean: number; tone: string }> = [
     { label: 'Δ cost % (paired)', lo: c.costPctCI.lo, hi: c.costPctCI.hi, mean: c.costPctCI.mean, tone: c.costReading === 'cheaper' ? 'good' : c.costReading === 'more-expensive' ? 'bad' : 'neutral' },
     { label: 'Δ pass (pp)', lo: c.passDiffCI.lo, hi: c.passDiffCI.hi, mean: c.passDiffCI.mean, tone: c.passDiffCI.mean > 0 ? 'good' : c.passDiffCI.mean < 0 ? 'bad' : 'neutral' },
   ]
-  if (c.noiseFloor) rows.push({ label: `A/A floor (${c.noiseFloor.runId.slice(0, 15)})`, lo: c.noiseFloor.lo, hi: c.noiseFloor.hi, mean: 0, tone: 'floor' })
-  const h = 22
+  if (c.noiseFloor) rows.push({ label: `A/A floor · ${c.noiseFloor.runId.slice(0, 15)}`, lo: c.noiseFloor.lo, hi: c.noiseFloor.hi, mean: 0, tone: 'floor' })
+  const H = rows.length * ROW + PAD_BOTTOM
   return (
-    <svg class="forest" viewBox={`0 0 100 ${rows.length * h + 14}`} preserveAspectRatio="none" role="img" aria-label="paired estimates with 95% intervals">
-      <rect x={x(-10)} y={0} width={x(10) - x(-10)} height={rows.length * h} class="sesoi" />
-      {c.mdePct !== null && <><line x1={x(-c.mdePct)} x2={x(-c.mdePct)} y1={0} y2={rows.length * h} class="mde" /><line x1={x(c.mdePct)} x2={x(c.mdePct)} y1={0} y2={rows.length * h} class="mde" /></>}
-      <line x1={x(0)} x2={x(0)} y1={0} y2={rows.length * h} class="zero" />
+    <svg class="forest" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="paired estimates with 95% intervals">
+      <rect x={x(-10)} y={0} width={x(10) - x(-10)} height={rows.length * ROW} class="sesoi" />
+      {c.mdePct !== null && (
+        <>
+          <line x1={x(-c.mdePct)} x2={x(-c.mdePct)} y1={0} y2={rows.length * ROW} class="mde" />
+          <line x1={x(c.mdePct)} x2={x(c.mdePct)} y1={0} y2={rows.length * ROW} class="mde" />
+        </>
+      )}
+      <line x1={x(0)} x2={x(0)} y1={0} y2={rows.length * ROW} class="zero" />
       {rows.map((r, i) => (
-        <g transform={`translate(0 ${i * h + h / 2})`} class={`row ${r.tone}`}>
+        <g key={r.label} transform={`translate(0 ${i * ROW + ROW * 0.68})`} class={`row ${r.tone}`}>
           <line x1={x(Math.max(-lim, r.lo))} x2={x(Math.min(lim, r.hi))} y1={0} y2={0} class="ci" />
-          <circle cx={x(Math.max(-lim, Math.min(lim, r.mean)))} cy={0} r={2.2} class="pt" />
-          <text x={1} y={-4} class="lbl">{r.label}</text>
-          <text x={99} y={-4} class="lbl right">{fmt.pct(r.mean)} [{fmt.pct(r.lo)}, {fmt.pct(r.hi)}]</text>
+          <line x1={x(Math.max(-lim, r.lo))} x2={x(Math.max(-lim, r.lo))} y1={-5} y2={5} class="ci cap" />
+          <line x1={x(Math.min(lim, r.hi))} x2={x(Math.min(lim, r.hi))} y1={-5} y2={5} class="ci cap" />
+          <circle cx={x(Math.max(-lim, Math.min(lim, r.mean)))} cy={0} r={5} class="pt" />
+          <text x={4} y={-13} class="lbl">{r.label}</text>
+          <text x={W - 4} y={-13} class="lbl right">{fmt.pct(r.mean)} [{fmt.pct(r.lo)}, {fmt.pct(r.hi)}]</text>
         </g>
       ))}
-      <text x={x(-lim)} y={rows.length * h + 10} class="axis">−{lim.toFixed(0)}%</text>
-      <text x={x(0)} y={rows.length * h + 10} class="axis mid">0</text>
-      <text x={x(lim)} y={rows.length * h + 10} class="axis right">+{lim.toFixed(0)}%</text>
+      <text x={x(-lim) + 2} y={H - 8} class="axis">−{lim.toFixed(0)}%</text>
+      <text x={x(0)} y={H - 8} class="axis mid">0</text>
+      <text x={x(lim) - 2} y={H - 8} class="axis right">+{lim.toFixed(0)}%</text>
     </svg>
   )
 }

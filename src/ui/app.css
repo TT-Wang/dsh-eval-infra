@@ -27,13 +27,21 @@ a.pip:hover { outline: 2px solid hsl(var(--primary)); outline-offset: 1px; }
 @keyframes pip-pulse { 50% { opacity: .35; } }
 
 /* ---------- verdict, intervals, history ---------- */
-.forest { width: 100%; height: auto; }
-.forest .band { fill: hsl(var(--muted)); }
-.forest .zero { stroke: hsl(var(--muted-foreground)); stroke-width: .4; }
-.forest .mde { stroke: hsl(var(--muted-foreground)); stroke-width: .3; stroke-dasharray: 1 1.5; }
-.forest .ci { stroke: hsl(var(--foreground)); stroke-width: .8; }
-.forest .point { fill: hsl(var(--foreground)); }
-.forest .label { fill: hsl(var(--muted-foreground)); font-size: 3px; }
+.forest { width: 100%; height: auto; display: block; font-family: inherit; }
+.forest .sesoi { fill: hsl(var(--muted) / .75); }
+.forest .zero { stroke: hsl(var(--muted-foreground)); stroke-width: 1; }
+.forest .mde { stroke: hsl(var(--muted-foreground) / .7); stroke-width: 1; stroke-dasharray: 4 4; }
+.forest .ci { stroke: hsl(var(--foreground)); stroke-width: 2.5; stroke-linecap: round; }
+.forest .ci.cap { stroke-width: 2; }
+.forest .pt { fill: hsl(var(--foreground)); }
+.forest .row.good .ci, .forest .row.good .pt { stroke: #0b7a5f; fill: #0b7a5f; }
+.forest .row.bad .ci, .forest .row.bad .pt { stroke: hsl(var(--destructive)); fill: hsl(var(--destructive)); }
+.forest .row.floor .ci, .forest .row.floor .pt { stroke: hsl(var(--muted-foreground)); fill: hsl(var(--muted-foreground)); stroke-dasharray: 5 4; }
+.forest .lbl { fill: hsl(var(--muted-foreground)); font-size: 15px; }
+.forest .lbl.right { text-anchor: end; }
+.forest .axis { fill: hsl(var(--muted-foreground)); font-size: 13px; }
+.forest .axis.mid { text-anchor: middle; }
+.forest .axis.right { text-anchor: end; }
 .sparkbars { display: inline-flex; align-items: flex-end; gap: 1px; height: 16px; margin-left: 6px; vertical-align: middle; }
 .sparkbars i { width: 3px; background: #10a37f; display: block; }
 .sparkbars i.ko { background: hsl(var(--destructive)); }
