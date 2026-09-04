@@ -22,4 +22,12 @@ await build({
 })
 copyFileSync(join(root, 'src', 'ui', 'index.html'), join(out, 'index.html'))
 copyFileSync(join(root, 'src', 'ui', 'app.css'), join(out, 'app.css'))
+// Franken UI (the design system this tool shares with dsh-assembler) ships as
+// three static files; they are copied rather than bundled so the browser can
+// cache them across rebuilds of the app itself.
+const vendorOut = join(out, 'vendor')
+mkdirSync(vendorOut, { recursive: true })
+for (const file of ['core.min.css', 'utilities.min.css', 'core.iife.js', 'LICENSE-franken-ui.md']) {
+  copyFileSync(join(root, 'src', 'ui', 'vendor', file), join(vendorOut, file))
+}
 console.log(`ui → ${out}`)

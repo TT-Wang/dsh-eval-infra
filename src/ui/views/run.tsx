@@ -3,6 +3,7 @@ import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../ap
 import type { TraceRow } from '../../core/ledger.js'
 import { VirtualRows } from '../virtual.js'
 import { useDetail } from '../detail.js'
+import { LiveRun, type StreamEvent } from './live.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
@@ -21,6 +22,7 @@ export function RunView({ id }: { id: string }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [showLogs, setShowLogs] = useState(false)
   const [sortKey, setSortKey] = useState<'class' | 'cost' | 'name'>('class')
+  const [events, setEvents] = useState<StreamEvent[]>([])
 
   const load = (): void => {
     api.run(id).then((d) => { setDetail(d); setLogs(d.logs) }).catch(e => setError(String(e)))
@@ -28,13 +30,34 @@ export function RunView({ id }: { id: string }) {
   }
   useEffect(() => {
     load()
-    const stop = stream(id, (event, data) => {
-      if (event === 'progress' && data) setDetail(d => d ? { ...d, progress: data as Progress } : d)
+    // `stop` is referenced inside the handler so a finished run closes the stream; without it the
+    // browser reconnects to a server that immediately replies "done", forever.
+    let stop = (): void => { /* replaced below */ }
+    stop = stream(id, (event, data) => {
+      if (event === 'progress' && data) {
+        const p = data as Progress
+        setDetail(d => d ? { ...d, progress: p } : d)
+        // One line per trial that starts a new turn: the stream a watcher actually reads.
+        setEvents((prev) => {
+          const seen = new Set(prev.map(e => e.text))
+          const fresh = p.active
+            .map(a => ({ at: Date.now(), kind: 'turn' as const, text: `${a.scenario} · ${a.arm} #${a.rep} · turn ${a.turn}/${a.turns}` }))
+            .filter(e => !seen.has(e.text))
+          return fresh.length === 0 ? prev : [...fresh.reverse(), ...prev].slice(0, 200)
+        })
+      }
       else if (event === 'log') setLogs(l => [...l.slice(-400), String(data)])
-      else if (event === 'ledger') api.ledgers(id).then(setLedgers).catch(() => { /* ignore */ })
-      else if (event === 'done' || event === 'error') setTimeout(load, 300)
+      else if (event === 'ledger') {
+        const l = data as { scenario?: string; arm?: string; rep?: number; ok?: boolean; usd?: number } | null
+        if (l?.scenario !== undefined) {
+          const finished: StreamEvent = { at: Date.now(), kind: 'done', tone: l.ok === false ? 'bad' : 'good', text: `${l.ok === false ? '✗' : '✓'} ${l.scenario} · ${l.arm} #${l.rep} · ${fmt.usd(l.usd ?? 0)}` }
+          setEvents(prev => [finished, ...prev].slice(0, 200))
+        }
+        api.ledgers(id).then(setLedgers).catch(() => { /* ignore */ })
+      }
+      else if (event === 'done' || event === 'error') { stop(); setTimeout(load, 300) }
     })
-    return stop
+    return () => stop()
   }, [id])
 
   if (error) return <p class="error">{error}</p>
@@ -64,7 +87,11 @@ export function RunView({ id }: { id: string }) {
         </div>
       </div>
 
-      {progress && (
+      {running && progress && (
+        <LiveRun plan={plan} progress={progress} ledgers={ledgers} events={events} onCancel={() => { void api.cancel(id) }} />
+      )}
+
+      {!running && progress && (
         <div class="card progress-card">
           <div class="row between">
             <div><span class={`status ${progress.status}`}>{progress.status}</span> <b>{progress.completed}</b>/{progress.total} trials{progress.failed ? <span class="warn-text"> · {progress.failed} errors</span> : null} · spent <b>{fmt.usd(progress.usd, 3)}</b></div>

@@ -199,3 +199,46 @@ describe('arm yaml builder', () => {
     expect(armYaml('a', 'note', 'freeform', {})).toBe('name: a\ndescription: note\npatches: []\n')
   })
 })
+
+describe('arm design model', () => {
+  it('round-trips an arm file through the designer without losing anything', async () => {
+    const { designFromSpec, armToYaml, variableCount, describeRow } = await import('../src/ui/arm-model.js')
+    const { parseArm } = await import('../src/core/arms.js')
+    const text = [
+      'name: candidate',
+      'description: fold plus a tighter pruner',
+      'patches:',
+      '  - insert:',
+      '      - id: tool-result-fold',
+      "        name: '@dsh-external/dsh-tool-result-fold'",
+      '        config:',
+      '          pinSteps: 2',
+      '  - id: tool-web',
+      '    disabled: true',
+      '  - id: tool-result-pruner',
+      '    config:',
+      '      headChars: 1024',
+      '',
+    ].join('\n')
+    const design = designFromSpec(parseArm(text))
+    expect(design.rows.map(r => r.kind)).toEqual(['insert', 'disable', 'config'])
+    expect(variableCount(design)).toBe(3)
+    expect(describeRow(design.rows[0]!)).toBe('@dsh-external/dsh-tool-result-fold')
+    expect(describeRow(design.rows[1]!)).toBe('tool-web turned off')
+    // serialising and re-parsing must yield the same design
+    const again = designFromSpec(parseArm(armToYaml(design)))
+    expect(again).toEqual(design)
+    expect(armToYaml(design)).toContain('pinSteps: 2')
+
+    // an arm with no differences is still a valid file, and model counts as a variable
+    const empty = { name: 'baseline', rows: [] }
+    expect(armToYaml(empty)).toBe('name: baseline\npatches: []\n')
+    expect(variableCount({ name: 'pro', rows: [], model: 'deepseek-v4-pro' })).toBe(1)
+    expect(armToYaml({ name: 'pro', rows: [], model: 'deepseek-v4-pro' })).toBe('name: pro\nmodel: deepseek-v4-pro\n')
+
+    // a hand-written row the designer does not model is carried through untouched
+    const exotic = designFromSpec(parseArm('name: x\npatches:\n  - remove: [tool-web]\n'))
+    expect(exotic.rows[0]!.kind).toBe('raw')
+    expect(armToYaml(exotic)).toContain('{"remove":["tool-web"]}')
+  })
+})

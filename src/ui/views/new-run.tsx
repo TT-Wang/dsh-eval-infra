@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
 import { pickCandidates } from '../select-arms.js'
-import { ArmEditor } from './arm-editor.js'
+import { ArmDesigner } from './arm-designer.js'
 
 export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -37,15 +37,8 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [replayRun, setReplayRun] = useState(preset['replay'] ?? '')
   const [forkAt, setForkAt] = useState(preset['forkAt'] ?? '')
   const [runsList, setRunsList] = useState<Array<{ id: string; label?: string }>>([])
-  const [editing, setEditing] = useState<string | null>(null)
-  const reloadArms = (select?: string): void => {
-    void api.arms().then((r) => {
-      setArms(r.arms)
-      const names = r.arms.filter(a => a.spec).map(a => a.spec!.name)
-      if (select !== undefined && select !== '' && names.includes(select)) setCandidates(pickCandidates([...candidates, select], baseline, names))
-      else setCandidates(pickCandidates(candidates, baseline, names))
-    })
-  }
+  const [step, setStep] = useState(0)
+  const reloadArms = (): void => { void api.arms().then(r => setArms(r.arms)) }
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
   useEffect(() => {
@@ -122,115 +115,197 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
 
+
+  const STEPS = ['Design the arms', 'Evaluation settings', 'Scenarios'] as const
+  const primaryCandidate = activeCandidates[0] ?? ''
+  const canAdvance = step === 0
+    ? baseline !== '' && (aa || primaryCandidate !== '') && (!multi || allowMulti)
+    : step === 1 ? true : selected.size > 0
+
   return (
-    <section class="new-run">
-      <div class="page-head"><h1>New run</h1>{meta && !meta.profileReady && <p class="error">The eval profile is not initialised: run <code>dsh-eval init</code> first.</p>}</div>
-      {error && <p class="error">{error}</p>}
-      <div class="grid2">
-        <div class="card">
-          <h2>Arms</h2>
-          <label>Baseline
-            <select value={baseline} onChange={(e) => { const next = (e.target as HTMLSelectElement).value; setBaseline(next); setCandidates(pickCandidates(candidates, next, armNames)) }}>
-              {armNames.map(n => <option value={n}>{n}</option>)}
-            </select>
+    <section class="mx-auto max-w-[1400px] px-5 py-5 flex flex-col gap-5">
+      <header class="flex items-center justify-between gap-4">
+        <div>
+          <h1 class="text-xl font-semibold">New evaluation</h1>
+          <p class="text-sm text-muted-foreground">Two configurations, the same scenarios, interleaved and repeated.</p>
+        </div>
+        <ol class="flex items-center gap-2">
+          {STEPS.map((title, i) => (
+            <li key={title} class="flex items-center gap-2">
+              <button
+                class={`uk-btn uk-btn-sm ${i === step ? 'uk-btn-primary' : 'uk-btn-default'}`}
+                disabled={i > step && !canAdvance}
+                onClick={() => setStep(i)}
+              >
+                <span class="mr-1 opacity-60">{i + 1}</span>{title}
+              </button>
+              {i < STEPS.length - 1 && <span class="text-muted-foreground">›</span>}
+            </li>
+          ))}
+        </ol>
+      </header>
+
+      {error !== null && <div class="uk-alert uk-alert-destructive">{error}</div>}
+      {diffError !== null && step === 0 && <div class="uk-alert uk-alert-destructive">{diffError}</div>}
+
+      {step === 0 && (
+        <>
+          <label class="uk-form-label flex items-center gap-2 text-sm">
+            <input class="uk-checkbox" type="checkbox" checked={aa} onChange={e => setAa((e.target as HTMLInputElement).checked)} />
+            A/A run: compare the baseline with a copy of itself to measure this setup's noise floor
           </label>
-          <label class="check"><input type="checkbox" checked={aa} onChange={e => setAa((e.target as HTMLInputElement).checked)} /> A/A run (baseline against a copy of itself — measures the noise floor)</label>
           {!aa && (
-            <fieldset>
-              <legend>Candidates</legend>
-              {armNames.filter(n => n !== baseline).map(n => (
-                <div class="row between arm-row">
-                  <label class="check"><input type="checkbox" checked={candidates.includes(n)} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setCandidates(on ? [...candidates, n] : candidates.filter(c => c !== n)) }} /> {n}<span class="muted small"> {arms.find(a => a.spec?.name === n)?.spec?.description ?? ''}</span></label>
-                  <button class="btn small" title="edit this arm file" onClick={() => setEditing(n)}>edit</button>
-                </div>
-              ))}
-              {armNames.length < 2 && <p class="muted small">No candidate yet. Use <b>new arm</b> to make one.</p>}
-              <div class="row"><button class="btn small primary" onClick={() => setEditing('')}>+ new arm</button><button class="btn small" onClick={() => setEditing(baseline)}>edit {baseline}</button></div>
-            </fieldset>
+            <ArmDesigner
+              meta={meta} arms={arms} baseline={baseline} candidate={primaryCandidate}
+              onBaseline={(n) => { setBaseline(n); setCandidates(pickCandidates(candidates, n, armNames)) }}
+              onCandidate={n => setCandidates([n])}
+              onSaved={reloadArms}
+            />
           )}
-          {editing !== null && <ArmEditor meta={meta} arms={arms} baseline={baseline} editing={editing} onClose={() => setEditing(null)} onSaved={(n) => { setEditing(null); reloadArms(n) }} />}
-          <div class="diff">
-            <h3>What differs</h3>
-            {diffError && <p class="error small">{diffError}</p>}
-            {diff === null && !diffError && <p class="muted small">composing trees through <code>dsh --dump-config</code>…</p>}
-            {diff?.map(d => (
-              <div class={`diff-arm ${d.variables === 1 ? 'ok' : 'warn'}`}>
-                <b>{d.candidate}</b> vs {baseline}: {d.variables} variable{d.variables === 1 ? '' : 's'}
-                <ul>{d.lines.map(l => <li><code>{l}</code></li>)}</ul>
-              </div>
-            ))}
-            {multi && <p class="warn-text">More than one variable differs; the result cannot be attributed to one change. <label class="check inline"><input type="checkbox" checked={allowMulti} onChange={e => setAllowMulti((e.target as HTMLInputElement).checked)} /> run anyway (marked multi-variable)</label></p>}
-            {identical && !aa && <p class="warn-text">The arms compose identically — this would be an A/A run.</p>}
-          </div>
+          {aa && <div class="uk-alert">Both arms will be <code>{baseline}</code>. Every difference the run reports is noise, which is what later runs are judged against.</div>}
+          {multi && !aa && (
+            <label class="uk-form-label flex items-center gap-2 text-sm">
+              <input class="uk-checkbox" type="checkbox" checked={allowMulti} onChange={e => setAllowMulti((e.target as HTMLInputElement).checked)} />
+              Run anyway, marked as a multi-variable comparison
+            </label>
+          )}
+        </>
+      )}
+
+      {step === 1 && (
+        <div class="grid gap-4 md:grid-cols-2">
+          <section class="uk-card">
+            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">How many trials</h2></div>
+            <div class="uk-card-body py-3 flex flex-col gap-3">
+              <label class="text-sm">Repeats per scenario, per arm
+                <input class="uk-input" type="number" min={1} max={30} value={repeats} onInput={e => setRepeats(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
+                <span class="text-xs text-muted-foreground">Three is the floor; five is recommended for pass/fail outcomes.</span>
+              </label>
+              <label class="text-sm">Trials in parallel
+                <input class="uk-input" type="number" min={1} max={16} value={concurrency} onInput={e => setConcurrency(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
+              </label>
+              <label class="text-sm">Label
+                <input class="uk-input" type="text" value={label} placeholder="what this run is for" onInput={e => setLabel((e.target as HTMLInputElement).value)} />
+              </label>
+            </div>
+          </section>
+
+          <section class="uk-card">
+            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Spend</h2></div>
+            <div class="uk-card-body py-3 flex flex-col gap-3">
+              <label class="text-sm">Budget cap for the run (USD)
+                <input class="uk-input" type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} />
+              </label>
+              <label class="text-sm">Cap per trial (USD)
+                <input class="uk-input" type="text" value={maxUsdPerTrial} placeholder="optional" onInput={e => setMaxUsdPerTrial((e.target as HTMLInputElement).value)} />
+                <span class="text-xs text-muted-foreground">A trial that passes its cap stops and counts as a failure.</span>
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input class="uk-checkbox" type="checkbox" checked={sequential} onChange={e => setSequential((e.target as HTMLInputElement).checked)} />
+                Stop early once the result is decided
+              </label>
+              {sequential && (
+                <div class="flex gap-2 pl-6">
+                  <label class="text-sm">seed <input class="uk-input uk-form-sm" value={seed} onInput={e => setSeed((e.target as HTMLInputElement).value)} /></label>
+                  <label class="flex items-center gap-2 text-sm"><input class="uk-checkbox" type="checkbox" checked={orderSignal} onChange={e => setOrderSignal((e.target as HTMLInputElement).checked)} /> strongest scenarios first</label>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section class="uk-card">
+            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Isolation</h2></div>
+            <div class="uk-card-body py-3 flex flex-col gap-3">
+              <label class="text-sm">Where each trial runs
+                <select class="uk-select" value={sandbox} onChange={(e) => { const v = (e.target as HTMLSelectElement).value as 'auto' | 'host' | 'docker'; setSandbox(v); setDocker(v === 'docker') }}>
+                  <option value="auto">auto — container when third-party plugins are linked and Docker is available</option>
+                  <option value="host">host — dsh's own workspace sandbox, fastest</option>
+                  <option value="docker">container per trial</option>
+                </select>
+              </label>
+              <label class="text-sm">Container runtime
+                <input class="uk-input" type="text" value={dockerRuntime} placeholder="default · runsc · kata" onInput={e => setDockerRuntime((e.target as HTMLInputElement).value)} />
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input class="uk-checkbox" type="checkbox" checked={keepDshSandbox} onChange={e => setKeepDshSandbox((e.target as HTMLInputElement).checked)} />
+                Keep dsh's own sandbox on inside the container
+              </label>
+            </div>
+          </section>
+
+          <section class="uk-card">
+            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Evidence</h2></div>
+            <div class="uk-card-body py-3 flex flex-col gap-3">
+              <label class="flex items-center gap-2 text-sm">
+                <input class="uk-checkbox" type="checkbox" checked={perturb} onChange={e => setPerturb((e.target as HTMLInputElement).checked)} />
+                Paraphrase prompts on repeats above one, identically for both arms
+              </label>
+              <label class="text-sm">Replay a recorded run instead of calling the provider
+                <select class="uk-select" value={replayRun} onChange={e => setReplayRun((e.target as HTMLSelectElement).value)}>
+                  <option value="">— live run —</option>
+                  {runsList.map(r => <option value={r.id}>{r.id}{r.label ? ` · ${r.label}` : ''}</option>)}
+                </select>
+              </label>
+              {replayRun !== '' && (
+                <label class="text-sm">Fork to live calls after N recorded responses
+                  <input class="uk-input" type="text" value={forkAt} placeholder="empty = pure replay, no key needed" onInput={e => setForkAt((e.target as HTMLInputElement).value)} />
+                </label>
+              )}
+            </div>
+          </section>
         </div>
-        <div class="card">
-          <h2>Design</h2>
-          <div class="row">
-            <label>Repeats <input type="number" min={1} max={30} value={repeats} onInput={e => setRepeats(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} /></label>
-            <label>Concurrency <input type="number" min={1} max={8} value={concurrency} onInput={e => setConcurrency(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} /></label>
-            <label>Label <input type="text" value={label} placeholder="optional" onInput={e => setLabel((e.target as HTMLInputElement).value)} /></label>
+      )}
+
+      {step === 2 && (
+        <section class="uk-card">
+          <div class="uk-card-header flex flex-wrap items-center justify-between gap-2 py-3">
+            <h2 class="uk-card-title text-sm">Scenarios <span class="text-muted-foreground font-normal">({selected.size} of {scenarios.length} selected)</span></h2>
+            <div class="flex flex-wrap items-center gap-2">
+              <input class="uk-input uk-form-sm" type="search" placeholder="filter" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
+              <select class="uk-select uk-form-sm" value={category} onChange={e => setCategory((e.target as HTMLSelectElement).value)}>
+                <option value="">all categories</option>
+                {categories.map(c => <option value={c}>{c}</option>)}
+              </select>
+              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set([...selected, ...visible.map(s => s.name)]))}>select shown</button>
+              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => { const n = new Set(selected); for (const s of visible) n.delete(s.name); setSelected(n) }}>clear shown</button>
+            </div>
           </div>
-          <div class="row wrap">
-            <label>Isolation <select value={sandbox} onChange={e => { const v = (e.target as HTMLSelectElement).value as 'auto' | 'host' | 'docker'; setSandbox(v); setDocker(v === 'docker') }}>
-              <option value="auto">auto (container when third-party plugins are linked and Docker is available)</option>
-              <option value="host">host (dsh workspace-write sandbox)</option>
-              <option value="docker">Docker container per trial</option>
-            </select></label>
-            <label>Container runtime <input type="text" value={dockerRuntime} placeholder="default · runsc · kata" onInput={e => setDockerRuntime((e.target as HTMLInputElement).value)} /></label>
-            <label class="check"><input type="checkbox" checked={keepDshSandbox} onChange={e => setKeepDshSandbox((e.target as HTMLInputElement).checked)} /> keep dsh's own sandbox on inside the container (defence in depth; needs Landlock or user namespaces)</label>
+          <div class="uk-card-body py-0 table-scroll">
+            <table class="uk-table uk-table-divider uk-table-sm text-sm">
+              <thead><tr><th class="w-8"></th><th>scenario</th><th>category</th><th class="text-right">turns</th><th>oracle</th><th>stresses</th></tr></thead>
+              <tbody>
+                {visible.map(s => (
+                  <tr key={s.name} class={selected.has(s.name) ? '' : 'opacity-50'}>
+                    <td><input class="uk-checkbox" type="checkbox" checked={selected.has(s.name)} onChange={() => toggle(s.name)} /></td>
+                    <td><code class="text-xs">{s.name}</code>{s.meta.new_session_before_turns?.length ? <span class="uk-badge uk-badge ml-1 badge-xs">multi-session</span> : null}{s.meta.network ? <span class="uk-badge ml-1 badge-xs">network</span> : null}</td>
+                    <td class="text-muted-foreground">{s.meta.category ?? '—'}</td>
+                    <td class="text-right">{s.turns}</td>
+                    <td>{s.hasOracle ? 'yes' : <span class="text-muted-foreground">none</span>}</td>
+                    <td class="text-muted-foreground text-xs">{s.meta.stressor ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div class="row wrap">
-            <label class="check"><input type="checkbox" checked={sequential} onChange={e => setSequential((e.target as HTMLInputElement).checked)} /> Sequential (stop as soon as the anytime-valid sequences decide)</label>
-            {sequential && <label>seed <input type="text" value={seed} onInput={e => setSeed((e.target as HTMLInputElement).value)} /></label>}
-            {sequential && <label class="check"><input type="checkbox" checked={orderSignal} onChange={e => setOrderSignal((e.target as HTMLInputElement).checked)} /> order by archive signal (strongest scenarios first)</label>}
-            <label class="check"><input type="checkbox" checked={perturb} onChange={e => setPerturb((e.target as HTMLInputElement).checked)} /> Perturb prompts on repeats above 1 (scenarios with prompts.variants.json; same variant for every arm)</label>
-          </div>
-          <div class="row wrap">
-            <label>Replay recorded responses from <select value={replayRun} onChange={e => setReplayRun((e.target as HTMLSelectElement).value)}>
-              <option value="">— live run —</option>
-              {runsList.map(r => <option value={r.id}>{r.id}{r.label ? ` · ${r.label}` : ''}</option>)}
-            </select></label>
-            {replayRun !== '' && <label>fork after N recorded responses (empty = pure replay, no key needed) <input type="text" value={forkAt} placeholder="e.g. 3" onInput={e => setForkAt((e.target as HTMLInputElement).value)} /></label>}
-            <label>Per-trial cap (USD) <input type="text" value={maxUsdPerTrial} placeholder="optional" onInput={e => setMaxUsdPerTrial((e.target as HTMLInputElement).value)} /></label>
-          </div>
-          <p class="muted small">Arms interleave per repeat (A B, then B A), each trial in a fresh workspace and a fresh runtime process. Three repeats is the floor; five is recommended for binary outcomes; use A/A first to learn the noise floor.</p>
-          <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} ({estimate.seen}/{selected.size} scenarios have archive history; the rest use the archive mean of {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
-          <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>
-          <p class="muted small">Detectability: with {selected.size} scenarios the run can resolve a cost effect roughly of size 2.5 × (per-scenario spread) / √{selected.size}; a first A/A run tells you the spread. Fewer than 3 comparable scenarios never yields a direction.</p>
-          <button class="btn primary" disabled={busy || baseline === '' || (!aa && activeCandidates.length === 0) || selected.size === 0 || (multi && !allowMulti)} onClick={() => void start()}>{busy ? 'starting…' : 'Start run'}</button>
-          <p class="muted small">Every scenario is self-checked (oracle must pass, untouched workspace must fail) before the first trial.</p>
+          {invalid.length > 0 && <div class="uk-card-footer py-2 text-xs text-destructive">{invalid.length} unreadable scenario dir(s): {invalid.map(i => `${i.dir}: ${i.error}`).join('; ')}</div>}
+        </section>
+      )}
+
+      <footer class="sticky bottom-0 flex items-center justify-between gap-4 border-t border-border bg-card px-4 py-3 rounded-md">
+        <div class="text-sm text-muted-foreground">
+          <b class="text-foreground">{selected.size}</b> scenarios × <b class="text-foreground">{repeats}</b> repeats × <b class="text-foreground">{1 + (aa ? 1 : activeCandidates.length)}</b> arms = <b class="text-foreground">{trials}</b> trials
+          {estimate ? <span> · about <b class="text-foreground">{fmt.usd(estimate.usd, 2)}</b> by the archive's history</span> : <span> · no archive yet to estimate cost</span>}
         </div>
-      </div>
-      <div class="card">
-        <div class="row between">
-          <h2>Scenarios <span class="muted">({selected.size}/{scenarios.length})</span></h2>
-          <div class="row">
-            <input type="search" placeholder="filter" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
-            <select value={category} onChange={e => setCategory((e.target as HTMLSelectElement).value)}>
-              <option value="">all categories</option>
-              {categories.map(c => <option value={c}>{c}</option>)}
-            </select>
-            <button class="btn" onClick={() => setSelected(new Set([...selected, ...visible.map(s => s.name)]))}>select visible</button>
-            <button class="btn" onClick={() => { const n = new Set(selected); for (const s of visible) n.delete(s.name); setSelected(n) }}>clear visible</button>
-          </div>
+        <div class="flex items-center gap-2">
+          <button class="uk-btn uk-btn-default" disabled={step === 0} onClick={() => setStep(step - 1)}>Back</button>
+          {step < 2 && <button class="uk-btn uk-btn-primary" disabled={!canAdvance} onClick={() => setStep(step + 1)}>Next</button>}
+          {step === 2 && (
+            <button class="uk-btn uk-btn-primary" disabled={busy || selected.size === 0 || baseline === '' || (!aa && activeCandidates.length === 0) || (multi && !allowMulti)} onClick={() => void start()}>
+              {busy ? 'starting…' : 'Start evaluation'}
+            </button>
+          )}
         </div>
-        <table class="data">
-          <thead><tr><th></th><th>scenario</th><th>category</th><th class="num">turns</th><th>oracle</th><th>stresses</th></tr></thead>
-          <tbody>
-            {visible.map(s => (
-              <tr key={s.name} class={selected.has(s.name) ? '' : 'dim'}>
-                <td><input type="checkbox" checked={selected.has(s.name)} onChange={() => toggle(s.name)} /></td>
-                <td><code>{s.name}</code>{s.meta.new_session_before_turns?.length ? <span class="tag">multi-session</span> : null}{s.meta.network ? <span class="tag">network</span> : null}</td>
-                <td>{s.meta.category ?? '—'}</td>
-                <td class="num">{s.turns}</td>
-                <td>{s.hasOracle ? 'yes' : <span class="warn-text">none</span>}</td>
-                <td class="muted small">{s.meta.stressor ?? ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {invalid.length > 0 && <p class="error small">{invalid.length} invalid scenario dir(s): {invalid.map(i => `${i.dir}: ${i.error}`).join('; ')}</p>}
-      </div>
+      </footer>
     </section>
   )
 }

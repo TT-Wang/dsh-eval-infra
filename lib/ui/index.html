@@ -1,13 +1,20 @@
 <!doctype html>
-<html lang="en">
+<!-- dsh-eval: paired A/B evaluation for dsh components. Franken UI supplies the
+     design tokens and base components; app.css holds only what this tool draws
+     itself (matrix pips, forest strips, sparklines, the arm designer). -->
+<html lang="en" class="uk-theme-zinc">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dsh-eval</title>
+<script>if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark')</script>
+<link rel="stylesheet" href="vendor/core.min.css">
+<link rel="stylesheet" href="vendor/utilities.min.css">
 <link rel="stylesheet" href="app.css">
+<script src="vendor/core.iife.js" defer></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1' y='3' width='6' height='10' rx='1' fill='%234d6bfe'/><rect x='9' y='6' width='6' height='7' rx='1' fill='%2321a366'/></svg>">
 </head>
-<body>
+<body class="bg-background text-foreground min-h-screen">
 <div id="app"></div>
 <script type="module" src="app.js"></script>
 </body>

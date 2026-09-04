@@ -19,6 +19,8 @@ export interface ProjectConfig {
   concurrency: number
   /** Extra scenario roots (pools) searched after the project's own. */
   pools?: string[]
+  /** Directories scanned for local dsh plugin checkouts (defaults to ~/code and ~/src). */
+  pluginRoots?: string[]
   /** Judge models available to `dsh-eval judge`: OpenAI-compatible endpoints from any provider family. */
   judges?: Array<{ name?: string; model: string; baseUrl?: string; apiKeyEnv?: string; family?: string }>
   /** Extra or overriding prices (USD per million tokens, peak/off-peak) merged over the built-in DeepSeek table. */

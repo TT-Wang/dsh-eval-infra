@@ -42,16 +42,27 @@ function App() {
     view = <TraceView runId={parts[1]} scenario={parts[3]} arm={parts[4]} rep={Number(parts[5])} />
   } else if (parts[0] === 'run' && parts[1] !== undefined) view = <RunView id={parts[1]} />
   else view = <RunsView />
+  const tab = (href: string, label: string, active: boolean) => (
+    <a href={href} class={`px-3 py-1.5 rounded-md text-sm ${active ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}>{label}</a>
+  )
   return (
-    <div class="shell">
-      <header class="topbar">
-        <a class="brand" href="#/"><span class="logo" aria-hidden="true"><i /><i /></span>dsh-eval</a>
-        <nav>
-          <a href="#/" class={parts.length === 0 ? 'active' : ''}>Runs</a>
-          <a href="#/new" class={parts[0] === 'new' ? 'active' : ''}>New run</a>
-          <a href="#/history" class={parts[0] === 'history' ? 'active' : ''}>History</a>
+    <div class="min-h-screen bg-background text-foreground">
+      <header class="sticky top-0 z-10 flex items-center gap-4 border-b border-border bg-card px-5 py-2">
+        <a class="flex items-center gap-2 font-semibold" href="#/">
+          <span aria-hidden="true" class="inline-flex items-end gap-0.5">
+            <i class="block w-1.5 h-3.5 rounded-sm" style="background: hsl(var(--primary))" />
+            <i class="block w-1.5 h-2.5 rounded-sm" style="background: #10a37f" />
+          </span>
+          dsh-eval
+        </a>
+        <nav class="flex items-center gap-1">
+          {tab('#/', 'Runs', parts.length === 0)}
+          {tab('#/new', 'New run', parts[0] === 'new')}
+          {tab('#/history', 'History', parts[0] === 'history')}
         </nav>
-        <button class="btn small" title="switch between the plain summary and the full statistics, notes, environment and logs" onClick={toggleDetail}>{detailed ? 'simple' : 'detailed'}</button><button class="btn small density" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
+        <div class="flex-1" />
+        <button class="uk-btn uk-btn-default uk-btn-sm" title="switch between the plain summary and the full statistics, notes, environment and logs" onClick={toggleDetail}>{detailed ? 'simple' : 'detailed'}</button>
+        <button class="uk-btn uk-btn-default uk-btn-sm" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
       </header>
       <main>{view}</main>
     </div>
