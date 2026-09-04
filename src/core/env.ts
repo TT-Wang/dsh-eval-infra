@@ -93,3 +93,13 @@ export function evalInfraVersion(): string {
     return '0.0.0'
   }
 }
+
+/**
+ * Replace this machine's home directory with `~` for anything a reader elsewhere
+ * will see: a published bundle, an exported page, a line in the UI. Paths stay
+ * absolute in the ledgers, where the tool itself uses them.
+ */
+export function tilde(text: string): string {
+  const home = homedir()
+  return home === '' || home === '/' ? text : text.split(home).join('~')
+}

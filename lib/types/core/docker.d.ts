@@ -7,6 +7,8 @@ export interface DockerOptions {
     extraArgs?: string[];
     /** Container runtime (`--runtime`): e.g. `runsc` (gVisor) or `kata` for microVM isolation when the host provides it. */
     runtime?: string;
+    /** Image platform, defaulting to this machine's architecture (`arm64` or `amd64`). */
+    platform?: string;
     /** Keep dsh's in-process sandbox rows on inside the container (needs a kernel with Landlock or user namespaces + bubblewrap). */
     keepDshSandbox?: boolean;
     /** Extra host paths to mount read-only at the same path (plugins linked into the profile are discovered automatically). */

@@ -21,3 +21,9 @@ export declare function dshSourceRoot(options?: {
 /** Git revision of the dsh source checkout, when it is a git worktree. */
 export declare function dshSourceRevision(root: string | null): Promise<string | null>;
 export declare function evalInfraVersion(): string;
+/**
+ * Replace this machine's home directory with `~` for anything a reader elsewhere
+ * will see: a published bundle, an exported page, a line in the UI. Paths stay
+ * absolute in the ledgers, where the tool itself uses them.
+ */
+export declare function tilde(text: string): string;

@@ -15,7 +15,7 @@
  */
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, cpSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, cpSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
@@ -25,7 +25,7 @@ import { fmtPct, fmtUsd, renderMarkdown, type Report } from './core/report.js'
 import { selfcheckAll } from './core/selfcheck.js'
 import { listRuns, readJson, readLedgers, readPlan, runPaths } from './core/store.js'
 import { toAtif } from './core/atif.js'
-import { evalInfraVersion } from './core/env.js'
+import { evalInfraVersion, tilde } from './core/env.js'
 import type { TraceRow } from './core/ledger.js'
 
 interface Args {
@@ -35,7 +35,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -355,29 +355,68 @@ async function regradeSafeRerun(project: Project, id: string, scenario: string, 
   return rerunScenario(project, id, scenario, { ...(num(args.flags['repeats']) !== undefined ? { repeats: num(args.flags['repeats'])! } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(args.flags['fork'] === true ? { fork: true } : {}), log: out })
 }
 
-function cmdPublish(project: Project, args: Args): number {
+async function cmdPublish(project: Project, args: Args): Promise<number> {
   const id = args.positional[0]
-  if (id === undefined) { err('usage: dsh-eval publish <runId> [--out <dir>]'); return 3 }
+  if (id === undefined) { err('usage: dsh-eval publish <runId> [--out <dir>] [--keep-paths]'); return 3 }
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) { err(`run ${id} not found`); return 3 }
   const outDir = typeof args.flags['out'] === 'string' ? resolve(args.flags['out']) : join(project.evalDir, 'bundles', id)
   mkdirSync(outDir, { recursive: true })
   cpSync(paths.dir, outDir, { recursive: true })
+
+  // A bundle goes to other people. Workspaces, checkouts and profiles are all under a home
+  // directory whose name is the author's, so every text file in the copy has it replaced by
+  // `~` and the bundle is sealed again over what it now contains. The original run is
+  // untouched; this is a derived artifact and says so.
+  const redacted = args.flags['keep-paths'] === true ? 0 : redactTree(outDir)
+  const { sealRun, signingKey } = await import('./core/manifest.js')
+  const { deriveReport, sealAndIssue, verifyRunDir } = await import('./core/orchestrate.js')
+  const { runPathsAt, readPlan, writeJsonAtomic } = await import('./core/store.js')
+  if (redacted > 0) {
+    const at = runPathsAt(outDir)
+    const plan = readPlan(at)
+    const report = deriveReport(project, id, at)
+    writeJsonAtomic(at.report, report)
+    writeFileSync(at.reportMd, (await import('./core/report.js')).renderMarkdown(report))
+    sealRun(at, plan.id)
+    sealAndIssue(project, at, plan, report)
+    void signingKey
+  }
   const html = exportHtml(project, id, join(outDir, 'report.html'))
   if (html !== 0) return html
+  if (redacted > 0) writeFileSync(join(outDir, 'report.html'), tilde(readFileSync(join(outDir, 'report.html'), 'utf8')))
+
   const v = verifyRunDir(project, outDir)
   writeFileSync(join(outDir, 'VERIFY.md'), [
     `# Verifying this evaluation bundle`, '',
     `Run \`${id}\`, sealed ${v.sealedAt ?? '(unsealed)'}; evidence sha256 \`${v.evidenceSha ?? '—'}\`.`, '',
+    ...(redacted > 0
+      ? ['This is a redacted copy: the machine\'s home directory was replaced by `~` in ' + String(redacted) + ' file(s), and the bundle was then sealed and receipted again over what it now contains. Its evidence sha therefore differs from the original run\'s, on purpose. Publish with `--keep-paths` to carry the original bytes and seal instead.', '']
+      : ['This bundle carries the original bytes, including absolute paths from the machine that produced it.', '']),
     'Every evidence file (plan, environment, arms, ledgers, events, traces, meter ledgers, artifacts) is listed with its sha256 in `manifest.json`, and `report.json` / `report.md` / `report.html` are derived from those files. To check that nothing was altered and that the report follows from the evidence:', '',
-    '```bash', `dsh-eval verify ${outDir}`, '```', '',
+    '```bash', `dsh-eval verify ${outDir.split('/').pop() ?? outDir}`, '```', '',
     'The command recomputes every hash, lists missing or changed files, re-derives the report from the ledgers, compares its readings with the stored report, and checks the signed receipt. It answers PASS (signed claims recompute from intact evidence, exit 0), INVALID (evidence, signature or derivation broken, exit 1) or INCONCLUSIVE (nothing falsified, but the run has no contract or its evidence is incomplete, exit 2).', '',
     '`receipt.json` carries the analysis contract (estimand, pairing, estimator, α, SESOI, seed, gate order), the claims, the coverage counts and an Ed25519 signature over all of it; `manifest.json` carries the same contract and every evidence hash.', '',
     'Meter ledgers under `meter/` carry a hash chain per trial (`prev`/`hash`), and `*.responses.jsonl` files hold the recorded provider responses so the run can be replayed without a key: `dsh-eval run --replay <runId> …` from a project that contains this run directory under `.dsh-eval/runs/`.', '',
   ].join('\n'))
   out(`bundle → ${outDir}`)
+  if (redacted > 0) out(`  ${redacted} file(s) had this machine's home path replaced by ~, and the bundle was re-sealed`)
   out(`  evidence ${v.evidenceSha?.slice(0, 16) ?? '—'}… · ${v.ok ? 'verifies' : 'DOES NOT verify'} · report.html + VERIFY.md included`)
   return v.ok ? 0 : 1
+}
+
+/** Replace this machine's home path throughout a copied run. Returns how many files changed. */
+function redactTree(dir: string): number {
+  let changed = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name)
+    if (entry.isDirectory()) { changed += redactTree(p); continue }
+    if (!/\.(json|jsonl|md|ya?ml|txt|html|py|csv|log)$/.test(entry.name)) continue
+    const text = readFileSync(p, 'utf8')
+    const next = tilde(text)
+    if (next !== text) { writeFileSync(p, next); changed += 1 }
+  }
+  return changed
 }
 
 function cmdVerify(project: Project, args: Args): number {

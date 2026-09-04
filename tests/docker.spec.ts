@@ -73,3 +73,30 @@ describe('container runtime options', () => {
     expect(plain).not.toContain('SYS_ADMIN')
   })
 })
+
+describe('portability', () => {
+  it('asks Docker for this machine\'s architecture, not the one it was written on', async () => {
+    const { dockerArgs } = await import('../src/core/docker.js')
+    const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-arch-'))
+    for (const d of ['src/apps/cli/lib', 'home', 'work', 'run']) mkdirSync(join(root, d), { recursive: true })
+    const input = { arm: { name: 'a', profile: 'eval', provider: 'deepseek', model: 'm', overlays: [], env: {} } as any, scenario: {} as any, workdir: join(root, 'work'), evalHome: join(root, 'home'), overlays: [], env: {} }
+    const args = dockerArgs(input, { dshSource: realpathSync(join(root, 'src')) }, join(root, 'run'))
+    const platform = args[args.indexOf('--platform') + 1]
+    expect(platform).toBe(process.arch === 'x64' ? 'linux/amd64' : 'linux/arm64')
+    // and an explicit platform still wins, for cross-architecture runs
+    const forced = dockerArgs(input, { dshSource: realpathSync(join(root, 'src')), platform: 'amd64' }, join(root, 'run'))
+    expect(forced[forced.indexOf('--platform') + 1]).toBe('linux/amd64')
+  })
+
+  it('never puts this machine\'s home directory in text meant for someone else', async () => {
+    const { tilde } = await import('../src/core/env.js')
+    const { homedir } = await import('node:os')
+    const home = homedir()
+    expect(tilde(`${home}/code/thing`)).toBe('~/code/thing')
+    expect(tilde(`ledgers: ${home}/a and ${home}/b`)).toBe('ledgers: ~/a and ~/b')
+    expect(tilde('/opt/elsewhere')).toBe('/opt/elsewhere')
+  })
+})

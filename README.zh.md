@@ -217,4 +217,4 @@ npm run typecheck        # host + UI
 npm run build            # lib/(tsc)+ lib/ui(esbuild)
 ```
 
-许可证:BSD-3-Clause。
+许可证:BSD-3-Clause。第三方组件见 [THIRD_PARTY.md](THIRD_PARTY.md);网页端的设计系统是 Franken UI,随 `src/ui/vendor` 一起分发,附带其自身许可证。

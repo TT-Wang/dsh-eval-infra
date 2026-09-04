@@ -21,6 +21,8 @@ export interface DockerOptions {
   extraArgs?: string[]
   /** Container runtime (`--runtime`): e.g. `runsc` (gVisor) or `kata` for microVM isolation when the host provides it. */
   runtime?: string
+  /** Image platform, defaulting to this machine's architecture (`arm64` or `amd64`). */
+  platform?: string
   /** Keep dsh's in-process sandbox rows on inside the container (needs a kernel with Landlock or user namespaces + bubblewrap). */
   keepDshSandbox?: boolean
   /** Extra host paths to mount read-only at the same path (plugins linked into the profile are discovered automatically). */
@@ -62,7 +64,7 @@ export function linkedPluginPaths(evalHome: string, profile: string): string[] {
  * and bind-mount it over the checkout's `@koromix` directory, shadowing the
  * macOS build. Returns the mount pairs, or [] when the checkout has no Koffi.
  */
-export function prepareNativeShims(evalHome: string, dshSource: string, arch: 'arm64' | 'x64' = 'arm64', log?: (line: string) => void): Array<[string, string]> {
+export function prepareNativeShims(evalHome: string, dshSource: string, arch: 'arm64' | 'x64' = process.arch === 'x64' ? 'x64' : 'arm64', log?: (line: string) => void): Array<[string, string]> {
   const pnpm = join(realpathSync(dshSource), 'node_modules', '.pnpm')
   if (!existsSync(pnpm)) return []
   const mounts: Array<[string, string]> = []
@@ -96,7 +98,8 @@ export function prepareNativeShims(evalHome: string, dshSource: string, arch: 'a
 
 export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[] {
   const image = options.image ?? DEFAULT_IMAGE
-  const args = ['run', '-i', '--rm', '--init', '--platform', 'linux/arm64']
+  // The image must match this machine, or every trial runs under emulation, or not at all.
+  const args = ['run', '-i', '--rm', '--init', '--platform', `linux/${options.platform ?? (process.arch === 'x64' ? 'amd64' : 'arm64')}`]
   const mounts = new Map<string, 'ro' | 'rw'>()
   mounts.set(realpathSync(options.dshSource), 'ro')
   // Plugins linked into the profile resolve their dsh peers through the install's symlink path (e.g. ~/.dsh/source/current), so

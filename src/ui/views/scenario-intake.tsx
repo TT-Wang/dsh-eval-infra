@@ -67,7 +67,7 @@ export function ScenarioIntake({ root, onAdded }: { root: string; onAdded: () =>
     <section class="uk-card">
       <div class="uk-card-header py-3">
         <h2 class="uk-card-title text-sm">Add your own scenario</h2>
-        <p class="text-xs text-muted-foreground">A scenario is a folder of five files. It will be written to <code>{root}</code> and checked before it is offered.</p>
+        <p class="text-xs text-muted-foreground">A scenario is a folder of five files. It is written into this project's own library at <code>{root === '' ? 'bench/scenarios' : root}</code>, alongside the ones that ship with the tool, and checked before it is offered.</p>
       </div>
       <div class="uk-card-body py-3 flex flex-col gap-3">
         <ul class="text-xs flex flex-col gap-1">

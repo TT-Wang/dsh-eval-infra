@@ -220,4 +220,4 @@ npm run typecheck        # host + UI
 npm run build            # lib/ (tsc) + lib/ui (esbuild)
 ```
 
-License: BSD-3-Clause.
+License: BSD-3-Clause. Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md); the web UI's design system is Franken UI, vendored under `src/ui/vendor` with its own licence.

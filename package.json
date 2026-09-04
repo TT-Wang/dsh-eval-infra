@@ -19,9 +19,11 @@
     }
   },
   "files": [
-    "lib/**/*",
+    "LICENSE",
+    "THIRD_PARTY.md",
     "bench/**/*",
-    "docs/**/*"
+    "docs/**/*",
+    "lib/**/*"
   ],
   "repository": {
     "type": "git",
@@ -75,5 +77,8 @@
       ],
       "platform": "web"
     }
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
