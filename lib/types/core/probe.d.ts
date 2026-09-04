@@ -26,7 +26,9 @@ export interface ProbeVerdict {
     p: number;
     probes: number;
     samplesPerSide: number;
-    verdict: 'matches' | 'differs' | 'no-reference';
+    verdict: 'matches' | 'differs' | 'no-reference' | 'not-completed';
+    /** Why the battery could not be collected, when the verdict is not-completed. */
+    error?: string;
     enrolledAt?: string;
     comparedAt: string;
     usd: number;
@@ -42,6 +44,7 @@ export declare function probePermutationTest(a: ProbeSample[], b: ProbeSample[],
 export declare function collectProbes(chat: ChatCall, samples?: number, log?: (line: string) => void, concurrency?: number): Promise<{
     samples: ProbeSample[];
     usd: number;
+    failures: string[];
 }>;
 /** sha256 of the battery itself: changing, adding or reordering a probe makes old references incomparable. */
 export declare function batterySha(probes?: string[]): string;

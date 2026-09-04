@@ -54,7 +54,9 @@ export interface ProbeVerdict {
   p: number
   probes: number
   samplesPerSide: number
-  verdict: 'matches' | 'differs' | 'no-reference'
+  verdict: 'matches' | 'differs' | 'no-reference' | 'not-completed'
+  /** Why the battery could not be collected, when the verdict is not-completed. */
+  error?: string
   enrolledAt?: string
   comparedAt: string
   usd: number
@@ -104,10 +106,11 @@ export function probePermutationTest(a: ProbeSample[], b: ProbeSample[], B = 100
 }
 
 /** Send the battery: `samples` answers per probe, at temperature 1 so the distribution is informative. */
-export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: string) => void, concurrency = 8): Promise<{ samples: ProbeSample[]; usd: number }> {
+export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: string) => void, concurrency = 8): Promise<{ samples: ProbeSample[]; usd: number; failures: string[] }> {
   const jobs: Array<{ probe: number }> = []
   for (let p = 0; p < PROBES.length; p += 1) for (let i = 0; i < samples; i += 1) jobs.push({ probe: p })
   const out: ProbeSample[] = []
+  const failures: string[] = []
   let usd = 0
   let next = 0
   const worker = async (): Promise<void> => {
@@ -116,17 +119,26 @@ export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: st
       next += 1
       const job = jobs[i]
       if (job === undefined) return
-      const r = await chat([{ role: 'user', content: `${PROBES[job.probe]!} Answer with JSON: {"answer": "<your answer>"}` }])
-      usd += (r.usage.miss * 0.44 + r.usage.hit * 0.014 + r.usage.output * 1.32) / 1e6
+      // A probe is a pre-flight check, not the measurement: transient network failures are retried, and a
+      // sample that will not come back is dropped rather than allowed to abort the run.
+      let text: string | null = null
+      let usage = { hit: 0, miss: 0, output: 0 }
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try { const r = await chat([{ role: 'user', content: `${PROBES[job.probe]!} Answer with JSON: {"answer": "<your answer>"}` }]); text = r.text; usage = r.usage; break }
+        catch (e) { failures.push(e instanceof Error ? e.message : String(e)); await new Promise(r => setTimeout(r, 500 * (attempt + 1))) }
+      }
+      if (text === null) continue
+      usd += (usage.miss * 0.44 + usage.hit * 0.014 + usage.output * 1.32) / 1e6
       let answer = ''
-      try { answer = String((JSON.parse(r.text) as { answer?: unknown }).answer ?? '') } catch { answer = r.text }
+      try { answer = String((JSON.parse(text) as { answer?: unknown }).answer ?? '') } catch { answer = text }
       out.push({ probe: job.probe, answer: normalize(answer) })
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, () => worker()))
   out.sort((a, b) => a.probe - b.probe)
   for (let p = 0; p < PROBES.length; p += 1) log?.(`probe ${p + 1}/${PROBES.length}: ${out.filter(s => s.probe === p).map(s => s.answer).join(', ')}`)
-  return { samples: out, usd }
+  if (failures.length > 0) log?.(`${failures.length} probe call(s) failed after retries: ${[...new Set(failures)].slice(0, 2).join('; ')}`)
+  return { samples: out, usd, failures }
 }
 
 /** sha256 of the battery itself: changing, adding or reordering a probe makes old references incomparable. */
@@ -141,6 +153,11 @@ export function referenceKey(model: string, baseUrl: string): string {
 /** Compare fresh probes with an enrolled reference; alpha 0.01 keeps false alarms rare on a check that blocks verdicts. */
 export function compareWithReference(fresh: ProbeSample[], reference: ProbeReference | null, model: string, usd: number, alpha = 0.01): ProbeVerdict {
   const comparedAt = new Date().toISOString()
+  // Too few answers to compare is not evidence of a substitution; say so rather than deciding either way.
+  const expected = PROBES.length
+  if (new Set(fresh.map(s => s.probe)).size < expected || fresh.length < expected * 2) {
+    return { model, distance: 0, p: 1, probes: expected, samplesPerSide: 0, verdict: 'not-completed', error: `only ${fresh.length} answers across ${new Set(fresh.map(s => s.probe)).size} of ${expected} probes came back`, comparedAt, usd }
+  }
   // A reference from a different battery is not evidence of anything: the probe indices no longer mean the same questions.
   if (reference === null || (reference.batterySha !== undefined && reference.batterySha !== batterySha())) return { model, distance: 0, p: 1, probes: PROBES.length, samplesPerSide: 0, verdict: 'no-reference', comparedAt, usd }
   const { distance, p } = probePermutationTest(reference.samples, fresh)

@@ -390,6 +390,10 @@ describe('served-model probes', () => {
     const { collectProbes, probePermutationTest, compareWithReference, PROBES } = await import('../src/core/probe.js')
     const usage = { hit: 0, miss: 20, output: 5 }
     const mk = (answers: string[]) => { let i = 0; return async () => ({ text: JSON.stringify({ answer: answers[i++ % answers.length] }), usage }) }
+    // a route that fails every call yields no samples instead of throwing
+    const dead = await collectProbes(async () => { throw new Error('fetch failed') }, 2)
+    expect(dead.samples).toHaveLength(0)
+    expect(dead.failures.length).toBeGreaterThan(0)
     const a = await collectProbes(mk(['Blue', 'blue', 'blue', 'green']), 4)
     const b = await collectProbes(mk(['Blue', 'blue', 'blue', 'green']), 4)
     const c = await collectProbes(mk(['red', 'red', 'crimson', 'red']), 4)
@@ -406,6 +410,10 @@ describe('served-model probes', () => {
     expect(compareWithReference(c.samples, { ...ref, batterySha: 'other' }, 'm', 0).verdict).toBe('no-reference')
     expect(compareWithReference(c.samples, ref, 'm', 0).verdict).toBe('differs')
     expect(compareWithReference(c.samples, null, 'm', 0).verdict).toBe('no-reference')
+    // a battery that could not be collected is not evidence of a substitution
+    const partial = compareWithReference(a.samples.slice(0, 3), ref, 'm', 0)
+    expect(partial.verdict).toBe('not-completed')
+    expect(partial.error).toMatch(/came back/)
   })
 
   it('withholds readings when the probe says the route differs', async () => {
