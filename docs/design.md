@@ -155,6 +155,14 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 
 **Isolation.** Third-party plugins default to the container path when Docker is available; `--docker-runtime runsc|kata` passes a gVisor or Kata runtime through when the host has one; `--docker-keep-sandbox` builds a base image with bubblewrap and runs the container with the capabilities dsh's in-process sandbox needs, so the container and dsh's own sandbox stack.
 
+## 6h. Served-model probes, receipts, patterns
+
+**Probes.** `src/core/probe.ts` holds a battery of twelve prompts whose answers a model must *choose* (a colour, a city, an integer, a first name), because a deterministic question carries no signal. Each is sampled N times at temperature 1 through the arms' own route, giving an answer distribution per probe; a reference is enrolled per (model, endpoint, battery) and later probes are compared with a permutation test on the mean total-variation distance, at α = 0.01 because the result blocks readings. The reference is keyed by a hash of the battery, so changing a probe re-enrols instead of reading as a substitution. Measured on real routes: the same model gives distance 0.083 (p 0.83), a different model in the same family 0.188 (p 0.012) at six samples per probe. This is the behavioural layer of the served-model check; the declared layer is the model id, system fingerprint and client identity the meter reads off the wire, and the third layer is the baseline's tool-use drift against the archive.
+
+**Receipts.** Sealing a run also issues `receipt.json`: the analysis contract (estimand, pairing, estimator, α, SESOI, minimum scenarios, bootstrap draws, seed, gate order, cost rule), the claims, coverage counts (trials, metered, reconciled, unrun, errors), the environment digests, and an Ed25519 signature over all of it with the public half included. `verify` recomputes the hashes, re-derives the report, checks the signature and compares the claims, then answers PASS, INVALID or INCONCLUSIVE: a forged claim is INVALID even when every evidence hash still matches, and a run with no contract is INCONCLUSIVE rather than false (ClaimReceipt, 2609.01992).
+
+**Patterns.** `src/core/patterns.ts` mines the archive without a model: verifier reasons are reduced to signatures (paths, numbers and quoted strings normalised away) so like failures collapse, and behaviour regimes are thresholded on the archive's own quartiles so "many tool errors" means many for this project. Patterns are ranked by arm skew first, because a pattern that hits one arm far more than the other is the one a change caused.
+
 ## 7. What it does not do (yet)
 
 - A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's).
