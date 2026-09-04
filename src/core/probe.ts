@@ -14,16 +14,25 @@ import { createHash } from 'node:crypto'
 import { rng } from './stats.js'
 import type { ChatCall } from './judge.js'
 
-/** Short, low-token prompts whose answer distribution is characteristic of a model build. */
+/**
+ * Short prompts whose *answer distribution* is characteristic of a model build.
+ * Deterministic questions carry no signal, so every probe here is one where a
+ * model has to choose among many equally valid answers; that free choice is
+ * what differs between builds.
+ */
 export const PROBES: string[] = [
   'Reply with exactly one word: a colour.',
   'Reply with exactly one word: an animal.',
   'Answer with a single integer between 1 and 100. Digits only.',
-  'Name one programming language. One word only.',
   'Reply with exactly one word: a city.',
-  'Answer with one word: the opposite of "up".',
-  'Pick one: alpha, beta, gamma, delta. One word only.',
-  'Answer with a single letter from A to Z.',
+  'Reply with exactly one word: a fruit.',
+  'Reply with one common English first name. One word only.',
+  'Answer with a single integer between 1 and 10. Digits only.',
+  'Reply with exactly one word: a musical instrument.',
+  'Name one open-source library. One word only.',
+  'Reply with exactly one word: any noun that comes to mind.',
+  'Pick one and reply with it only: north, south, east, west.',
+  'Reply with exactly one word: a country.',
 ]
 
 export interface ProbeSample { probe: number; answer: string }
@@ -93,19 +102,28 @@ export function probePermutationTest(a: ProbeSample[], b: ProbeSample[], B = 100
 }
 
 /** Send the battery: `samples` answers per probe, at temperature 1 so the distribution is informative. */
-export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: string) => void): Promise<{ samples: ProbeSample[]; usd: number }> {
+export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: string) => void, concurrency = 8): Promise<{ samples: ProbeSample[]; usd: number }> {
+  const jobs: Array<{ probe: number }> = []
+  for (let p = 0; p < PROBES.length; p += 1) for (let i = 0; i < samples; i += 1) jobs.push({ probe: p })
   const out: ProbeSample[] = []
   let usd = 0
-  for (let p = 0; p < PROBES.length; p += 1) {
-    for (let i = 0; i < samples; i += 1) {
-      const r = await chat([{ role: 'user', content: `${PROBES[p]!} Answer with JSON: {"answer": "<your answer>"}` }])
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next
+      next += 1
+      const job = jobs[i]
+      if (job === undefined) return
+      const r = await chat([{ role: 'user', content: `${PROBES[job.probe]!} Answer with JSON: {"answer": "<your answer>"}` }])
       usd += (r.usage.miss * 0.44 + r.usage.hit * 0.014 + r.usage.output * 1.32) / 1e6
       let answer = ''
       try { answer = String((JSON.parse(r.text) as { answer?: unknown }).answer ?? '') } catch { answer = r.text }
-      out.push({ probe: p, answer: normalize(answer) })
+      out.push({ probe: job.probe, answer: normalize(answer) })
     }
-    log?.(`probe ${p + 1}/${PROBES.length}: ${out.filter(s => s.probe === p).map(s => s.answer).join(', ')}`)
   }
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, () => worker()))
+  out.sort((a, b) => a.probe - b.probe)
+  for (let p = 0; p < PROBES.length; p += 1) log?.(`probe ${p + 1}/${PROBES.length}: ${out.filter(s => s.probe === p).map(s => s.answer).join(', ')}`)
   return { samples: out, usd }
 }
 

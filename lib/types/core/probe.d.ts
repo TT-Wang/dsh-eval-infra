@@ -1,5 +1,10 @@
 import type { ChatCall } from './judge.js';
-/** Short, low-token prompts whose answer distribution is characteristic of a model build. */
+/**
+ * Short prompts whose *answer distribution* is characteristic of a model build.
+ * Deterministic questions carry no signal, so every probe here is one where a
+ * model has to choose among many equally valid answers; that free choice is
+ * what differs between builds.
+ */
 export declare const PROBES: string[];
 export interface ProbeSample {
     probe: number;
@@ -32,7 +37,7 @@ export declare function probePermutationTest(a: ProbeSample[], b: ProbeSample[],
     p: number;
 };
 /** Send the battery: `samples` answers per probe, at temperature 1 so the distribution is informative. */
-export declare function collectProbes(chat: ChatCall, samples?: number, log?: (line: string) => void): Promise<{
+export declare function collectProbes(chat: ChatCall, samples?: number, log?: (line: string) => void, concurrency?: number): Promise<{
     samples: ProbeSample[];
     usd: number;
 }>;
