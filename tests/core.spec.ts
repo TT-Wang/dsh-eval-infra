@@ -399,8 +399,11 @@ describe('served-model probes', () => {
     const differs = probePermutationTest(a.samples, c.samples, 200)
     expect(differs.distance).toBeGreaterThan(0.5)
     expect(differs.p).toBeLessThan(0.01)
-    const ref = { schema: 'dsh-eval-probe/1' as const, model: 'm', baseUrl: 'u', enrolledAt: '2026-09-01T00:00:00Z', samples: a.samples, usd: 0 }
+    const { batterySha } = await import('../src/core/probe.js')
+    const ref = { schema: 'dsh-eval-probe/1' as const, model: 'm', baseUrl: 'u', batterySha: batterySha(), enrolledAt: '2026-09-01T00:00:00Z', samples: a.samples, usd: 0 }
     expect(compareWithReference(b.samples, ref, 'm', 0).verdict).toBe('matches')
+    // a reference built from a different battery is not comparable and must not read as a difference
+    expect(compareWithReference(c.samples, { ...ref, batterySha: 'other' }, 'm', 0).verdict).toBe('no-reference')
     expect(compareWithReference(c.samples, ref, 'm', 0).verdict).toBe('differs')
     expect(compareWithReference(c.samples, null, 'm', 0).verdict).toBe('no-reference')
   })

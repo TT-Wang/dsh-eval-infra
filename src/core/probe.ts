@@ -41,6 +41,8 @@ export interface ProbeReference {
   schema: 'dsh-eval-probe/1'
   model: string
   baseUrl: string
+  /** sha256 of the probe battery this reference was built from; a different battery is not comparable. */
+  batterySha?: string
   enrolledAt: string
   samples: ProbeSample[]
   usd: number
@@ -127,14 +129,20 @@ export async function collectProbes(chat: ChatCall, samples = 8, log?: (line: st
   return { samples: out, usd }
 }
 
+/** sha256 of the battery itself: changing, adding or reordering a probe makes old references incomparable. */
+export function batterySha(probes: string[] = PROBES): string {
+  return createHash('sha256').update(probes.join('\n')).digest('hex')
+}
+
 export function referenceKey(model: string, baseUrl: string): string {
-  return createHash('sha256').update(`${model}|${baseUrl}`).digest('hex').slice(0, 16)
+  return createHash('sha256').update(`${model}|${baseUrl}|${batterySha()}`).digest('hex').slice(0, 16)
 }
 
 /** Compare fresh probes with an enrolled reference; alpha 0.01 keeps false alarms rare on a check that blocks verdicts. */
 export function compareWithReference(fresh: ProbeSample[], reference: ProbeReference | null, model: string, usd: number, alpha = 0.01): ProbeVerdict {
   const comparedAt = new Date().toISOString()
-  if (reference === null) return { model, distance: 0, p: 1, probes: PROBES.length, samplesPerSide: 0, verdict: 'no-reference', comparedAt, usd }
+  // A reference from a different battery is not evidence of anything: the probe indices no longer mean the same questions.
+  if (reference === null || (reference.batterySha !== undefined && reference.batterySha !== batterySha())) return { model, distance: 0, p: 1, probes: PROBES.length, samplesPerSide: 0, verdict: 'no-reference', comparedAt, usd }
   const { distance, p } = probePermutationTest(reference.samples, fresh)
   return { model, distance, p, probes: PROBES.length, samplesPerSide: Math.round(fresh.length / PROBES.length), verdict: p < alpha ? 'differs' : 'matches', enrolledAt: reference.enrolledAt, comparedAt, usd }
 }

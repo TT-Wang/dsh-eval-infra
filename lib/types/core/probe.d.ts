@@ -14,6 +14,8 @@ export interface ProbeReference {
     schema: 'dsh-eval-probe/1';
     model: string;
     baseUrl: string;
+    /** sha256 of the probe battery this reference was built from; a different battery is not comparable. */
+    batterySha?: string;
     enrolledAt: string;
     samples: ProbeSample[];
     usd: number;
@@ -41,6 +43,8 @@ export declare function collectProbes(chat: ChatCall, samples?: number, log?: (l
     samples: ProbeSample[];
     usd: number;
 }>;
+/** sha256 of the battery itself: changing, adding or reordering a probe makes old references incomparable. */
+export declare function batterySha(probes?: string[]): string;
 export declare function referenceKey(model: string, baseUrl: string): string;
 /** Compare fresh probes with an enrolled reference; alpha 0.01 keeps false alarms rare on a check that blocks verdicts. */
 export declare function compareWithReference(fresh: ProbeSample[], reference: ProbeReference | null, model: string, usd: number, alpha?: number): ProbeVerdict;
