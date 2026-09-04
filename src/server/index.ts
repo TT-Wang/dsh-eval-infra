@@ -154,7 +154,18 @@ export class EvalApp {
     const project = this.project
     if (method === 'GET' && path === '/meta') {
       const profile = evalProfileManifest(project.home, project.config.profile)
-      json(res, 200, { version: evalInfraVersion(), project: project.root, home: project.home, profile: project.config.profile, profileReady: profile.exists, plugins: Object.keys(profile.dependencies), scenarioRoot: project.scenarioRoot, armsDir: project.armsDir, defaults: { repeats: project.config.repeats, concurrency: project.config.concurrency } })
+      // The wizard states which isolation the run will use rather than asking; it needs to know
+      // whether Docker is actually there, and whether any third-party plugin is linked.
+      const { dockerAvailable } = await import('../core/docker.js')
+      const docker = await dockerAvailable()
+      json(res, 200, {
+        version: evalInfraVersion(), project: project.root, home: project.home,
+        profile: project.config.profile, profileReady: profile.exists,
+        plugins: Object.keys(profile.dependencies),
+        scenarioRoot: project.scenarioRoot, armsDir: project.armsDir,
+        docker: { available: docker.ok, detail: docker.detail },
+        defaults: { repeats: project.config.repeats, concurrency: project.config.concurrency },
+      })
       return
     }
     if (method === 'GET' && path === '/runs') {
@@ -171,7 +182,7 @@ export class EvalApp {
     if (method === 'GET' && path === '/history') { json(res, 200, buildHistory(project.runsRoot)); return }
     if (method === 'GET' && path === '/scenarios') {
       const { scenarios, invalid } = collectScenarios(project, {})
-      json(res, 200, { scenarios: scenarios.map(s => ({ name: s.name, dir: s.dir, meta: s.meta, turns: s.prompts.length, hasOracle: s.hasOracle, prompts: s.prompts })), invalid })
+      json(res, 200, { scenarios: scenarios.map(s => ({ name: s.name, dir: s.dir, meta: s.meta, turns: s.prompts.length, hasOracle: s.hasOracle, variants: s.variants?.length ?? 0, prompts: s.prompts })), invalid })
       return
     }
     if (method === 'GET' && path === '/arms') {

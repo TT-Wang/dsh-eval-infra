@@ -7,8 +7,8 @@ import type { ArmSpec } from '../core/types.js'
 /** Mount prefix: '' at the root, '/eval' inside the dsh web host. Hash routing keeps the pathname stable. */
 export const BASE = location.pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '')
 
-export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; armsDir: string; defaults: { repeats: number; concurrency: number } }
-export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; prompts: string[] }
+export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; armsDir: string; docker?: { available: boolean; detail: string }; defaults: { repeats: number; concurrency: number } }
+export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; variants?: number; prompts: string[] }
 export interface ArmInfo { file: string; path: string; spec?: ArmSpec; error?: string; text: string }
 export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null; integrity?: RunIntegrity | null }
 export interface RunIntegrity { ok: boolean; status?: 'PASS' | 'INVALID' | 'INCONCLUSIVE'; statusReason?: string; sealedAt: string | null; evidenceSha: string | null; missing: string[]; changed: string[]; added: string[]; reportReproduces: boolean | null; reportDiff: string[] }

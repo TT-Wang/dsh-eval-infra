@@ -83,6 +83,7 @@ export function RunView({ id }: { id: string }) {
         </div>
         <div class="row">
           {running && <button class="btn danger" onClick={() => { void api.cancel(id) }}>Cancel</button>}
+          {STATIC === undefined && !running && <a class="btn" title="re-execute this run from its recorded provider responses: no API key, no spend" href={`#/new?replay=${encodeURIComponent(id)}`}>Replay this run</a>}
           {STATIC === undefined && <a class="btn" href={`${location.pathname.replace(/\/?$/, '/')}api/runs/${id}/report`} target="_blank">report.json</a>}
         </div>
       </div>

@@ -38,6 +38,8 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [forkAt, setForkAt] = useState(preset['forkAt'] ?? '')
   const [runsList, setRunsList] = useState<Array<{ id: string; label?: string }>>([])
   const [step, setStep] = useState(0)
+  const [advanced, setAdvanced] = useState(false)
+  const [budgetTouched, setBudgetTouched] = useState(false)
   const reloadArms = (): void => { void api.arms().then(r => setArms(r.arms)) }
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
@@ -91,6 +93,18 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
     return { usd: perTrial * trials, seen, perTrial }
   }, [history, selected, trials])
   const multi = diff?.some(d => d.variables > 1) ?? false
+  // What `auto` will pick, said in the same terms the server decides it.
+  const thirdParty = (meta?.plugins ?? []).length
+  const dockerReady = meta?.docker?.available === true
+  const autoIsolation = thirdParty > 0 && dockerReady
+    ? { container: true, reason: `${thirdParty} third-party plugin${thirdParty === 1 ? ' is' : 's are'} linked into this profile and Docker is running` }
+    : { container: false, reason: thirdParty === 0 ? 'no third-party plugin is linked into this profile' : 'Docker is not available here' }
+  const variantScenarios = scenarios.filter(s => selected.has(s.name) && (s.variants ?? 0) > 0).length
+  // Prefill the cap from the archive's estimate, once, and only while the field is untouched.
+  useEffect(() => {
+    if (budgetTouched || maxUsd !== '' || estimate === null) return
+    setMaxUsd((Math.ceil(estimate.usd * 1.5 * 100) / 100).toFixed(2))
+  }, [estimate, budgetTouched, maxUsd])
   const identical = diff?.some(d => d.variables === 0) ?? false
 
   const toggle = (name: string): void => { const n = new Set(selected); if (n.has(name)) n.delete(name); else n.add(name); setSelected(n) }
@@ -173,86 +187,101 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
       )}
 
       {step === 1 && (
-        <div class="grid gap-4 md:grid-cols-2">
+        <div class="flex flex-col gap-4">
           <section class="uk-card">
-            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">How many trials</h2></div>
-            <div class="uk-card-body py-3 flex flex-col gap-3">
-              <label class="text-sm">Repeats per scenario, per arm
-                <input class="uk-input" type="number" min={1} max={30} value={repeats} onInput={e => setRepeats(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
-                <span class="text-xs text-muted-foreground">Three is the floor; five is recommended for pass/fail outcomes.</span>
+            <div class="uk-card-body py-4 flex flex-col gap-5">
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">Repeats per scenario, per arm</span>
+                <input class="uk-input max-w-32" type="number" min={1} max={30} value={repeats} onInput={e => setRepeats(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
+                <span class="text-xs text-muted-foreground">
+                  {repeats < 3
+                    ? 'Below three, single-run noise is around ±30% on cost, and the report will refuse to state a direction.'
+                    : repeats < 5
+                      ? 'Three is the floor. Five is recommended when the outcome is pass or fail.'
+                      : 'Enough repeats to see through single-run noise.'}
+                </span>
               </label>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">Budget cap for this run (USD)</span>
+                <input class="uk-input max-w-32" type="text" value={maxUsd} placeholder="no cap" onInput={(e) => { setBudgetTouched(true); setMaxUsd((e.target as HTMLInputElement).value) }} />
+                <span class="text-xs text-muted-foreground">
+                  Scheduling stops once spending passes the cap; trials already finished are kept and the report is built from them.
+                  {estimate ? ` This run is estimated at ${fmt.usd(estimate.usd, 2)}.` : ''}
+                </span>
+              </label>
+
+              <div class="flex flex-col gap-1">
+                <span class="text-sm font-medium">Isolation</span>
+                <p class="text-sm text-muted-foreground">
+                  {sandbox === 'auto'
+                    ? autoIsolation.container
+                      ? <>Each trial runs in its own container, because {autoIsolation.reason}. Slower by twenty seconds or so per trial, and the safe default for code you did not write.</>
+                      : <>Each trial runs on this machine under dsh's own workspace sandbox, because {autoIsolation.reason}.</>
+                    : sandbox === 'docker'
+                      ? <>Forced to a container per trial.</>
+                      : <>Forced to this machine, under dsh's own workspace sandbox.</>}
+                  {' '}
+                  <button class="underline" onClick={() => setAdvanced(true)}>change</button>
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <details class="uk-card" open={advanced} onToggle={e => setAdvanced((e.target as HTMLDetailsElement).open)}>
+            <summary class="uk-card-header py-3 cursor-pointer text-sm font-medium">Advanced <span class="font-normal text-muted-foreground">defaults are right for almost every run</span></summary>
+            <div class="uk-card-body py-3 grid gap-4 md:grid-cols-2">
               <label class="text-sm">Trials in parallel
                 <input class="uk-input" type="number" min={1} max={16} value={concurrency} onInput={e => setConcurrency(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
+                <span class="text-xs text-muted-foreground">Speed only. Raising it can trip the provider's rate limit.</span>
               </label>
               <label class="text-sm">Label
                 <input class="uk-input" type="text" value={label} placeholder="what this run is for" onInput={e => setLabel((e.target as HTMLInputElement).value)} />
               </label>
-            </div>
-          </section>
-
-          <section class="uk-card">
-            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Spend</h2></div>
-            <div class="uk-card-body py-3 flex flex-col gap-3">
-              <label class="text-sm">Budget cap for the run (USD)
-                <input class="uk-input" type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} />
-              </label>
               <label class="text-sm">Cap per trial (USD)
-                <input class="uk-input" type="text" value={maxUsdPerTrial} placeholder="optional" onInput={e => setMaxUsdPerTrial((e.target as HTMLInputElement).value)} />
+                <input class="uk-input" type="text" value={maxUsdPerTrial} placeholder="no cap" onInput={e => setMaxUsdPerTrial((e.target as HTMLInputElement).value)} />
                 <span class="text-xs text-muted-foreground">A trial that passes its cap stops and counts as a failure.</span>
               </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input class="uk-checkbox" type="checkbox" checked={sequential} onChange={e => setSequential((e.target as HTMLInputElement).checked)} />
-                Stop early once the result is decided
-              </label>
-              {sequential && (
-                <div class="flex gap-2 pl-6">
-                  <label class="text-sm">seed <input class="uk-input uk-form-sm" value={seed} onInput={e => setSeed((e.target as HTMLInputElement).value)} /></label>
-                  <label class="flex items-center gap-2 text-sm"><input class="uk-checkbox" type="checkbox" checked={orderSignal} onChange={e => setOrderSignal((e.target as HTMLInputElement).checked)} /> strongest scenarios first</label>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section class="uk-card">
-            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Isolation</h2></div>
-            <div class="uk-card-body py-3 flex flex-col gap-3">
               <label class="text-sm">Where each trial runs
                 <select class="uk-select" value={sandbox} onChange={(e) => { const v = (e.target as HTMLSelectElement).value as 'auto' | 'host' | 'docker'; setSandbox(v); setDocker(v === 'docker') }}>
-                  <option value="auto">auto — container when third-party plugins are linked and Docker is available</option>
+                  <option value="auto">auto — decide from what is linked and available</option>
                   <option value="host">host — dsh's own workspace sandbox, fastest</option>
                   <option value="docker">container per trial</option>
                 </select>
               </label>
               <label class="text-sm">Container runtime
                 <input class="uk-input" type="text" value={dockerRuntime} placeholder="default · runsc · kata" onInput={e => setDockerRuntime((e.target as HTMLInputElement).value)} />
+                <span class="text-xs text-muted-foreground">gVisor or a Kata microVM, when this host provides one.</span>
               </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input class="uk-checkbox" type="checkbox" checked={keepDshSandbox} onChange={e => setKeepDshSandbox((e.target as HTMLInputElement).checked)} />
-                Keep dsh's own sandbox on inside the container
+              <label class="flex items-start gap-2 text-sm">
+                <input class="uk-checkbox mt-1" type="checkbox" checked={keepDshSandbox} onChange={e => setKeepDshSandbox((e.target as HTMLInputElement).checked)} />
+                <span>Keep dsh's own sandbox on inside the container<br /><span class="text-xs text-muted-foreground">Defence in depth; needs a kernel with Landlock or user namespaces.</span></span>
               </label>
-            </div>
-          </section>
-
-          <section class="uk-card">
-            <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Evidence</h2></div>
-            <div class="uk-card-body py-3 flex flex-col gap-3">
-              <label class="flex items-center gap-2 text-sm">
-                <input class="uk-checkbox" type="checkbox" checked={perturb} onChange={e => setPerturb((e.target as HTMLInputElement).checked)} />
-                Paraphrase prompts on repeats above one, identically for both arms
+              <label class="flex items-start gap-2 text-sm">
+                <input class="uk-checkbox mt-1" type="checkbox" checked={sequential} onChange={e => setSequential((e.target as HTMLInputElement).checked)} />
+                <span>Stop early once the result is decided<br /><span class="text-xs text-muted-foreground">Saves money on a clear result, but the sequence that decides is wider than a fixed-sample interval, so an unclear one needs more scenarios.</span></span>
               </label>
-              <label class="text-sm">Replay a recorded run instead of calling the provider
-                <select class="uk-select" value={replayRun} onChange={e => setReplayRun((e.target as HTMLSelectElement).value)}>
-                  <option value="">— live run —</option>
-                  {runsList.map(r => <option value={r.id}>{r.id}{r.label ? ` · ${r.label}` : ''}</option>)}
-                </select>
-              </label>
-              {replayRun !== '' && (
-                <label class="text-sm">Fork to live calls after N recorded responses
-                  <input class="uk-input" type="text" value={forkAt} placeholder="empty = pure replay, no key needed" onInput={e => setForkAt((e.target as HTMLInputElement).value)} />
+              {sequential && (
+                <div class="flex flex-wrap gap-3 text-sm">
+                  <label>seed <input class="uk-input uk-form-sm max-w-24" value={seed} onInput={e => setSeed((e.target as HTMLInputElement).value)} /></label>
+                  <label class="flex items-center gap-2"><input class="uk-checkbox" type="checkbox" checked={orderSignal} onChange={e => setOrderSignal((e.target as HTMLInputElement).checked)} /> strongest scenarios first</label>
+                </div>
+              )}
+              {variantScenarios > 0 && (
+                <label class="flex items-start gap-2 text-sm">
+                  <input class="uk-checkbox mt-1" type="checkbox" checked={perturb} onChange={e => setPerturb((e.target as HTMLInputElement).checked)} />
+                  <span>Paraphrase prompts on repeats above one<br /><span class="text-xs text-muted-foreground">{variantScenarios} of the selected scenarios have paraphrases; both arms see the same wording, so the spread includes wording sensitivity.</span></span>
                 </label>
               )}
             </div>
-          </section>
+          </details>
+
+          {replayRun !== '' && (
+            <div class="uk-alert py-2 text-sm">
+              This run will replay the recorded responses of <code>{replayRun}</code>{forkAt !== '' ? <> and go live after {forkAt} responses per trial</> : <> with no live calls, so it costs nothing</>}.
+              {' '}<button class="underline" onClick={() => { setReplayRun(''); setForkAt('') }}>run live instead</button>
+            </div>
+          )}
         </div>
       )}
 
