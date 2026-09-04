@@ -164,3 +164,76 @@ For comparison, on the earlier sequential-check run the finite-sample sequence a
 ## holdout-3 (2026-09-04, run 20260903-210653-2m6a) — confirmation rule
 
 Five dev scenarios plus three sealed ones (n1, n2, n3 now `holdout: true`) with `--include-holdout`, 1 repeat, 16 trials, $0.178. Both arms passed 8/8; note: `Δpass on the 5 dev scenarios +0.0% pp vs +0.0% pp on the 3 sealed scenarios`. The confirmation rule (a dev direction of ≥10 pp that reverses on ≥3 sealed scenarios is declined) was armed but not triggered; its trigger path is covered by the keyless test. 16/16 reconciled, 226 provider requests.
+
+## Third iteration (2026-09-04): the gaps the adversarial review left open
+
+A third sweep (`scratchpad/research/sweep-3.md`: 20 GitHub searches, 855 arXiv submissions from 2026-08-31 to 09-04 filtered to 217 title hits, ~45 page reads) found nothing that contradicts a **met** row and gave a concrete queue for the five open gap classes. What was then built and exercised:
+
+### rerun and fork validation (run 20260903-213406-xfer)
+
+`dsh-eval rerun 20260903-203845-40b3 f9_docs_research --repeats 3` re-ran the pair that had failed once in the three-repeat run:
+
+```
+rerun 20260903-213406-xfer: not reproduced — fold failed again in 0/3, same first divergence (call 1) in 0/3
+```
+
+The f9 failure did not recur in three attempts, so it was resampling luck, not an effect of the candidate. That is the control the literature asks for (Repair or Resample, 2608.25920) before a failure is attributed to a change. `--fork` replays the identical prefix and goes live at the divergence, so a cause can be separated from luck; the fork point is computed from the ledger (`forkPointForCall`).
+
+### same-family judge refusal (exit 3)
+
+```
+error: judge deepseek-v4-pro shares a model family with the arms (deepseek); self-preference and preference
+leakage bias such judgments. Configure a judge from another family … or pass --allow-same-family …
+```
+
+### judge anchors caught real drift (run 20260903-212522-ujkh, two judge passes)
+
+Two judge runs over the same archived human-labelled anchors:
+
+```
+pass 1: anchor …|baseline|1: judge pass · human pass
+pass 2: anchor …|baseline|1: judge fail · human pass · previous judge pass
+→ anchors: n 2, humanAgreement 0.5, stability 0.5, attribution "judge"
+```
+
+The panel changed its mind on a frozen anchor between two runs minutes apart, and the drift was attributed to the judge rather than to the system, which is exactly the failure mode "Who Drifted" (2606.15474) describes. Conformal abstention withheld the run's single judgment (`tau` unreachable with one label), the conservative outcome.
+
+### sealed bundle and signed receipt
+
+```
+bundle → …/bundles/20260903-212522-ujkh
+  evidence 514b1e38eb667eeb… · verifies · report.html + VERIFY.md included
+run 20260904-063200-jikp: sealed … · report: reproduces from the sealed ledgers
+  PASS — signed claims recompute from intact evidence (2 trials, 2/2 reconciled)
+```
+
+The receipt carries the analysis contract (α 0.025 for two planned claims, SESOI 10%, minimum 5 scenarios, seed 42, gate order, cost rule), the claims, the coverage counts and an Ed25519 signature. A forged claim is caught by the signature even when every evidence hash still matches; a missing receipt reads INCONCLUSIVE, not INVALID (ClaimReceipt semantics, 2609.01992).
+
+### served-model probes (run 20260904 probe battery)
+
+| comparison | probe distance | permutation p |
+|---|---|---|
+| fresh v4-flash vs the enrolled v4-flash reference | 0.083 | 0.83 |
+| v4-pro answers vs the v4-flash reference | 0.188 | 0.012 |
+
+Eight probes × 6 samples cost $0.008 per side. The battery separates a substituted model at α = 0.05 but not at the α = 0.01 the gate uses, so the battery was widened to twelve high-entropy prompts and made concurrent. This is a declared-model check plus a behavioural one: the meter also records the model id, the system fingerprint and the client identity on the wire (`deepseek-harness/0.1.2-rc.1 (+https://github.com/deepseek-ai/deepseek-harness)`), and a report reads nothing when the arms were served different models.
+
+### container isolation with the meter and dsh's own sandbox (run 20260903-2145…, chain5 K)
+
+```
+✓ f6_csv_reconcile/fold#1 · $0.0113 · 14 steps · 39s
+- Trials ran inside Docker containers: … and dsh's own in-process sandbox stayed on inside it (bubblewrap image, defence in depth).
+- Usage provenance: 2/2 trials reconciled against the independent wire meter (max deviation 0.00%, 31 provider requests).
+- Harness on the wire: deepseek-harness/0.1.2-rc.1 …
+```
+
+Two bugs were found by these runs and fixed: the wire meter was silently off in container mode (the meter flag keyed on the docker-assigned driver), and the container note did not say whether dsh's own sandbox had been kept on. `--docker-keep-sandbox` now builds a bubblewrap image and grants the capabilities dsh's in-process sandbox needs, so the container and dsh's sandbox stack; `--docker-runtime runsc|kata` passes a gVisor or Kata runtime through when the host has one.
+
+### keyless replay and fork (runs 20260903-212522-ujkh → replay, fork)
+
+```
+replay: 4 trials served 44 recorded provider responses with no live calls (keyless); total $0.0204 in 0.1 min
+fork  : 2 trials served 6 recorded responses and forked to live calls after 3 (14 live responses)
+```
+
+A whole run re-executes from its recordings without a key and without spend, and a fork replays an identical prefix before going live, which is what The Replay Gap (2608.08239) says a fork must do.

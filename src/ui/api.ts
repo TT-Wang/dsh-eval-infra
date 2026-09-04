@@ -11,7 +11,7 @@ export interface Meta { version: string; project: string; home: string; profile:
 export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; prompts: string[] }
 export interface ArmInfo { file: string; path: string; spec?: ArmSpec; error?: string; text: string }
 export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null; integrity?: RunIntegrity | null }
-export interface RunIntegrity { ok: boolean; sealedAt: string | null; evidenceSha: string | null; missing: string[]; changed: string[]; added: string[]; reportReproduces: boolean | null; reportDiff: string[] }
+export interface RunIntegrity { ok: boolean; status?: 'PASS' | 'INVALID' | 'INCONCLUSIVE'; statusReason?: string; sealedAt: string | null; evidenceSha: string | null; missing: string[]; changed: string[]; added: string[]; reportReproduces: boolean | null; reportDiff: string[] }
 export type LedgerLite = Omit<RunLedger, 'steps'> & { steps: Array<Omit<RunLedger['steps'][number], 'calls'> & { calls: string[] }> }
 
 /** A self-contained export (`dsh-eval export --html`) embeds the run; every read resolves from it and writes are refused. */

@@ -117,7 +117,7 @@ export interface CandidateReport {
   /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
   costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none'
   /** Rerun validation of a failure (dsh-eval rerun), when one was made. */
-  rerun?: { scenario: string; newRunId: string; reps: number; failedAgain: number; sameCall: number; verdict: string; original: { call: number; baseline: string; candidate: string; failing: string } | null }
+  rerun?: { scenario: string; newRunId: string; reps: number; failedAgain: number; sameCall: number; verdict: string; original: { call: number; baseline: string; candidate: string; failing: string } | null; fork?: { sourceRunId: string; forkAt: number; step: number } }
   /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
   passDiffCI: BootstrapCI
   /** One-word grade combining correctness and cost: improvement / regression / tradeoff / tie / inconclusive. */

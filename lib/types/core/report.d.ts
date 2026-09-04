@@ -165,6 +165,11 @@ export interface CandidateReport {
             candidate: string;
             failing: string;
         } | null;
+        fork?: {
+            sourceRunId: string;
+            forkAt: number;
+            step: number;
+        };
     };
     /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
     passDiffCI: BootstrapCI;
