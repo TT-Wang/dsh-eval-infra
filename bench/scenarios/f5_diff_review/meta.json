@@ -1,1 +1,13 @@
-{"name": "f5_diff_review", "turns": 2, "max_steps_per_turn": 60, "stressor": "a git branch whose diff against main is ~1500 lines across ~12 files (renames, signature changes, a deleted file, added TODOs); the review asks for facts that live in the change lines; follow-up asks which file changed most", "category": "context", "tags": ["diff", "review"], "oracle": "required"}
+{
+  "name": "f5_diff_review",
+  "title": "Review a 1500-line branch diff",
+  "turns": 2,
+  "max_steps_per_turn": 60,
+  "stressor": "a git branch whose diff against main is ~1500 lines across ~12 files (renames, signature changes, a deleted file, added TODOs); the review asks for facts that live in the change lines; follow-up asks which file changed most",
+  "category": "context",
+  "tags": [
+    "diff",
+    "review"
+  ],
+  "oracle": "required"
+}

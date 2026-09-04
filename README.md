@@ -125,15 +125,25 @@ Other single-variable arms: `- id: system-prompt` with a new `persona`; `- id: c
 
 ### Scenario
 
+A scenario is a directory of five files. `root` is the workspace path as a string.
+
 ```
 bench/scenarios/<name>/
-  meta.json     {"name": "...", "turns": 2, "category": "tools", "stressor": "...", "oracle": "required",
+  meta.json     {"name": "...", "title": "Reconcile two exports", "turns": 2, "category": "tools",
+                 "stressor": "what it puts pressure on", "oracle": "required",
                  "network": false, "new_session_before_turns": [3]}   # last two optional
   prompts.json  ["turn 1 …", "turn 2 …"]
-  setup.py      def setup(root): …            # deterministic workspace; ground truth may live in root/.truth
+  setup.py      def setup(root): …            # deterministic workspace; ground truth may live in <root>/.truth
   verify.py     def verify(root): return ok, detail   # grades the end state only
   oracle.py     def solve(root): …            # the reference answer
 ```
+
+`dsh-eval scenarios new <name>` writes a working example of all five into the project's own library and
+selfchecks it; the web UI takes a folder you already have under **Add your own** on the scenarios step.
+Either way the scenario is checked on arrival: an untouched workspace must fail and the reference answer
+must pass, because a verifier that always says pass turns every later comparison into noise. Your scenarios
+add to the shipped library rather than replacing it, unless `scenarioRoot` in `.dsh-eval/config.json` names
+a root explicitly.
 
 `new_session_before_turns` ends the runtime process and starts a fresh one on the same workspace, which is the way to test what a memory plugin actually stored. `meta.judge` names a rubric and the artifacts a judge should read, `meta.holdout` seals a scenario into the confirmation pool, and `prompts.variants.json` supplies the paraphrases `--perturb` uses.
 

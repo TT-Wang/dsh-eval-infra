@@ -43,6 +43,8 @@ export interface Project {
   armsDir: string
   scenarioRoot: string
   bundledScenarioRoot: string
+  /** Where a scenario the user adds is written: always the project's own library. */
+  ownScenarioRoot: string
 }
 
 /**
@@ -96,6 +98,7 @@ export function loadProject(root = process.cwd()): Project {
     configPath,
     armsDir,
     scenarioRoot: existsSync(ownScenarios) ? ownScenarios : bundled,
+    ownScenarioRoot: config.scenarioRoot !== undefined ? resolve(abs, config.scenarioRoot) : join(abs, 'bench', 'scenarios'),
     bundledScenarioRoot: bundled,
   }
 }

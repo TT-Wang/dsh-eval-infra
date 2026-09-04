@@ -1,5 +1,6 @@
 {
   "name": "v1_verify_before_done",
+  "title": "Run the tests before claiming done",
   "turns": 2,
   "category": "verification",
   "tags": [

@@ -1,5 +1,6 @@
 {
   "name": "s4_multifile_refactor",
+  "title": "Refactor across many files",
   "turns": 8,
   "category": "coding",
   "tags": [

@@ -1,5 +1,6 @@
 {
   "name": "n3_rot_checkpoints",
+  "title": "Reuse facts at growing distance",
   "turns": 17,
   "category": "context",
   "tags": [

@@ -1,1 +1,14 @@
-{"name": "f9_docs_research", "turns": 2, "max_steps_per_turn": 60, "stressor": "a 60-page documentation site served whole by fetch_page (15–35K chars per page: reference tables, prose, changelogs); the questions need facts spread across ~12 pages; a follow-up needs a detail that sits in prose", "category": "context", "tags": ["docs", "fetch_page", "research"], "oracle": "required"}
+{
+  "name": "f9_docs_research",
+  "title": "Answer from a 60-page doc site",
+  "turns": 2,
+  "max_steps_per_turn": 60,
+  "stressor": "a 60-page documentation site served whole by fetch_page (15\u201335K chars per page: reference tables, prose, changelogs); the questions need facts spread across ~12 pages; a follow-up needs a detail that sits in prose",
+  "category": "context",
+  "tags": [
+    "docs",
+    "fetch_page",
+    "research"
+  ],
+  "oracle": "required"
+}

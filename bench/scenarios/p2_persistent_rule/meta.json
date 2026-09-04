@@ -1,8 +1,14 @@
 {
   "name": "p2_persistent_rule",
+  "title": "Keep three rules stated once",
   "turns": 4,
   "category": "prompt",
-  "tags": ["standing-rule", "license-header", "naming", "changelog"],
+  "tags": [
+    "standing-rule",
+    "license-header",
+    "naming",
+    "changelog"
+  ],
   "stressor": "three repo rules stated once in turn 1 (exact SPDX header as line 1 of every .py file, snake_case function names, a fixed-format CHANGELOG bullet per change) must be honoured silently through three later feature turns, including on files created in turn 4; two seed files already violate the rules (one has no header, one has a look-alike header) and must be fixed too",
   "max_steps_per_turn": 60,
   "network": false,

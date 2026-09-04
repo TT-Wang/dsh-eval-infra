@@ -1,5 +1,6 @@
 {
   "name": "s1_longhorizon_debug",
+  "title": "Debug across many turns",
   "turns": 6,
   "category": "coding",
   "tags": [

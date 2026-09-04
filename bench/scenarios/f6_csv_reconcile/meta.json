@@ -1,1 +1,14 @@
-{"name": "f6_csv_reconcile", "turns": 2, "max_steps_per_turn": 60, "stressor": "two inventory exports of ~8K rows each (~600K chars) that disagree on a few hundred SKUs; the reconciliation needs exact per-category totals and the mismatch list; follow-up asks the largest discrepancy", "category": "context", "tags": ["csv", "reconcile", "whole-read"], "oracle": "required"}
+{
+  "name": "f6_csv_reconcile",
+  "title": "Reconcile two inventory exports",
+  "turns": 2,
+  "max_steps_per_turn": 60,
+  "stressor": "two inventory exports of ~8K rows each (~600K chars) that disagree on a few hundred SKUs; the reconciliation needs exact per-category totals and the mismatch list; follow-up asks the largest discrepancy",
+  "category": "context",
+  "tags": [
+    "csv",
+    "reconcile",
+    "whole-read"
+  ],
+  "oracle": "required"
+}

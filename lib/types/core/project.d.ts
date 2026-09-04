@@ -37,6 +37,8 @@ export interface Project {
     armsDir: string;
     scenarioRoot: string;
     bundledScenarioRoot: string;
+    /** Where a scenario the user adds is written: always the project's own library. */
+    ownScenarioRoot: string;
 }
 /**
  * Bundles a profile activates for every arm. A plugin that declares `dsh.bundle`

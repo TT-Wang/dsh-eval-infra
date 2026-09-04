@@ -1,8 +1,13 @@
 {
   "name": "c1_big_read_budget",
+  "title": "Read a big file for four fields",
   "turns": 1,
   "category": "cost",
-  "tags": ["cost", "big-file", "targeted-read"],
+  "tags": [
+    "cost",
+    "big-file",
+    "targeted-read"
+  ],
   "stressor": "cost probe, not a correctness probe: a ~400 KB JSON file of which only four fields matter; the verifier is trivial and exists so that whole-file reads can be compared against targeted queries (grep/jq/python) on tokens and dollars; a smaller look-alike sample file with different values is the decoy",
   "max_steps_per_turn": 60,
   "network": false,

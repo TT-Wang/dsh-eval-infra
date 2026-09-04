@@ -1,5 +1,6 @@
 {
   "name": "n1_verbatim_restore",
+  "title": "Restore text verbatim after compaction",
   "turns": 12,
   "category": "context",
   "tags": [

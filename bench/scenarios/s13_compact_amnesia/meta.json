@@ -1,5 +1,6 @@
 {
   "name": "s13_compact_amnesia",
+  "title": "Recall facts after context pressure",
   "turns": 16,
   "category": "context",
   "tags": [

@@ -318,3 +318,60 @@ describe('profile bundles', () => {
     expect(profileBundles(home, 'eval')).toEqual([])
   })
 })
+
+describe('scenario intake', () => {
+  it('refuses an incomplete or dishonest scenario and accepts one whose verifier discriminates', async () => {
+    const { addScenario, scenarioTemplate } = await import('../src/core/intake.js')
+    const { loadProject } = await import('../src/core/project.js')
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-eval-intake-'))
+    mkdirSync(join(dir, '.dsh-eval'), { recursive: true })
+    writeFileSync(join(dir, '.dsh-eval', 'config.json'), JSON.stringify({ profile: 'eval', repeats: 3, concurrency: 1 }))
+    const p = loadProject(dir)
+
+    await expect(addScenario(p, 'Bad Name', scenarioTemplate('x'))).rejects.toThrow(/short identifier/)
+    await expect(addScenario(p, 'x', { 'meta.json': '{}' })).rejects.toThrow(/prompts.json is required|verify.py is required/)
+    await expect(addScenario(p, 'x', { ...scenarioTemplate('x'), 'evil.sh': 'rm -rf /' })).rejects.toThrow(/unexpected file/)
+    // the name in meta.json must match the name it is filed under, or two ids point at one directory
+    await expect(addScenario(p, 'other', scenarioTemplate('x'))).rejects.toThrow(/must equal the directory name/)
+    expect(existsSync(join(dir, 'bench', 'scenarios', 'other'))).toBe(false)
+
+    // the template is a working scenario: its verifier rejects an untouched workspace and accepts the oracle
+    const good = await addScenario(p, 'my_scenario', scenarioTemplate('my_scenario'))
+    expect(good.selfcheck).toMatchObject({ ok: true, blankFails: true, oraclePasses: true })
+    expect(good.written.sort()).toEqual(['meta.json', 'oracle.py', 'prompts.json', 'setup.py', 'verify.py'])
+    await expect(addScenario(p, 'my_scenario', scenarioTemplate('my_scenario'))).rejects.toThrow(/already exists/)
+
+    // a verifier that always passes is written but reported as unusable, which is the point of checking on intake
+    const files = scenarioTemplate('always_pass')
+    files['verify.py'] = 'def verify(root):\n    return True, "looks fine to me"\n'
+    const bad = await addScenario(p, 'always_pass', files)
+    expect(bad.selfcheck.ok).toBe(false)
+    expect(bad.selfcheck.blankFails).toBe(false)
+    expect(bad.selfcheck.detail).toContain('untouched workspace already passes')
+  })
+})
+
+describe('scenario roots', () => {
+  it('adds the project\'s own scenarios to the shipped library instead of replacing it', async () => {
+    const { collectScenarios } = await import('../src/core/orchestrate.js')
+    const { loadProject } = await import('../src/core/project.js')
+    const { addScenario, scenarioTemplate } = await import('../src/core/intake.js')
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-eval-roots-'))
+    mkdirSync(join(dir, '.dsh-eval'), { recursive: true })
+    writeFileSync(join(dir, '.dsh-eval', 'config.json'), JSON.stringify({ profile: 'eval', repeats: 3, concurrency: 1 }))
+
+    const before = collectScenarios(loadProject(dir), {}).scenarios.length
+    expect(before).toBeGreaterThan(20)                                  // the shipped library
+    await addScenario(loadProject(dir), 'mine', scenarioTemplate('mine'))
+    const after = collectScenarios(loadProject(dir), {}).scenarios
+    expect(after.length).toBe(before + 1)                               // added, not replaced
+    expect(after.some(s => s.name === 'mine')).toBe(true)
+    expect(after.some(s => s.name === 'z0_env_smoke')).toBe(true)
+  })
+})

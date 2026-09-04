@@ -118,7 +118,13 @@ export function collectScenarios(project: Project, request: Pick<RunRequest, 'sc
   if (request.categories && request.categories.length) filter.categories = request.categories
   if (request.tags && request.tags.length) filter.tags = request.tags
   if (request.includeHoldout) filter.includeHoldout = true
-  const roots = [project.scenarioRoot, ...(project.config.pools ?? []).map(p => resolve(project.root, p))]
+  // A configured `scenarioRoot` means exactly that root. Otherwise the project's own
+  // scenarios add to the shipped library rather than replacing it: writing one scenario
+  // should not hide thirty. Own scenarios come first, so they win a name clash.
+  const pools = (project.config.pools ?? []).map(p => resolve(project.root, p))
+  const roots = project.config.scenarioRoot !== undefined
+    ? [...new Set([project.scenarioRoot, ...pools])]
+    : [...new Set([project.ownScenarioRoot, project.bundledScenarioRoot, ...pools])]
   const seen = new Set<string>()
   const scenarios: Scenario[] = []
   const invalid: Array<{ dir: string; error: string }> = []

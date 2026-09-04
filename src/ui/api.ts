@@ -7,7 +7,7 @@ import type { ArmSpec } from '../core/types.js'
 /** Mount prefix: '' at the root, '/eval' inside the dsh web host. Hash routing keeps the pathname stable. */
 export const BASE = location.pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '')
 
-export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; armsDir: string; docker?: { available: boolean; detail: string }; defaults: { repeats: number; concurrency: number } }
+export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; ownScenarioRoot?: string; armsDir: string; docker?: { available: boolean; detail: string }; defaults: { repeats: number; concurrency: number } }
 export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; variants?: number; prompts: string[] }
 export interface ArmInfo { file: string; path: string; spec?: ArmSpec; error?: string; text: string }
 export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null; integrity?: RunIntegrity | null }
@@ -56,6 +56,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
 export interface PluginInfo { name: string; version?: string; description?: string; path: string; source: 'profile' | 'local' | 'global'; installed: boolean; bundle: boolean; bundlePatch?: string; replaces?: string[]; inserts?: string[]; client: boolean; rowId: string; duplicates?: string[] }
+export interface IntakeResult { name: string; dir: string; written: string[]; selfcheck: { ok: boolean; blankFails: boolean; oraclePasses: boolean; detail: string } }
 export interface Preflight {
   arm: string; baseline: string; ok: boolean
   stages: Array<{ name: 'compose' | 'mounted' | 'runs'; ok: boolean; detail: string }>
@@ -75,6 +76,8 @@ export const api = {
   history: () => req<History>('/history'),
   runs: () => req<RunRow[]>('/runs'),
   plugins: () => req<{ plugins: PluginInfo[] }>('/plugins'),
+  addScenario: (name: string, files: Record<string, string>) => req<IntakeResult>('/scenarios', { method: 'POST', body: JSON.stringify({ name, files }) }),
+  scenarioTemplate: (name: string) => req<Record<string, string>>(`/scenarios/template?name=${encodeURIComponent(name)}`),
   preflight: (arm: string, dry: boolean) => req<Preflight>('/preflight', { method: 'POST', body: JSON.stringify({ arm, dry }) }),
   rows: (arm: string) => req<{ arm: string; rows: RowInfo[] }>(`/rows?arm=${encodeURIComponent(arm)}`),
   savePatch: (name: string, text: string) => req<{ saved: string }>(`/patch/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),

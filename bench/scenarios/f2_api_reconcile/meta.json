@@ -1,1 +1,14 @@
-{"name": "f2_api_reconcile", "turns": 2, "max_steps_per_turn": 60, "stressor": "a paginated JSON CLI (20 pages x 100 orders, ~450K chars) plus refunds; reconciliation needs the exact set of failed high-value orders without a refund; follow-up asks aggregate stats", "category": "tools", "tags": ["paginated", "json", "reconcile"], "oracle": "required"}
+{
+  "name": "f2_api_reconcile",
+  "title": "Reconcile a paginated API",
+  "turns": 2,
+  "max_steps_per_turn": 60,
+  "stressor": "a paginated JSON CLI (20 pages x 100 orders, ~450K chars) plus refunds; reconciliation needs the exact set of failed high-value orders without a refund; follow-up asks aggregate stats",
+  "category": "tools",
+  "tags": [
+    "paginated",
+    "json",
+    "reconcile"
+  ],
+  "oracle": "required"
+}

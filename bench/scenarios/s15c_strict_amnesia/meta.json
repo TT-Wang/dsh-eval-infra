@@ -1,5 +1,6 @@
 {
   "name": "s15c_strict_amnesia",
+  "title": "Recall a never-restated tool result",
   "turns": 17,
   "category": "context",
   "tags": [

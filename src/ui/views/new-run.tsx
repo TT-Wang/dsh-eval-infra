@@ -3,6 +3,8 @@ import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } fr
 import { navigate } from '../main.js'
 import { pickCandidates } from '../select-arms.js'
 import { ArmDesigner } from './arm-designer.js'
+import { ScenarioIntake } from './scenario-intake.js'
+import { CATEGORIES, categoryInfo } from '../../core/categories.js'
 
 export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -40,6 +42,8 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [step, setStep] = useState(0)
   const [advanced, setAdvanced] = useState(false)
   const [budgetTouched, setBudgetTouched] = useState(false)
+  const [openBuckets, setOpenBuckets] = useState<Set<string>>(new Set())
+  const [showAdd, setShowAdd] = useState(false)
   const reloadArms = (): void => { void api.arms().then(r => setArms(r.arms)) }
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
@@ -100,6 +104,17 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
     ? { container: true, reason: `${thirdParty} third-party plugin${thirdParty === 1 ? ' is' : 's are'} linked into this profile and Docker is running` }
     : { container: false, reason: thirdParty === 0 ? 'no third-party plugin is linked into this profile' : 'Docker is not available here' }
   const variantScenarios = scenarios.filter(s => selected.has(s.name) && (s.variants ?? 0) > 0).length
+  // Scenarios grouped by what they measure, in the order a reader meets them.
+  const buckets = useMemo(() => {
+    const byKey = new Map<string, ScenarioInfo[]>()
+    for (const sc of visible) {
+      const key = sc.meta.category ?? 'uncategorised'
+      byKey.set(key, [...(byKey.get(key) ?? []), sc])
+    }
+    const known = CATEGORIES.filter(c => byKey.has(c.key)).map(c => ({ info: c, rows: byKey.get(c.key)!.sort((a, b) => a.name.localeCompare(b.name)) }))
+    const rest = [...byKey.keys()].filter(k => !CATEGORIES.some(c => c.key === k)).map(k => ({ info: categoryInfo(k), rows: byKey.get(k)!.sort((a, b) => a.name.localeCompare(b.name)) }))
+    return [...known, ...rest]
+  }, [visible])
   // Prefill the cap from the archive's estimate, once, and only while the field is untouched.
   useEffect(() => {
     if (budgetTouched || maxUsd !== '' || estimate === null) return
@@ -286,38 +301,71 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
       )}
 
       {step === 2 && (
-        <section class="uk-card">
-          <div class="uk-card-header flex flex-wrap items-center justify-between gap-2 py-3">
-            <h2 class="uk-card-title text-sm">Scenarios <span class="text-muted-foreground font-normal">({selected.size} of {scenarios.length} selected)</span></h2>
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-sm text-muted-foreground">
+              <b class="text-foreground">{selected.size}</b> of {scenarios.length} selected.
+              Each scenario builds its own workspace, runs a fixed list of prompts, and is graded by a verifier that reads only the end state.
+            </p>
             <div class="flex flex-wrap items-center gap-2">
-              <input class="uk-input uk-form-sm" type="search" placeholder="filter" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
-              <select class="uk-select uk-form-sm" value={category} onChange={e => setCategory((e.target as HTMLSelectElement).value)}>
-                <option value="">all categories</option>
-                {categories.map(c => <option value={c}>{c}</option>)}
-              </select>
-              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set([...selected, ...visible.map(s => s.name)]))}>select shown</button>
-              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => { const n = new Set(selected); for (const s of visible) n.delete(s.name); setSelected(n) }}>clear shown</button>
+              <input class="uk-input uk-form-sm" type="search" placeholder="filter by name or what it stresses" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
+              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set(visible.map(s => s.name)))}>select all shown</button>
+              <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set())}>clear</button>
+              <button class={`uk-btn uk-btn-sm ${showAdd ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setShowAdd(!showAdd)}>Add your own</button>
             </div>
           </div>
-          <div class="uk-card-body py-0 table-scroll">
-            <table class="uk-table uk-table-divider uk-table-sm text-sm">
-              <thead><tr><th class="w-8"></th><th>scenario</th><th>category</th><th class="text-right">turns</th><th>oracle</th><th>stresses</th></tr></thead>
-              <tbody>
-                {visible.map(s => (
-                  <tr key={s.name} class={selected.has(s.name) ? '' : 'opacity-50'}>
-                    <td><input class="uk-checkbox" type="checkbox" checked={selected.has(s.name)} onChange={() => toggle(s.name)} /></td>
-                    <td><code class="text-xs">{s.name}</code>{s.meta.new_session_before_turns?.length ? <span class="uk-badge uk-badge ml-1 badge-xs">multi-session</span> : null}{s.meta.network ? <span class="uk-badge ml-1 badge-xs">network</span> : null}</td>
-                    <td class="text-muted-foreground">{s.meta.category ?? '—'}</td>
-                    <td class="text-right">{s.turns}</td>
-                    <td>{s.hasOracle ? 'yes' : <span class="text-muted-foreground">none</span>}</td>
-                    <td class="text-muted-foreground text-xs">{s.meta.stressor ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {invalid.length > 0 && <div class="uk-card-footer py-2 text-xs text-destructive">{invalid.length} unreadable scenario dir(s): {invalid.map(i => `${i.dir}: ${i.error}`).join('; ')}</div>}
-        </section>
+
+          {showAdd && <ScenarioIntake root={meta?.ownScenarioRoot ?? meta?.scenarioRoot ?? ''} onAdded={() => { setShowAdd(false); void api.scenarios().then(r => { setScenarios(r.scenarios); setInvalid(r.invalid) }) }} />}
+
+          {buckets.map(({ info, rows }) => {
+            const chosen = rows.filter(r => selected.has(r.name)).length
+            const open = openBuckets.has(info.key) || query !== ''
+            return (
+              <section class="uk-card" key={info.key}>
+                <div class="uk-card-header py-2 flex flex-wrap items-center justify-between gap-2">
+                  <button class="flex items-center gap-2 text-left" onClick={() => { const n = new Set(openBuckets); if (n.has(info.key)) n.delete(info.key); else n.add(info.key); setOpenBuckets(n) }}>
+                    <span class="text-muted-foreground">{open ? '▾' : '▸'}</span>
+                    <span>
+                      <span class="text-sm font-medium">{info.title}</span>
+                      <span class="text-xs text-muted-foreground"> · {chosen}/{rows.length} selected</span>
+                      <span class="block text-xs text-muted-foreground">{info.what}</span>
+                    </span>
+                  </button>
+                  <div class="flex items-center gap-2">
+                    <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set([...selected, ...rows.map(r => r.name)]))}>all</button>
+                    <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => { const n = new Set(selected); for (const r of rows) n.delete(r.name); setSelected(n) }}>none</button>
+                  </div>
+                </div>
+                {open && (
+                  <div class="uk-card-body py-0">
+                    {info.useFor !== '' && <p class="py-2 text-xs text-muted-foreground">Worth running when the change touches {info.useFor}.</p>}
+                    <ul class="flex flex-col divide-y divide-border">
+                      {rows.map(sc => (
+                        <li key={sc.name} class={`flex items-start gap-3 py-2 ${selected.has(sc.name) ? '' : 'opacity-60'}`}>
+                          <input class="uk-checkbox mt-1" type="checkbox" checked={selected.has(sc.name)} onChange={() => toggle(sc.name)} />
+                          <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-baseline gap-2">
+                              <span class="text-sm font-medium">{sc.meta.title ?? sc.name}</span>
+                              <code class="text-xs text-muted-foreground">{sc.name}</code>
+                              <span class="text-xs text-muted-foreground">{sc.turns} turn{sc.turns === 1 ? '' : 's'}</span>
+                              {!sc.hasOracle && <span class="uk-badge badge-xs" title="no reference answer, so selfcheck cannot prove the verifier discriminates">no oracle</span>}
+                              {sc.meta.new_session_before_turns?.length ? <span class="uk-badge badge-xs">restarts the runtime</span> : null}
+                              {sc.meta.network ? <span class="uk-badge badge-xs">network</span> : null}
+                              {(sc.variants ?? 0) > 0 && <span class="uk-badge badge-xs" title="has paraphrases, so it can measure wording sensitivity">{sc.variants} paraphrases</span>}
+                              {sc.meta.judge && <span class="uk-badge badge-xs">judged</span>}
+                            </div>
+                            <p class="text-xs text-muted-foreground">{sc.meta.stressor ?? ''}</p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )
+          })}
+          {invalid.length > 0 && <div class="uk-alert uk-alert-destructive text-sm">{invalid.length} unreadable scenario director{invalid.length === 1 ? 'y' : 'ies'}: {invalid.map(i => `${i.dir}: ${i.error}`).join('; ')}</div>}
+        </div>
       )}
 
       <footer class="sticky bottom-0 flex items-center justify-between gap-4 border-t border-border bg-card px-4 py-3 rounded-md">

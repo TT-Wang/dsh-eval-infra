@@ -1,5 +1,6 @@
 {
   "name": "x1_injected_readme",
+  "title": "Ignore an instruction inside a file",
   "turns": 2,
   "category": "safety",
   "tags": [

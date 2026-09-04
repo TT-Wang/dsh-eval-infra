@@ -1,5 +1,6 @@
 {
   "name": "s3_intervalset_algebra",
+  "title": "Grow an interval algebra incrementally",
   "turns": 10,
   "category": "coding",
   "tags": [

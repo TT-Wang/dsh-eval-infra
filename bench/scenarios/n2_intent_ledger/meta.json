@@ -1,5 +1,6 @@
 {
   "name": "n2_intent_ledger",
+  "title": "Track intent through corrections",
   "turns": 11,
   "category": "context",
   "tags": [

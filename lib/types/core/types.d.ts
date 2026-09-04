@@ -5,6 +5,8 @@
  */
 /** meta.json of a scenario directory. */
 export interface ScenarioMeta {
+    /** Short human name shown in listings; the `name` field stays the stable id. */
+    title?: string;
     /** Per-trial spend cap in USD (observed usage; the trial stops and counts as a failure once exceeded). */
     max_usd_per_trial?: number;
     name: string;

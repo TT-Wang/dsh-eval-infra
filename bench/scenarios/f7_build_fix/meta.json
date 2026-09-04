@@ -1,1 +1,14 @@
-{"name": "f7_build_fix", "turns": 2, "max_steps_per_turn": 60, "stressor": "a build script over 60 modules prints ~4000 lines per run (progress and warnings noise) and fails on 6 planted errors in different modules; the fix loop is run→read→edit→run, and every run's output lands in context whatever the agent does with it", "category": "coding", "tags": ["build", "fix-loop", "noisy-output"], "oracle": "required"}
+{
+  "name": "f7_build_fix",
+  "title": "Fix a build behind 4000 lines of noise",
+  "turns": 2,
+  "max_steps_per_turn": 60,
+  "stressor": "a build script over 60 modules prints ~4000 lines per run (progress and warnings noise) and fails on 6 planted errors in different modules; the fix loop is run\u2192read\u2192edit\u2192run, and every run's output lands in context whatever the agent does with it",
+  "category": "coding",
+  "tags": [
+    "build",
+    "fix-loop",
+    "noisy-output"
+  ],
+  "oracle": "required"
+}

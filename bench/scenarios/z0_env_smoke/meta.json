@@ -1,5 +1,6 @@
 {
   "name": "z0_env_smoke",
+  "title": "Every tool works end to end",
   "turns": 1,
   "category": "tools",
   "tags": [

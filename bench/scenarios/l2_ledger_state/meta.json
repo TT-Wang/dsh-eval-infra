@@ -1,5 +1,6 @@
 {
   "name": "l2_ledger_state",
+  "title": "Keep ledger state down a 45-node chain",
   "turns": 1,
   "category": "context",
   "tags": [

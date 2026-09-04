@@ -148,6 +148,20 @@ function scenarioFilter(args: Args): { scenarios: string[]; categories: string[]
   return { scenarios: args.positional, categories: list(args.flags['category']), tags: list(args.flags['tag']), ...(args.flags['include-holdout'] === true ? { includeHoldout: true } : {}) }
 }
 
+async function cmdScenarioNew(project: Project, args: Args): Promise<number> {
+  const name = args.positional[1]
+  if (name === undefined) { err('usage: dsh-eval scenarios new <name>'); return 3 }
+  const { addScenario, scenarioTemplate } = await import('./core/intake.js')
+  try {
+    const r = await addScenario(project, name, scenarioTemplate(name))
+    out(`${r.name} → ${r.dir}`)
+    for (const f of r.written) out(`  ${f}`)
+    out(r.selfcheck.ok ? `selfcheck: ${r.selfcheck.detail}` : `selfcheck FAILED: ${r.selfcheck.detail}`)
+    out('Edit prompts.json, setup.py, verify.py and oracle.py, then run: dsh-eval selfcheck ' + name)
+    return r.selfcheck.ok ? 0 : 1
+  } catch (e) { err(e instanceof Error ? e.message : String(e)); return 2 }
+}
+
 function cmdScenarios(project: Project, args: Args): number {
   const { scenarios, invalid } = collectScenarios(project, scenarioFilter(args))
   out(`root: ${project.scenarioRoot}`)
@@ -488,6 +502,7 @@ SET UP
   init [--plugin <path|pkg>]...       create .dsh-eval/home + eval profile, add plugins, write starter arms
   add <path|pkg> [--activate]         install a plugin into the eval profile; a bundle plugin is left inert so an arm can be the thing that adds it (--activate puts it in every arm)
   scenarios [globs] [--category c]    list scenarios
+  scenarios new <name>                write a working scenario from the template into the project's own library and selfcheck it
   selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
   diff <baseline> <candidate>...      composed-tree diff between arms
   perturb <globs> [--n N]             draft paraphrases of a scenario's prompts (prompts.variants.json) for --perturb
@@ -532,7 +547,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   switch (args.command) {
     case 'init': return cmdInit(project, args)
     case 'add': return cmdAdd(project, args)
-    case 'scenarios': return cmdScenarios(project, args)
+    case 'scenarios': return args.positional[0] === 'new' ? cmdScenarioNew(project, args) : cmdScenarios(project, args)
     case 'selfcheck': return cmdSelfcheck(project, args)
     case 'diff': return cmdDiff(project, args)
     case 'run': return cmdRun(project, args)

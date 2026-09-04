@@ -1,5 +1,6 @@
 {
   "name": "p1_format_contract",
+  "title": "Obey an exact output contract",
   "turns": 3,
   "category": "prompt",
   "tags": [

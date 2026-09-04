@@ -125,15 +125,22 @@ patches:
 
 ### 场景
 
+一个场景就是一个目录,五个文件。`root` 是工作区路径,字符串。
+
 ```
 bench/scenarios/<name>/
-  meta.json     {"name": "...", "turns": 2, "category": "tools", "stressor": "...", "oracle": "required",
+  meta.json     {"name": "...", "title": "一句话的中文/英文标题", "turns": 2, "category": "tools",
+                 "stressor": "这个场景在压什么", "oracle": "required",
                  "network": false, "new_session_before_turns": [3]}   # 后两项可选
   prompts.json  ["第 1 轮 …", "第 2 轮 …"]
-  setup.py      def setup(root): …            # 确定性生成工作区;标准答案可放 root/.truth
+  setup.py      def setup(root): …            # 确定性生成工作区;标准答案可放 <root>/.truth
   verify.py     def verify(root): return ok, detail   # 只判最终状态
   oracle.py     def solve(root): …            # 参考答案
 ```
+
+`dsh-eval scenarios new <name>` 会把五个文件的可运行范例写进项目自己的场景库并立刻自检;网页端在选场景那一步的 **Add your own**
+里可以直接选一个已有目录上传。两条路都会在写入后马上自检:空工作区必须判失败、参考答案必须判通过,因为一个"永远给过"的判卷器
+会让之后每一次对照都变成噪声。你自己的场景是**叠加**在内置库之上的,除非你在 `.dsh-eval/config.json` 里显式指定了 `scenarioRoot`。
 
 `new_session_before_turns` 让运行时在指定轮之前退出并在同一工作区上重新启动,这就是测记忆插件"到底存了什么"的方法。`meta.judge` 声明评分标准和交给判卷模型看的产出文件,`meta.holdout` 把场景封进确认池,`prompts.variants.json` 提供 `--perturb` 用的同义改写。
 

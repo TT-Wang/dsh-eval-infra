@@ -1,5 +1,6 @@
 {
   "name": "s2_taskdag_scheduler",
+  "title": "Build a scheduler turn by turn",
   "turns": 10,
   "category": "coding",
   "tags": [

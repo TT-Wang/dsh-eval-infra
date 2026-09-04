@@ -1,5 +1,6 @@
 {
   "name": "l1_chain_migrate",
+  "title": "Carry nine rules down a 45-node chain",
   "turns": 1,
   "category": "context",
   "tags": [
