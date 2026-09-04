@@ -166,3 +166,36 @@ describe('new-run arm selection', () => {
     expect(pickCandidates(['baseline'], 'baseline', ['baseline'])).toEqual([])
   })
 })
+
+describe('arm editing over the API', () => {
+  it('saves a new arm, refuses a mismatched name or bad YAML, and deletes it', async () => {
+    const call = async (method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> => {
+      const res = await fetch(`${url.replace(/\/$/, '')}/api${path}`, { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) })
+      return { status: res.status, json: await res.json().catch(() => null) }
+    }
+    const created = await call('PUT', '/arms/fold', { text: "name: fold\ndescription: baseline + folding\npatches:\n  - insert:\n      - id: fold\n        name: '@x/fold'\n" })
+    expect(created.status).toBe(200)
+    expect(created.json.saved).toBe('fold.yml')
+    const listed = await call('GET', '/arms')
+    expect(listed.json.arms.map((a: { spec?: { name: string } }) => a.spec?.name)).toContain('fold')
+    // the file must name the arm it is saved as, or a rename silently produces two arms
+    expect((await call('PUT', '/arms/other', { text: 'name: fold\n' })).status).toBe(400)
+    expect((await call('PUT', '/arms/fold', { text: 'name: fold\npatches: not-a-list\n' })).status).toBe(400)
+    expect((await call('PUT', '/arms/bad%20name', { text: 'name: x\n' })).status).toBe(400)
+    expect((await call('PUT', '/arms/fold', { text: '   ' })).status).toBe(400)
+    expect((await call('DELETE', '/arms/fold')).status).toBe(200)
+    expect((await call('DELETE', '/arms/fold')).status).toBe(404)
+  })
+})
+
+describe('arm yaml builder', () => {
+  it('writes one variable per change kind', async () => {
+    const { armYaml } = await import('../src/ui/arm-yaml.js')
+    expect(armYaml('a', 'x', 'insert-plugin', { plugin: '@dsh-external/dsh-tool-result-fold' })).toContain("- id: tool-result-fold")
+    expect(armYaml('a', '', 'disable-row', { row: 'tool-web' })).toContain('disabled: true')
+    expect(armYaml('a', '', 'config-field', { row: 'compaction-basic', key: 'thresholdRatio', value: '0.6' })).toContain('thresholdRatio: 0.6')
+    expect(armYaml('a', '', 'model', { model: 'deepseek-v4-pro' })).toContain('model: deepseek-v4-pro')
+    expect(armYaml('a', '', 'effort', { effort: 'max' })).toContain('effort: max')
+    expect(armYaml('a', 'note', 'freeform', {})).toBe('name: a\ndescription: note\npatches: []\n')
+  })
+})

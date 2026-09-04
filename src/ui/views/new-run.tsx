@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
 import { pickCandidates } from '../select-arms.js'
+import { ArmEditor } from './arm-editor.js'
 
 export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -36,6 +37,15 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [replayRun, setReplayRun] = useState(preset['replay'] ?? '')
   const [forkAt, setForkAt] = useState(preset['forkAt'] ?? '')
   const [runsList, setRunsList] = useState<Array<{ id: string; label?: string }>>([])
+  const [editing, setEditing] = useState<string | null>(null)
+  const reloadArms = (select?: string): void => {
+    void api.arms().then((r) => {
+      setArms(r.arms)
+      const names = r.arms.filter(a => a.spec).map(a => a.spec!.name)
+      if (select !== undefined && select !== '' && names.includes(select)) setCandidates(pickCandidates([...candidates, select], baseline, names))
+      else setCandidates(pickCandidates(candidates, baseline, names))
+    })
+  }
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
   useEffect(() => {
@@ -129,11 +139,16 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
             <fieldset>
               <legend>Candidates</legend>
               {armNames.filter(n => n !== baseline).map(n => (
-                <label class="check"><input type="checkbox" checked={candidates.includes(n)} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setCandidates(on ? [...candidates, n] : candidates.filter(c => c !== n)) }} /> {n}<span class="muted small"> {arms.find(a => a.spec?.name === n)?.spec?.description ?? ''}</span></label>
+                <div class="row between arm-row">
+                  <label class="check"><input type="checkbox" checked={candidates.includes(n)} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setCandidates(on ? [...candidates, n] : candidates.filter(c => c !== n)) }} /> {n}<span class="muted small"> {arms.find(a => a.spec?.name === n)?.spec?.description ?? ''}</span></label>
+                  <button class="btn small" title="edit this arm file" onClick={() => setEditing(n)}>edit</button>
+                </div>
               ))}
-              {armNames.length < 2 && <p class="muted small">Add arm files under <code>{meta?.armsDir}</code>.</p>}
+              {armNames.length < 2 && <p class="muted small">No candidate yet. Use <b>new arm</b> to make one.</p>}
+              <div class="row"><button class="btn small primary" onClick={() => setEditing('')}>+ new arm</button><button class="btn small" onClick={() => setEditing(baseline)}>edit {baseline}</button></div>
             </fieldset>
           )}
+          {editing !== null && <ArmEditor meta={meta} arms={arms} baseline={baseline} editing={editing} onClose={() => setEditing(null)} onSaved={(n) => { setEditing(null); reloadArms(n) }} />}
           <div class="diff">
             <h3>What differs</h3>
             {diffError && <p class="error small">{diffError}</p>}

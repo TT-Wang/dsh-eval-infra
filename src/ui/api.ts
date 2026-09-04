@@ -55,6 +55,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
+export interface RowInfo { id: string; name?: string; disabled: boolean; configKeys: string[]; config?: Record<string, unknown> }
 export interface Pattern { kind: 'failure' | 'behaviour'; signature: string; count: number; scenarios: string[]; arms: string[]; runs: string[]; firstSeen: string; lastSeen: string; example: string; share: number; armSkew: number }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
 export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] }; patterns?: Pattern[] }
@@ -65,6 +66,9 @@ export const api = {
   meta: () => req<Meta>('/meta'),
   history: () => req<History>('/history'),
   runs: () => req<RunRow[]>('/runs'),
+  rows: (arm: string) => req<{ arm: string; rows: RowInfo[] }>(`/rows?arm=${encodeURIComponent(arm)}`),
+  saveArm: (name: string, text: string) => req<{ saved: string; spec: unknown }>(`/arms/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  deleteArm: (name: string) => req<{ deleted: string }>(`/arms/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   run: (id: string) => req<RunDetail>(`/runs/${id}`),
   ledgers: (id: string) => req<LedgerLite[]>(`/runs/${id}/ledgers`),
   ledger: (id: string, scenario: string, arm: string, rep: number) => req<RunLedger>(`/runs/${id}/ledgers/${scenario}/${arm}/rep${rep}/ledger`),

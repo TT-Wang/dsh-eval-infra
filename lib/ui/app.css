@@ -86,3 +86,13 @@ tbody .virtual { display: block; } tbody .virtual > tr { display: table; width: 
 .cards.simple { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); max-width: 780px; }
 .next-step { margin: 12px 0 2px; font-size: 14px; line-height: 1.6; }
 .next-step code { display: inline-block; margin-top: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font-size: 12.5px; }
+
+/* Arm editor: a builder above the YAML it writes. */
+.arm-editor { border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: var(--panel); }
+.arm-editor h3 { margin: 0 0 8px; font-size: 14px; }
+.arm-editor .row { gap: 10px; margin-bottom: 8px; flex-wrap: wrap; align-items: end; }
+.arm-editor label.grow { flex: 1 1 220px; }
+.arm-editor label.block { display: block; margin: 6px 0; }
+textarea.yaml { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--bg); color: var(--fg); }
+.arm-row { gap: 8px; }
+.arm-row .btn.small { opacity: .6; } .arm-row:hover .btn.small { opacity: 1; }

@@ -1,4 +1,4 @@
-import { type DshInvoker, type RowDiff } from './arms.js';
+import { type ComposedRows, type DshInvoker, type RowDiff } from './arms.js';
 import type { ArmSpec, ResolvedArm, RunEnvironment } from './types.js';
 export interface ArmDiff {
     candidate: string;
@@ -12,6 +12,8 @@ export interface PreparedArms {
     candidates: ResolvedArm[];
     diffs: ArmDiff[];
     composed: Record<string, string>;
+    /** Composed rows per arm name, so callers can offer real row pickers instead of asking the user to know ids. */
+    trees: Map<string, ComposedRows>;
 }
 export interface PrepareOptions {
     evalHome: string;

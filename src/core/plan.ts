@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { armOverlays, diffComposedRows, diffRoute, dumpComposedTree, parseComposedRows, resolveArm, sha256, type DshInvoker, type RowDiff } from './arms.js'
+import { armOverlays, diffComposedRows, diffRoute, dumpComposedTree, parseComposedRows, resolveArm, sha256, type ComposedRows, type DshInvoker, type RowDiff } from './arms.js'
 import { dshSourceRevision, dshSourceRoot, dshVersion, evalInfraVersion } from './env.js'
 import { DEEPSEEK_PRICES } from './pricing.js'
 import { writeBaseOverlays } from './runner.js'
@@ -24,6 +24,8 @@ export interface PreparedArms {
   candidates: ResolvedArm[]
   diffs: ArmDiff[]
   composed: Record<string, string>
+  /** Composed rows per arm name, so callers can offer real row pickers instead of asking the user to know ids. */
+  trees: Map<string, ComposedRows>
 }
 
 export interface PrepareOptions {
@@ -55,7 +57,7 @@ export async function prepareArms(baseline: ArmSpec, candidates: ArmSpec[], opti
     const route = diffRoute(resolvedBaseline, cand)
     return { candidate: cand.name, rows, route, variables: rows.length + route.length }
   })
-  return { baseline: resolvedBaseline, candidates: resolvedCandidates, diffs, composed }
+  return { baseline: resolvedBaseline, candidates: resolvedCandidates, diffs, composed, trees }
 }
 
 export async function recordEnvironment(composed: Record<string, string>): Promise<RunEnvironment> {
