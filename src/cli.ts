@@ -20,7 +20,7 @@ import { join, resolve } from 'node:path'
 import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
-import { ensureEvalProfile, loadProject, profileBundles, saveProjectConfig, setProfileBundles, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
+import { ensureEvalProfile, loadProject, profileBundles, saveProjectConfig, setProfileBundles, STARTER_BASELINE, starterCandidate, withPreviewArms, type Project } from './core/project.js'
 import { fmtPct, fmtUsd, renderMarkdown, type Report } from './core/report.js'
 import { selfcheckAll } from './core/selfcheck.js'
 import { listRuns, readJson, readLedgers, readPlan, runPaths } from './core/store.js'
@@ -190,7 +190,8 @@ async function cmdDiff(project: Project, args: Args): Promise<number> {
   if (b === undefined || cs.length === 0) { err('usage: dsh-eval diff <baseline> <candidate>...'); return 3 }
   const baseline = loadArmFile(resolveArmPath(project, b))
   const candidates = cs.map(c => loadArmFile(resolveArmPath(project, c)))
-  const prepared = await prepareArms(baseline, candidates, { evalHome: project.home, armsDir: join(project.evalDir, 'tmp-arms') })
+  // Private scratch: a UI server on the same project may be composing arms right now.
+  const prepared = await withPreviewArms(project, armsDir => prepareArms(baseline, candidates, { evalHome: project.home, armsDir }))
   for (const d of prepared.diffs) {
     out(`${d.candidate} vs ${baseline.name}: ${d.variables} variable(s)`)
     for (const line of describeDiff(d)) out(`  ${line}`)

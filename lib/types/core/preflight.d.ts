@@ -1,6 +1,6 @@
 import { prepareArms } from './plan.js';
 import { type DriverFactory } from './runner.js';
-import type { Project } from './project.js';
+import { type Project } from './project.js';
 export interface PreflightStage {
     name: 'compose' | 'mounted' | 'runs';
     ok: boolean;

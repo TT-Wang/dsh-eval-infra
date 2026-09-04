@@ -23,7 +23,7 @@ import { executeRun, writeBaseOverlays, type DriverFactory } from './runner.js'
 import { newRunId, runPaths, readLedgers, writeJsonAtomic } from './store.js'
 import { resolveApiKey } from './env.js'
 import { sdkDriverFactory } from './sdk-driver.js'
-import type { Project } from './project.js'
+import { withPreviewArms, type Project } from './project.js'
 import type { RunPlan } from './types.js'
 
 export interface PreflightStage {
@@ -90,6 +90,12 @@ export interface PreflightOptions {
 }
 
 export async function preflightArm(project: Project, armName: string, options: PreflightOptions = {}): Promise<PreflightResult> {
+  // Its own scratch directory, so checking one arm cannot truncate the overlays
+  // another page is composing at the same time.
+  return withPreviewArms(project, armsDir => preflightIn(project, armName, options, armsDir))
+}
+
+async function preflightIn(project: Project, armName: string, options: PreflightOptions, armsDir: string): Promise<PreflightResult> {
   const log = options.log ?? (() => { /* quiet */ })
   const baselineName = existsSync(resolveArmPath(project, 'baseline')) ? 'baseline' : armName
   const arm = loadArmFile(resolveArmPath(project, armName))
@@ -101,7 +107,7 @@ export async function preflightArm(project: Project, armName: string, options: P
   try {
     prepared = await prepareArms(baseline, baselineName === armName ? [] : [arm], {
       evalHome: project.home,
-      armsDir: join(project.evalDir, 'tmp-arms'),
+      armsDir,
       ...(options.invoke !== undefined ? { invoke: options.invoke } : {}),
     })
   } catch (e) {

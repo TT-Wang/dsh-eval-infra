@@ -1,9 +1,14 @@
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { bandAt, priceUsage } from '../src/core/pricing.js'
 import { normalizeUsage } from '../src/core/usage.js'
 import { bootstrapMean, signTest, wilson, median } from '../src/core/stats.js'
 import { parseArm, parseComposedRows, diffComposedRows } from '../src/core/arms.js'
 import { parseDotenv } from '../src/core/env.js'
+import { prepareArms } from '../src/core/plan.js'
+import { loadProject, withPreviewArms } from '../src/core/project.js'
 
 describe('pricing', () => {
   it('classifies peak windows in UTC on weekdays only', () => {
@@ -466,5 +471,28 @@ describe('pattern discovery', () => {
     expect(forkPointForCall(ledger, 3)).toEqual({ forkAt: 1, step: 2 })
     expect(forkPointForCall(ledger, 4)).toEqual({ forkAt: 2, step: 3 })
     expect(forkPointForCall(ledger, 99)).toEqual({ forkAt: 2, step: 3 })
+  })
+})
+
+describe('arm previews', () => {
+  it('compose in private scratch directories, so concurrent previews cannot clobber one another', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-preview-'))
+    const project = loadProject(root)
+    // dsh reads the overlay files back; echo the arm's own overlay as the composed
+    // tree, after a yield, so the calls interleave the way two browser requests do.
+    const invoke = async (args: string[]): Promise<string> => {
+      const overlay = args[args.length - 1]!
+      await new Promise(resolve => setTimeout(resolve, 5))
+      return readFileSync(overlay, 'utf8')
+    }
+    const compose = (rowId: string): Promise<string[]> => withPreviewArms(project, async (armsDir) => {
+      const prepared = await prepareArms({ name: 'candidate', patches: [{ id: rowId, disabled: true }] }, [], { evalHome: project.home, armsDir, invoke })
+      return [...(prepared.trees.get('candidate') ?? new Map()).keys()]
+    })
+    const ids = ['row-a', 'row-b', 'row-c', 'row-d']
+    expect(await Promise.all(ids.map(compose))).toEqual(ids.map(id => [id]))
+    // and each directory is removed when its preview is done
+    expect(readdirSync(project.evalDir).filter(e => e.startsWith('tmp-arms'))).toEqual([])
+    rmSync(root, { recursive: true, force: true })
   })
 })

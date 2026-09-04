@@ -2,7 +2,6 @@ import { render } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { RunsView } from './views/runs.js'
 import { NewRunView } from './views/new-run.js'
-import { useDetail } from './detail.js'
 import { RunView } from './views/run.js'
 import { TraceView } from './views/trace.js'
 import { HistoryView } from './views/history.js'
@@ -22,16 +21,8 @@ export function navigate(to: string): void {
   location.hash = to
 }
 
-function useDensity(): [boolean, () => void] {
-  const [compact, setCompact] = useState(() => { try { return localStorage.getItem('dsh-eval-density') === 'compact' } catch { return false } })
-  useEffect(() => { document.documentElement.classList.toggle('compact', compact); try { localStorage.setItem('dsh-eval-density', compact ? 'compact' : 'comfortable') } catch { /* private mode */ } }, [compact])
-  return [compact, () => setCompact(v => !v)]
-}
-
 function App() {
   const hash = useHash()
-  const [compact, toggleDensity] = useDensity()
-  const [detailed, toggleDetail] = useDetail()
   const [pathPart, query = ''] = hash.replace(/^#\/?/, '').split('?')
   const parts = (pathPart ?? '').split('/').filter(Boolean).map(decodeURIComponent)
   const preset = Object.fromEntries(new URLSearchParams(query).entries())
@@ -61,8 +52,6 @@ function App() {
           {tab('#/history', 'History', parts[0] === 'history')}
         </nav>
         <div class="flex-1" />
-        <button class="uk-btn uk-btn-default uk-btn-sm" title="switch between the plain summary and the full statistics, notes, environment and logs" onClick={toggleDetail}>{detailed ? 'simple' : 'detailed'}</button>
-        <button class="uk-btn uk-btn-default uk-btn-sm" onClick={toggleDensity} title="toggle table density">{compact ? 'comfortable' : 'compact'}</button>
       </header>
       <main>{view}</main>
     </div>

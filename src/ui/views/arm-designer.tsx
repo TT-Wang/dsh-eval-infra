@@ -79,7 +79,8 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
   const candidateSpec = arms.find(a => a.spec?.name === candidate)?.spec
 
   useEffect(() => { api.plugins().then(r => setPlugins(r.plugins)).catch(() => setPlugins([])) }, [])
-  useEffect(() => { api.rows(baseline).then(r => setRows(r.rows)).catch(() => setRows([])) }, [baseline])
+  // `baseline` is empty until the arm list arrives; asking for the rows of no arm is a 400.
+  useEffect(() => { if (baseline === '') { setRows([]); return } api.rows(baseline).then(r => setRows(r.rows)).catch(() => setRows([])) }, [baseline])
   useEffect(() => {
     if (candidateSpec === undefined) { setDesign(null); return }
     setDesign(designFromSpec(candidateSpec, plugins))

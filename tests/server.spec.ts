@@ -1,5 +1,5 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startServer } from '../src/server/index.js'
@@ -373,5 +373,37 @@ describe('scenario roots', () => {
     expect(after.length).toBe(before + 1)                               // added, not replaced
     expect(after.some(s => s.name === 'mine')).toBe(true)
     expect(after.some(s => s.name === 'z0_env_smoke')).toBe(true)
+  })
+})
+
+// Everything the UI prints is a screenshot away from being shared, so no response
+// may carry an absolute home path. The project has to live under the real home for
+// this to mean anything — a temp dir elsewhere would pass without `tilde` doing a thing.
+describe('paths in api responses', () => {
+  it('never returns an absolute home path', async () => {
+    const home = homedir()
+    const projectRoot = mkdtempSync(join(home, '.dsh-eval-path-test-'))
+    try {
+      mkdirSync(join(projectRoot, '.dsh-eval'), { recursive: true })
+      writeFileSync(join(projectRoot, '.dsh-eval', 'config.json'), JSON.stringify({ profile: 'eval', repeats: 2, concurrency: 1, scenarioRoot: FIXTURES }))
+      const project = loadProject(projectRoot)
+      ensureEvalProfile(project.home, 'eval')
+      mkdirSync(project.armsDir, { recursive: true })
+      writeFileSync(join(project.armsDir, 'baseline.yml'), 'name: baseline\n')
+      const started = await startServer({ project, port: 0, uiDir: join(projectRoot, 'no-ui') })
+      try {
+        for (const path of ['/api/meta', '/api/runs', '/api/scenarios', '/api/arms']) {
+          const text = await (await fetch(started.url.replace(/\/$/, '') + path)).text()
+          expect.soft(text, `${path} leaked an absolute home path`).not.toContain(home)
+        }
+        // /api/plugins is the exception: `path` and `bundlePatch` are written into the
+        // arm file and have to be real, so the display fields are what must be folded.
+        const plugins = await (await fetch(started.url.replace(/\/$/, '') + '/api/plugins')).json() as { plugins: Array<{ displayPath?: string; duplicates?: string[] }> }
+        for (const plugin of plugins.plugins) {
+          expect.soft(plugin.displayPath ?? '').not.toContain(home)
+          for (const dup of plugin.duplicates ?? []) expect.soft(dup).not.toContain(home)
+        }
+      } finally { started.server.close() }
+    } finally { rmSync(projectRoot, { recursive: true, force: true }) }
   })
 })

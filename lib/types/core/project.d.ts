@@ -58,3 +58,12 @@ export declare function saveProjectConfig(project: Project): void;
 export declare function ensureEvalProfile(home: string, profile: string): string;
 export declare const STARTER_BASELINE = "# Baseline arm: the stock dsh composition (dsh-base + sdk-app) with no changes.\nname: baseline\ndescription: stock dsh, nothing added\n# model: deepseek-v4-flash\n# effort: high\n";
 export declare function starterCandidate(pluginName: string | undefined): string;
+/**
+ * A scratch directory for composing arms only to read the result back — the row
+ * picker, the arm diff, the preflight check. These share no state and the UI
+ * fires several at once, so each needs its own directory: `resolveArm` writes
+ * `<arm>.patch.yml` under a fixed name, and a second call truncating that file
+ * while `dsh --dump-config` reads it makes the first one fail. The run path is
+ * unaffected — a run already composes into its own archived directory.
+ */
+export declare function withPreviewArms<T>(project: Project, use: (armsDir: string) => Promise<T>): Promise<T>;

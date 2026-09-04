@@ -107,7 +107,6 @@ table.data, table.grid { width: 100%; border-collapse: collapse; font-size: .82r
 table.data th, table.grid th { text-align: left; font-weight: 500; color: hsl(var(--muted-foreground)); border-bottom: 1px solid hsl(var(--border)); padding: .4rem .5rem; white-space: nowrap; }
 table.data td, table.grid td { border-bottom: 1px solid hsl(var(--border) / .6); padding: .4rem .5rem; vertical-align: top; }
 table.data tr:hover td { background: hsl(var(--muted) / .35); }
-.compact table.data th, .compact table.data td { padding: .2rem .4rem; }
 .dim { opacity: .5; }
 
 input[type=text], input[type=search], input[type=number], select, textarea { border: 1px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(var(--background)); color: hsl(var(--foreground)); padding: .25rem .5rem; font: inherit; font-size: .82rem; }

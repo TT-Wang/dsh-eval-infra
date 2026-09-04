@@ -304,8 +304,10 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         <div class="flex flex-col gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <p class="text-sm text-muted-foreground">
-              <b class="text-foreground">{selected.size}</b> of {scenarios.length} selected.
-              Each scenario builds its own workspace, runs a fixed list of prompts, and is graded by a verifier that reads only the end state.
+              <b class="text-foreground">{selected.size}</b> of {scenarios.length} selected
+              {' · '}<b class="text-foreground">{trials}</b> trials at {repeats} repeat{repeats === 1 ? '' : 's'} across {1 + (aa ? 1 : activeCandidates.length)} arms
+              {estimate ? <> · about <b class="text-foreground">{fmt.usd(estimate.usd, 2)}</b> by the archive's history</> : <> · no archive yet to estimate cost</>}
+              <br />Each scenario builds its own workspace, runs a fixed list of prompts, and is graded by a verifier that reads only the end state.
             </p>
             <div class="flex flex-wrap items-center gap-2">
               <input class="uk-input uk-form-sm" type="search" placeholder="filter by name or what it stresses" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
@@ -368,11 +370,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         </div>
       )}
 
-      <footer class="sticky bottom-0 flex items-center justify-between gap-4 border-t border-border bg-card px-4 py-3 rounded-md">
-        <div class="text-sm text-muted-foreground">
-          <b class="text-foreground">{selected.size}</b> scenarios × <b class="text-foreground">{repeats}</b> repeats × <b class="text-foreground">{1 + (aa ? 1 : activeCandidates.length)}</b> arms = <b class="text-foreground">{trials}</b> trials
-          {estimate ? <span> · about <b class="text-foreground">{fmt.usd(estimate.usd, 2)}</b> by the archive's history</span> : <span> · no archive yet to estimate cost</span>}
-        </div>
+      <footer class="sticky bottom-0 flex items-center justify-end gap-4 border-t border-border bg-card px-4 py-3 rounded-md">
         <div class="flex items-center gap-2">
           <button class="uk-btn uk-btn-default" disabled={step === 0} onClick={() => setStep(step - 1)}>Back</button>
           {step < 2 && <button class="uk-btn uk-btn-primary" disabled={!canAdvance} onClick={() => setStep(step + 1)}>Next</button>}
