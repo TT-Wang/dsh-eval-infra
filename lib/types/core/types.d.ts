@@ -173,6 +173,7 @@ export interface UsageProvenance {
         servedModels?: string[];
         fingerprints?: string[];
         replayed?: number;
+        harnessIdentities?: string[];
     };
     /** Total tokens (hit + miss + output) as the runtime reported them. */
     ledgerTokens?: number;
@@ -281,6 +282,8 @@ export interface RunPlan {
         runId: string;
         forkAt?: number;
     };
+    /** Container mode kept dsh's in-process sandbox on inside the container. */
+    containerSandbox?: boolean;
 }
 /** Environment facts recorded once per run for reproducibility. */
 export interface RunEnvironment {

@@ -384,3 +384,41 @@ describe('behavioural drift', () => {
     expect(driftTest([mkL('s9', 'base', 1, ['read'])], archive).verdict).toBe('insufficient')
   })
 })
+
+describe('served-model probes', () => {
+  it('separates two answer distributions and accepts a resample of the same one', async () => {
+    const { collectProbes, probePermutationTest, compareWithReference, PROBES } = await import('../src/core/probe.js')
+    const usage = { hit: 0, miss: 20, output: 5 }
+    const mk = (answers: string[]) => { let i = 0; return async () => ({ text: JSON.stringify({ answer: answers[i++ % answers.length] }), usage }) }
+    const a = await collectProbes(mk(['Blue', 'blue', 'blue', 'green']), 4)
+    const b = await collectProbes(mk(['Blue', 'blue', 'blue', 'green']), 4)
+    const c = await collectProbes(mk(['red', 'red', 'crimson', 'red']), 4)
+    expect(a.samples).toHaveLength(PROBES.length * 4)
+    expect(a.usd).toBeGreaterThan(0)
+    expect(probePermutationTest(a.samples, b.samples, 200).distance).toBe(0)
+    const differs = probePermutationTest(a.samples, c.samples, 200)
+    expect(differs.distance).toBeGreaterThan(0.5)
+    expect(differs.p).toBeLessThan(0.01)
+    const ref = { schema: 'dsh-eval-probe/1' as const, model: 'm', baseUrl: 'u', enrolledAt: '2026-09-01T00:00:00Z', samples: a.samples, usd: 0 }
+    expect(compareWithReference(b.samples, ref, 'm', 0).verdict).toBe('matches')
+    expect(compareWithReference(c.samples, ref, 'm', 0).verdict).toBe('differs')
+    expect(compareWithReference(c.samples, null, 'm', 0).verdict).toBe('no-reference')
+  })
+
+  it('withholds readings when the probe says the route differs', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const names5 = ['s1', 's2', 's3', 's4', 's5']
+    const plan5 = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: names5, repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const ledger = (scenario: string, arm: string, usd: number) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const ledgers5 = names5.flatMap((n, i) => [ledger(n, 'a', 1), ledger(n, 'b', 1.15 + i * 0.02)])
+    const clean = buildReport(plan5, ledgers5)
+    expect(clean.candidates[0]!.costReading).not.toBe('inconclusive')
+    const gated = buildReport(plan5, ledgers5, { probe: { model: 'deepseek-v4-flash', distance: 0.62, p: 0.001, probes: 8, samplesPerSide: 8, verdict: 'differs', comparedAt: '2026-09-04T00:00:00Z', usd: 0.01 } })
+    expect(gated.candidates[0]!.costReading).toBe('inconclusive')
+    expect(gated.candidates[0]!.verdict).toContain('Provider conditions not held constant')
+    expect(gated.notes.some(n => n.startsWith('Served-model probe'))).toBe(true)
+  })
+})

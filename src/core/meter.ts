@@ -35,6 +35,8 @@ export interface MeterEntry {
   fault: '429' | 'stall' | null
   /** True when the response came from a recording instead of the provider. */
   replayed?: boolean
+  /** The client's declared identity (user-agent): the harness name and version on the wire. */
+  harness?: string
   /** Hash chain: sha256(prev + canonical entry without `hash`). */
   prev: string
   hash: string
@@ -53,6 +55,8 @@ export interface MeterTotals {
   fingerprints: string[]
   /** Responses served from a recording. */
   replayed: number
+  /** Distinct client identities (user-agent) seen on the wire: the harness build that made the calls. */
+  harnessIdentities: string[]
 }
 
 export interface RecordedResponse { seq: number; requestSha: string; status: number; contentType: string; body: string }
@@ -95,9 +99,10 @@ function canonical(entry: Omit<MeterEntry, 'hash'>): string {
 }
 
 export function meterTotals(entries: MeterEntry[]): MeterTotals {
-  const t: MeterTotals = { requests: 0, forwarded: 0, faults: 0, hit: 0, miss: 0, output: 0, reasoning: 0, servedModels: [], fingerprints: [], replayed: 0 }
+  const t: MeterTotals = { requests: 0, forwarded: 0, faults: 0, hit: 0, miss: 0, output: 0, reasoning: 0, servedModels: [], fingerprints: [], replayed: 0, harnessIdentities: [] }
   const models = new Set<string>()
   const fps = new Set<string>()
+  const uas = new Set<string>()
   for (const e of entries) {
     t.requests += 1
     if (e.fault) t.faults += 1
@@ -106,9 +111,11 @@ export function meterTotals(entries: MeterEntry[]): MeterTotals {
     if (e.usage) { t.hit += e.usage.hit; t.miss += e.usage.miss; t.output += e.usage.output; t.reasoning += e.usage.reasoning }
     if (e.responseModel) models.add(e.responseModel)
     if (e.fingerprint) fps.add(e.fingerprint)
+    if (e.harness) uas.add(e.harness)
   }
   t.servedModels = [...models].sort()
   t.fingerprints = [...fps].sort()
+  t.harnessIdentities = [...uas].sort()
   return t
 }
 
@@ -180,6 +187,7 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
     req.on('end', () => {
       const body = Buffer.concat(chunks)
       const requestSha = createHash('sha256').update(body).digest('hex')
+      const harness = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
       let model: string | null = null
       let stream = false
       try { const j = JSON.parse(body.toString('utf8')) as { model?: string; stream?: boolean }; model = j.model ?? null; stream = j.stream === true } catch { /* not JSON */ }
@@ -195,13 +203,13 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
           res.writeHead(recorded.status, { 'content-type': recorded.contentType })
           res.end(recorded.body)
           const parsed = parseResponseBody(recorded.body, stream)
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: recorded.status, durationMs: Date.now() - started, usage: parsed.usage, responseModel: parsed.model, fingerprint: parsed.fingerprint, requestSha, fault: null, replayed: true })
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: recorded.status, durationMs: Date.now() - started, usage: parsed.usage, responseModel: parsed.model, fingerprint: parsed.fingerprint, requestSha, fault: null, replayed: true, ...(harness !== undefined ? { harness } : {}) })
           return
         }
         if (!options.replay.live) {
           res.writeHead(503, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ error: { message: `dsh-eval meter: recording exhausted at request ${n + 1} and live forwarding is off`, type: 'server_error' } }))
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: 503, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault: null, replayed: true })
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: 503, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault: null, replayed: true, ...(harness !== undefined ? { harness } : {}) })
           return
         }
         // fork: fall through to a live request
@@ -210,7 +218,7 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
       if (options.faults && options.faults.rate > 0 && random() < options.faults.rate) {
         const fault = kinds[Math.floor(random() * kinds.length)] ?? '429'
         const finish = (): void => {
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: fault === '429' ? 429 : 503, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault })
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: fault === '429' ? 429 : 503, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault, ...(harness !== undefined ? { harness } : {}) })
         }
         if (fault === '429') {
           res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' })
@@ -244,13 +252,13 @@ export async function startMeter(options: MeterOptions): Promise<Meter> {
           const text = Buffer.concat(collected).toString('utf8')
           const parsed = parseResponseBody(text, stream)
           if (options.recordFile) appendFileSync(options.recordFile, JSON.stringify({ seq: entries.length + 1, requestSha, status: upRes.statusCode ?? 0, contentType: String(upRes.headers['content-type'] ?? 'application/json'), body: text } satisfies RecordedResponse) + '\n')
-          record({ at: new Date(started).toISOString(), method, path, model, stream, status: upRes.statusCode ?? null, durationMs: Date.now() - started, usage: parsed.usage, responseModel: parsed.model, fingerprint: parsed.fingerprint, requestSha, fault: null })
+          record({ at: new Date(started).toISOString(), method, path, model, stream, status: upRes.statusCode ?? null, durationMs: Date.now() - started, usage: parsed.usage, responseModel: parsed.model, fingerprint: parsed.fingerprint, requestSha, fault: null, ...(harness !== undefined ? { harness } : {}) })
         })
       })
       up.on('error', (err) => {
         if (!res.headersSent) { res.writeHead(502, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: `dsh-eval meter: upstream error ${err.message}` } })) }
         else res.end()
-        record({ at: new Date(started).toISOString(), method, path, model, stream, status: 502, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault: null })
+        record({ at: new Date(started).toISOString(), method, path, model, stream, status: 502, durationMs: Date.now() - started, usage: null, responseModel: null, fingerprint: null, requestSha, fault: null, ...(harness !== undefined ? { harness } : {}) })
       })
       up.end(body)
     })

@@ -168,6 +168,8 @@ export interface ReportOptions {
   noiseFloors?: Record<string, NoiseFloor>
   /** Behavioural drift check of the baseline arm against the archive (see drift.ts). */
   drift?: import('./drift.js').DriftResult | null
+  /** Served-model probe verdict for this run's route (see probe.ts). */
+  probe?: import('./probe.js').ProbeVerdict
   /** Scenario names in the sealed holdout pool. */
   holdout?: Set<string>
   /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */
@@ -458,6 +460,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       if (served.length !== 1 || served[0] !== l.model) servedMismatch.push(`${l.scenario}/${l.arm}#${l.rep}: requested ${l.model}, served ${served.join('+')}`)
     }
     if (servedByArm.size === 2) { const [x, y] = [...servedByArm.values()]; if ([...x!].sort().join() !== [...y!].sort().join()) servedMismatch.push('the two arms were served different models') }
+    if (options.probe?.verdict === 'differs') servedMismatch.unshift(`the route's answer distribution differs from the enrolled reference for ${options.probe.model} (probe distance ${options.probe.distance.toFixed(3)}, p = ${options.probe.p.toFixed(3)})`)
     let servedBlocked = false
     if (servedMismatch.length > 0 && costReading !== 'none') { costReading = 'inconclusive'; servedBlocked = true }
     let grade: Grade
@@ -524,7 +527,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   })
   if (plan.candidates.length > 1) notes.push(`${plan.candidates.length} candidates share one baseline and each carries two planned claims (cost direction, pass-rate direction): intervals are read at α = ${alpha.toFixed(4)} (Bonferroni over ${2 * plan.candidates.length} claims) so the family-wise error rate stays at 5%.`)
   if (options.sequences) notes.push('Sequential mode: the cost interval is the final hedged betting confidence sequence on the paired cost ratio winsorized at 2× (non-asymptotic, valid at every look and under early stopping), which is wider than a fixed-sample interval would be on the same data.')
-  if (plan.sandbox === 'docker') notes.push('Trials ran inside Docker containers: the container is the confinement boundary (workspace and eval home mounted read-write, the dsh checkout and plugins read-only); dsh\'s in-process sandbox and permission presets were off inside the container.')
+  if (plan.sandbox === 'docker') notes.push(`Trials ran inside Docker containers: the container is the confinement boundary (workspace and eval home mounted read-write, the dsh checkout and plugins read-only)${plan.containerSandbox ? ", and dsh's own in-process sandbox stayed on inside it (bubblewrap image, defence in depth)" : "; dsh's in-process sandbox and permission presets were off inside the container"}.`)
   for (const c of candidates) {
     if (c.holdoutGap !== null && c.holdoutGap.devScenarios > 0) {
       const gap = c.holdoutGap.dev - c.holdoutGap.holdout
@@ -558,6 +561,12 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       const requests = metered.reduce((a, l) => a + (l.usageProvenance!.meter?.requests ?? 0), 0)
       notes.push(`Usage provenance: ${metered.length - bad.length}/${metered.length} trials reconciled against the independent wire meter (max deviation ${Math.max(0, ...devs).toFixed(2)}%, ${requests} provider requests${faults > 0 ? `, ${faults} injected faults` : ''})${bad.length > 0 ? `; ${bad.length} trial${bad.length === 1 ? '' : 's'} NOT reconciled — cost calls on those pairs are withheld` : ''}.`)
     }
+    if (options.probe) {
+      const pr = options.probe
+      notes.push(`Served-model probe: ${pr.verdict === 'no-reference' ? `a reference for ${pr.model} was enrolled on this run; later runs are tested against it` : `${pr.samplesPerSide} answers on each of ${pr.probes} probes vs the reference enrolled ${pr.enrolledAt?.slice(0, 10)}: distance ${pr.distance.toFixed(3)}, permutation p = ${pr.p.toFixed(3)} → ${pr.verdict === 'differs' ? 'DIFFERS — the route is not answering like the enrolled model, so readings are withheld' : 'matches'}`}.`)
+    }
+    const harnesses = new Set(metered.flatMap(l => l.usageProvenance!.meter?.harnessIdentities ?? []))
+    if (harnesses.size > 0) notes.push(`Harness on the wire: ${[...harnesses].join(', ')}${harnesses.size > 1 ? ' — MORE THAN ONE harness build made the calls in this run; the arms were not run by the same client' : ''}.`)
     const servedAll = new Map<string, Set<string>>()
     for (const l of metered) for (const m of l.usageProvenance!.meter?.servedModels ?? []) servedAll.set(l.model, new Set([...(servedAll.get(l.model) ?? []), m]))
     if (servedAll.size > 0) {

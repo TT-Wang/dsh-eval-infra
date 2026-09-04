@@ -13,6 +13,10 @@ import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report
 import { fileSha, sealRun, verifyRun, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
 import { driftTest } from './drift.js'
+import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './probe.js'
+import { deepseekChat } from './judge.js'
+
+const PROBE_COUNT = PROBE_LIST.length
 import { executeRun, type RunDeps } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
@@ -54,6 +58,8 @@ export interface RunRequest {
   meter?: boolean
   /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
   perturb?: boolean
+  /** Probe the route's served model before the trials and refuse readings when it differs from the enrolled reference. */
+  probe?: boolean
   /** Replay another run's recorded provider responses (keyless); forkAt serves that many recorded responses per trial, then goes live. */
   replay?: { runId: string; forkAt?: number }
   /** Per-trial spend cap in USD (observed usage after each turn). */
@@ -185,6 +191,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     }
     if (request.label !== undefined) plan.label = request.label
     if (sandbox === 'docker') plan.sandbox = 'docker'
+    if (sandbox === 'docker' && request.dockerKeepSandbox) plan.containerSandbox = true
     if (request.perturb) plan.perturb = true
     if (request.replay) plan.replay = request.replay
   }
@@ -264,7 +271,15 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (prices) deps.prices = prices
   if (request.perturb) deps.perturb = { seed: request.seed ?? 42 }
   if (request.maxUsdPerTrial !== undefined) deps.maxUsdPerTrial = request.maxUsdPerTrial
-  const meterOn = request.meter ?? driverFactory === undefined
+  if (request.probe) {
+    const model = plan.baseline.model ?? 'deepseek-v4-flash'
+    log(`probing the route for ${model} before the trials…`)
+    const verdict = await probeRoute(project, { model, log: (l) => log(`  ${l}`) })
+    writeJsonAtomic(join(paths.dir, 'probe.json'), verdict)
+    log(`probe: ${verdict.verdict === 'no-reference' ? 'enrolled a reference (no comparison yet)' : `${verdict.verdict} (distance ${verdict.distance.toFixed(3)}, p = ${verdict.p.toFixed(3)})`} · $${verdict.usd.toFixed(4)}`)
+  }
+  // The meter belongs to the run, not the driver: container mode gets it too (the overlay points the container at the host gateway).
+  const meterOn = request.meter ?? hooks.driverFactory === undefined
   if (meterOn) {
     deps.meter = {
       upstream: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
@@ -291,7 +306,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
     if (request.sequential) writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, candidate: candidateSpecs[0]?.name ?? null, decisions })
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), drift: baselineDrift(project, plan, readLedgers(paths)), ...sequencesOf(paths) })
+    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), drift: baselineDrift(project, plan, readLedgers(paths)), ...probeOf(paths), ...sequencesOf(paths) })
     if (request.sequential) {
       const last = decisions.at(-1)
       if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
@@ -337,6 +352,28 @@ export function baselineDrift(project: Project, plan: RunPlan, ledgers: RunLedge
   }
   if (archive.length < 2) return null
   return driftTest(current, archive)
+}
+
+/**
+ * Probe the route the arms will use and compare with the enrolled reference for
+ * that (model, endpoint). The first call enrols; later calls test. The result is
+ * archived under the project and, for a run, written into the run directory.
+ */
+export async function probeRoute(project: Project, options: { model?: string; samples?: number; enroll?: boolean; chat?: import('./judge.js').ChatCall; log?: (line: string) => void } = {}): Promise<ProbeVerdict> {
+  const { collectProbes, compareWithReference, referenceKey } = await import('./probe.js')
+  const model = options.model ?? 'deepseek-v4-flash'
+  const baseUrl = process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com'
+  const chat = options.chat ?? (() => { const apiKey = resolveApiKey(); if (apiKey === undefined) throw new LaunchError('DEEPSEEK_API_KEY not found (env, $DSH_HOME/.env or ~/.dsh/.env)', 'env'); return deepseekChat({ model, apiKey, temperature: 1 }) })()
+  const refFile = join(project.evalDir, `model-reference-${referenceKey(model, baseUrl)}.json`)
+  const reference: ProbeReference | null = existsSync(refFile) ? (JSON.parse(readFileSync(refFile, 'utf8')) as ProbeReference) : null
+  const fresh = await collectProbes(chat, options.samples ?? 8, options.log)
+  if (reference === null || options.enroll === true) {
+    const ref: ProbeReference = { schema: 'dsh-eval-probe/1', model, baseUrl, enrolledAt: new Date().toISOString(), samples: fresh.samples, usd: fresh.usd }
+    writeJsonAtomic(refFile, ref)
+    options.log?.(`enrolled ${PROBE_COUNT * (options.samples ?? 8)} probe answers as the reference for ${model} at ${baseUrl}`)
+    return { model, distance: 0, p: 1, probes: PROBE_COUNT, samplesPerSide: options.samples ?? 8, verdict: 'no-reference', comparedAt: ref.enrolledAt, usd: fresh.usd }
+  }
+  return compareWithReference(fresh.samples, reference, model, fresh.usd)
 }
 
 export function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor> {
@@ -454,6 +491,12 @@ export function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('.
 }
 
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+export function probeOf(paths: ReturnType<typeof runPaths>): { probe?: ProbeVerdict } {
+  const file = join(paths.dir, 'probe.json')
+  if (!existsSync(file)) return {}
+  try { return { probe: JSON.parse(readFileSync(file, 'utf8')) as ProbeVerdict } } catch { return {} }
+}
+
 export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; scenarios: number }> } {
   const file = join(paths.dir, 'sequential.json')
   if (!existsSync(file)) return {}
@@ -516,7 +559,7 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
   const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, drift: baselineDrift(project, plan, readLedgers(paths)), ...sequencesOf(paths) })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, drift: baselineDrift(project, plan, readLedgers(paths)), ...probeOf(paths), ...sequencesOf(paths) })
   const judges = readJudgeReports(paths)
   const absolute = readAbsoluteJudge(paths)
   for (const c of report.candidates) {

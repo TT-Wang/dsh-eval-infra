@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -195,6 +195,7 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(args.flags['docker-keep-sandbox'] === true ? { dockerKeepSandbox: true } : {}),
     ...(args.flags['no-meter'] === true ? { meter: false } : {}),
     ...(args.flags['perturb'] === true ? { perturb: true } : {}),
+    ...(args.flags['probe'] === true ? { probe: true } : {}),
     ...(typeof args.flags['replay'] === 'string' ? { replay: { runId: args.flags['replay'], ...(num(args.flags['fork-at']) !== undefined ? { forkAt: num(args.flags['fork-at'])! } : {}) } } : {}),
     ...(num(args.flags['max-usd-per-trial']) !== undefined ? { maxUsdPerTrial: num(args.flags['max-usd-per-trial'])! } : {}),
     ...(args.flags['order'] === 'signal' ? { order: 'signal' as const } : {}),
@@ -274,6 +275,19 @@ async function cmdPerturb(project: Project, args: Args): Promise<number> {
   }
   out(`paraphrase spend $${total.toFixed(4)} — review the variants above; a variant that changes the task must be removed by hand`)
   return 0
+}
+
+async function cmdProbe(project: Project, args: Args): Promise<number> {
+  const { probeRoute } = await import('./core/orchestrate.js')
+  const v = await probeRoute(project, {
+    ...(typeof args.flags['model'] === 'string' ? { model: args.flags['model'] } : {}),
+    ...(num(args.flags['samples']) !== undefined ? { samples: num(args.flags['samples'])! } : {}),
+    ...(args.flags['enroll'] === true ? { enroll: true } : {}),
+    log: out,
+  })
+  if (v.verdict === 'no-reference') { out(`enrolled a reference for ${v.model} · $${v.usd.toFixed(4)}`); return 0 }
+  out(`${v.model}: ${v.verdict} · probe distance ${v.distance.toFixed(3)} · permutation p ${v.p.toFixed(3)} · reference enrolled ${v.enrolledAt?.slice(0, 10)} · $${v.usd.toFixed(4)}`)
+  return v.verdict === 'differs' ? 1 : 0
 }
 
 async function cmdRerun(project: Project, args: Args): Promise<number> {
@@ -445,6 +459,7 @@ function help(): number {
   run … [--no-meter] [--fault-rate P] [--fault-seed N]   usage meter (on by default) and provider fault injection
   run … [--perturb] [--order signal]   paraphrase variants on repeats above 1; sequential order by archive signal
   run … [--replay <runId> [--fork-at N]] [--max-usd-per-trial X]   keyless replay of a recorded run (fork: N recorded responses, then live); per-trial spend cap
+  probe [--model M] [--samples N] [--enroll]   fingerprint the route's served model against an enrolled reference (exit 1 when it differs)
   perturb <globs> [--n N] [--model M]   write semantics-preserving paraphrases (prompts.variants.json) for --perturb
   verify <runId | dir> [--json]   check the sealed evidence hashes and that the report re-derives from them
   rerun <runId> <scenario> [--repeats 3]   rerun one scenario's pair to validate a failure and its divergence point
@@ -475,6 +490,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'report': return cmdReport(project, args)
     case 'verify': return cmdVerify(project, args)
     case 'perturb': return cmdPerturb(project, args)
+    case 'probe': return cmdProbe(project, args)
     case 'regrade': return cmdRegrade(project, args)
     case 'rerun': return cmdRerun(project, args)
     case 'publish': return cmdPublish(project, args)

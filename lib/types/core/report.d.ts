@@ -297,6 +297,8 @@ export interface ReportOptions {
     noiseFloors?: Record<string, NoiseFloor>;
     /** Behavioural drift check of the baseline arm against the archive (see drift.ts). */
     drift?: import('./drift.js').DriftResult | null;
+    /** Served-model probe verdict for this run's route (see probe.ts). */
+    probe?: import('./probe.js').ProbeVerdict;
     /** Scenario names in the sealed holdout pool. */
     holdout?: Set<string>;
     /** Pre-experiment covariate per scenario: the baseline arm's mean cost from earlier runs in the archive (CUPED). */

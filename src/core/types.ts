@@ -162,7 +162,7 @@ export interface UsageProvenance {
   source: 'self-reported' | 'meter' | 'replay'
   /** Replay: which run's recording served the responses and how many were replayed vs live (fork). */
   replay?: { runId: string; replayed: number; live: number; forkAt?: number }
-  meter?: { requests: number; forwarded: number; faults: number; hit: number; miss: number; output: number; reasoning: number; servedModels?: string[]; fingerprints?: string[]; replayed?: number }
+  meter?: { requests: number; forwarded: number; faults: number; hit: number; miss: number; output: number; reasoning: number; servedModels?: string[]; fingerprints?: string[]; replayed?: number; harnessIdentities?: string[] }
   /** Total tokens (hit + miss + output) as the runtime reported them. */
   ledgerTokens?: number
   /** Total tokens as seen on the wire by the meter. */
@@ -256,6 +256,8 @@ export interface RunPlan {
   perturb?: boolean
   /** Replay of a recorded run (keyless); forkAt = number of recorded responses to serve before going live. */
   replay?: { runId: string; forkAt?: number }
+  /** Container mode kept dsh's in-process sandbox on inside the container. */
+  containerSandbox?: boolean
 }
 
 /** Environment facts recorded once per run for reproducibility. */

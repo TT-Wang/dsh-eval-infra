@@ -139,12 +139,30 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 
 **Divergence attribution.** For the first repeat where exactly one arm failed, the report names the first tool call at which the two arms' tool sequences part (call index, both calls, which arm failed), so a failure can be read from the point of departure rather than from the end.
 
+## 6g. Replay and fork, per-trial cap, judge abstention and anchors, drift, rerun validation, bundles
+
+**Record, replay, fork.** With the meter on, every provider response of every trial is recorded (`meter/<scenario>/<arm>/rep<N>.responses.jsonl`). `run --replay <runId>` serves those responses back in order through the same meter, so a whole run re-executes without a key and without spend (the verifier still runs on the reproduced workspace); the ledger says `replay` and the report says how many responses were served and that no live call was made. `--fork-at N` serves the first N recorded responses of each trial and goes live from there, which is how a trajectory is forked at a step to test a different continuation (the trace page's "fork from step k" link fills this in). A pure replay is deterministic when setup is; a fork is live from the fork point.
+
+**Per-trial spend cap.** `--max-usd-per-trial X` (or `meta.max_usd_per_trial`) stops a trial after the turn in which its observed usage exceeds the cap and grades it as a failure with the reason recorded. This is observed-state termination; predicting an outcome mid-trial (EarlyEval) and counting the prediction is rejected by design, because a predicted failure is not a measured one and would bias a paired verdict.
+
+**Judge abstention and anchors.** Judges report a confidence with each answer; a pair's abstention score is the mean confidence of order-consistent votes, halved when a panel splits. With human-labelled pairs on the run, a conformal risk-control threshold is calibrated so that the error rate among kept judgments is at most α (default 0.1) with the finite-sample correction (n·R̂ + 1)/(n + 1); judgments below the threshold are withheld and counted. Without labels no threshold exists and the report says so. Anchors: archived human-labelled trials with judge artifacts are re-graded by the panel on every judge run; the report gives agreement with the humans and stability against the previous judge run's answers on the same anchors, and attributes a change to the judge when stability falls below 80%. A length-balanced win rate (average of the candidate-longer and candidate-shorter strata) is reported next to the raw one.
+
+**Behavioural drift.** After every run the baseline arm's tool-call frequency vectors are compared with the archived trials of the same arm and model on the same scenarios (mean L1 distance, permutation test). Drift is reported, and it flags that archived floors and CUPED covariates from before the drift are not comparable. This is the behavioural complement of the served-model check, which only reads what the provider declares.
+
+**Rerun validation.** `dsh-eval rerun <runId> <scenario> [--repeats 3]` runs the pair again under the original run's isolation mode and reports whether the originally failing arm failed again and whether the first divergence recurred at the same call. The result is stored beside the original run as a derived file (the seal stays valid) and shown in its report.
+
+**Bundles.** `dsh-eval publish <runId>` copies the sealed run with `report.html` and a `VERIFY.md`; `dsh-eval verify <dir>` works on the copy, so a third party can check the hashes and re-derive the report without access to the original machine.
+
+**Isolation.** Third-party plugins default to the container path when Docker is available; `--docker-runtime runsc|kata` passes a gVisor or Kata runtime through when the host has one; `--docker-keep-sandbox` builds a base image with bubblewrap and runs the container with the capabilities dsh's in-process sandbox needs, so the container and dsh's own sandbox stack.
+
 ## 7. What it does not do (yet)
 
-- A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's). No conformal abstention, no anchor-set drift attribution.
-- Host mode confines through dsh's own sandbox; container mode isolates through Docker mounts but cannot use dsh's in-process sandbox inside the container; no microVM path.
-- No prompt-perturbation floor, served-model fingerprinting, active scenario selection, simulated user, record/replay/fork, within-trial early termination, or failure attribution with rerun validation.
-- DeepSeek pricing only; other providers price at zero and are reported as unknown.
+- A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's).
+- microVM isolation needs a host with Kata or gVisor (`--docker-runtime`); the tool cannot provide one itself.
+- Served-model verification reads the provider's declared model and fingerprint plus the baseline's behavioural drift; it does not fingerprint a substituted model behaviourally from a single trial.
+- Adaptive scenario selection is deliberately not done: choosing the next scenario from this run's observed differences changes the estimand the confidence sequence covers; the order is informed by the archive but fixed before the run.
+- No simulated user: scripted prompts keep both arms' inputs identical, which the paired design needs.
+- No bundled non-DeepSeek prices (configurable per project); no hosted public ledger (bundles are what a ledger would host).
 
 ## 8. Gap checklist
 

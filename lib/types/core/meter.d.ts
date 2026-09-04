@@ -18,6 +18,8 @@ export interface MeterEntry {
     fault: '429' | 'stall' | null;
     /** True when the response came from a recording instead of the provider. */
     replayed?: boolean;
+    /** The client's declared identity (user-agent): the harness name and version on the wire. */
+    harness?: string;
     /** Hash chain: sha256(prev + canonical entry without `hash`). */
     prev: string;
     hash: string;
@@ -35,6 +37,8 @@ export interface MeterTotals {
     fingerprints: string[];
     /** Responses served from a recording. */
     replayed: number;
+    /** Distinct client identities (user-agent) seen on the wire: the harness build that made the calls. */
+    harnessIdentities: string[];
 }
 export interface RecordedResponse {
     seq: number;

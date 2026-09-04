@@ -2,6 +2,7 @@ import { prepareArms, type ArmDiff } from './plan.js';
 import { type Project } from './project.js';
 import { type NoiseFloor, type Report } from './report.js';
 import { type VerifyResult } from './manifest.js';
+import { type ProbeVerdict } from './probe.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
 import { runPaths, type Progress } from './store.js';
@@ -40,6 +41,8 @@ export interface RunRequest {
     meter?: boolean;
     /** Prompt perturbation: repeats above 1 use a seeded paraphrase variant (prompts.variants.json), identical across arms. */
     perturb?: boolean;
+    /** Probe the route's served model before the trials and refuse readings when it differs from the enrolled reference. */
+    probe?: boolean;
     /** Replay another run's recorded provider responses (keyless); forkAt serves that many recorded responses per trial, then goes live. */
     replay?: {
         runId: string;
@@ -98,6 +101,18 @@ export declare function archiveBaselineCosts(project: Project, arm: string, exce
 /** The most recent A/A noise floor per baseline arm found in the archive (excluding `exceptRunId`). */
 /** Behavioural drift of this run's baseline arm against archived trials of the same arm name and model. */
 export declare function baselineDrift(project: Project, plan: RunPlan, ledgers: RunLedger[]): import('./drift.js').DriftResult | null;
+/**
+ * Probe the route the arms will use and compare with the enrolled reference for
+ * that (model, endpoint). The first call enrols; later calls test. The result is
+ * archived under the project and, for a run, written into the run directory.
+ */
+export declare function probeRoute(project: Project, options?: {
+    model?: string;
+    samples?: number;
+    enroll?: boolean;
+    chat?: import('./judge.js').ChatCall;
+    log?: (line: string) => void;
+}): Promise<ProbeVerdict>;
 export declare function archiveNoiseFloors(project: Project, exceptRunId?: string): Record<string, NoiseFloor>;
 export interface JudgeOptions {
     /** Judge models; several form a panel. Each may be `model` or `model@baseUrl` with the key from `<NAME>_API_KEY` env, or a name from project config `judges`. */
@@ -124,6 +139,9 @@ export declare function runJudge(project: Project, id: string, options?: JudgeOp
 /** Absolute judge report stored with a run, if any. */
 export declare function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('./judge.js').AbsoluteReport | null;
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+export declare function probeOf(paths: ReturnType<typeof runPaths>): {
+    probe?: ProbeVerdict;
+};
 export declare function sequencesOf(paths: ReturnType<typeof runPaths>): {
     sequences?: Record<string, {
         cost: {
