@@ -211,12 +211,16 @@ The receipt carries the analysis contract (α 0.025 for two planned claims, SESO
 
 ### served-model probes (run 20260904 probe battery)
 
-| comparison | probe distance | permutation p |
-|---|---|---|
-| fresh v4-flash vs the enrolled v4-flash reference | 0.083 | 0.83 |
-| v4-pro answers vs the v4-flash reference | 0.188 | 0.012 |
+| battery | comparison | probe distance | permutation p |
+|---|---|---|---|
+| 8 probes × 6 | fresh v4-flash vs the enrolled v4-flash reference | 0.083 | 0.83 |
+| 8 probes × 6 | v4-pro answers vs the v4-flash reference | 0.188 | 0.012 |
+| 12 probes × 10 | fresh v4-flash vs the enrolled v4-flash reference | 0.208 | 0.50 |
+| 12 probes × 10 | v4-pro answers vs the v4-flash reference | 0.317 | **0.0010** |
 
-Eight probes × 6 samples cost $0.008 per side. The battery separates a substituted model at α = 0.05 but not at the α = 0.01 the gate uses, so the battery was widened to twelve high-entropy prompts and made concurrent. This is a declared-model check plus a behavioural one: the meter also records the model id, the system fingerprint and the client identity on the wire (`deepseek-harness/0.1.2-rc.1 (+https://github.com/deepseek-ai/deepseek-harness)`), and a report reads nothing when the arms were served different models.
+The first battery separated a substituted model at α = 0.05 but not at the α = 0.01 the gate uses, so it was widened to twelve prompts whose answers a model must *choose* (a deterministic question carries no signal) and made concurrent. At twelve probes × ten samples, about $0.016 and a minute per side, a same-family substitution is caught at α = 0.01 while the same route reads p = 0.50.
+
+A third run exposed a design flaw worth keeping: changing the battery made every stored reference read as *differs*, because probe indices no longer meant the same questions. References are now keyed by a hash of the battery, and a changed battery re-enrols instead of reporting a substitution. This is a declared-model check plus a behavioural one: the meter also records the model id, the system fingerprint and the client identity on the wire (`deepseek-harness/0.1.2-rc.1 (+https://github.com/deepseek-ai/deepseek-harness)`), and a report reads nothing when the arms were served different models.
 
 ### container isolation with the meter and dsh's own sandbox (run 20260903-2145…, chain5 K)
 
