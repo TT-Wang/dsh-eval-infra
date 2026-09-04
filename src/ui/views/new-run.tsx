@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
+import { pickCandidates } from '../select-arms.js'
 
 export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -51,18 +52,21 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
     api.history().then(setHistory).catch(() => setHistory(null))
   }, [])
 
+  const armNames = arms.filter(a => a.spec).map(a => a.spec!.name)
+  // Belt and braces: even if state goes stale, nothing downstream sees the baseline as a candidate.
+  const activeCandidates = candidates.filter(n => n !== baseline)
+
   useEffect(() => {
-    if (baseline === '' || (candidates.length === 0 && !aa)) { setDiff(null); return }
+    if (baseline === '' || (activeCandidates.length === 0 && !aa)) { setDiff(null); return }
     let cancelled = false
     setDiffError(null)
-    api.diff(baseline, aa ? [] : candidates).then((r) => { if (!cancelled) setDiff(r.diffs) }).catch((e) => { if (!cancelled) { setDiff(null); setDiffError(String(e)) } })
+    api.diff(baseline, aa ? [] : activeCandidates).then((r) => { if (!cancelled) setDiff(r.diffs) }).catch((e) => { if (!cancelled) { setDiff(null); setDiffError(String(e)) } })
     return () => { cancelled = true }
-  }, [baseline, candidates.join(','), aa])
+  }, [baseline, activeCandidates.join(','), aa])
 
-  const armNames = arms.filter(a => a.spec).map(a => a.spec!.name)
   const categories = useMemo(() => [...new Set(scenarios.map(s => s.meta.category ?? 'uncategorised'))].sort(), [scenarios])
   const visible = scenarios.filter(s => (category === '' || (s.meta.category ?? 'uncategorised') === category) && (query === '' || s.name.includes(query) || (s.meta.stressor ?? '').toLowerCase().includes(query.toLowerCase())))
-  const trials = selected.size * repeats * (1 + (aa ? 1 : candidates.length))
+  const trials = selected.size * repeats * (1 + (aa ? 1 : activeCandidates.length))
   // Estimate from the archive: mean cost per trial of each selected scenario (any arm), else the archive-wide mean.
   const estimate = useMemo(() => {
     if (!history) return null
@@ -94,7 +98,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
       const perTrial = Number(maxUsdPerTrial)
       const fork = Number(forkAt)
       const { id } = await api.start({
-        baseline, candidates: aa ? [] : candidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa,
+        baseline, candidates: aa ? [] : activeCandidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa,
         ...(sandbox !== 'auto' ? { sandbox } : docker ? { sandbox: 'docker' } : {}),
         ...(dockerRuntime.trim() !== '' ? { dockerRuntime: dockerRuntime.trim() } : {}),
         ...(keepDshSandbox ? { dockerKeepSandbox: true } : {}),
@@ -116,7 +120,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         <div class="card">
           <h2>Arms</h2>
           <label>Baseline
-            <select value={baseline} onChange={e => setBaseline((e.target as HTMLSelectElement).value)}>
+            <select value={baseline} onChange={(e) => { const next = (e.target as HTMLSelectElement).value; setBaseline(next); setCandidates(pickCandidates(candidates, next, armNames)) }}>
               {armNames.map(n => <option value={n}>{n}</option>)}
             </select>
           </label>
@@ -178,7 +182,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
           <p><b>{selected.size}</b> scenarios × <b>{repeats}</b> repeats × <b>{1 + (aa ? 1 : candidates.length)}</b> arms = <b>{trials}</b> trials{estimate ? <span class="muted"> · about {fmt.usd(estimate.usd, 2)} ({estimate.seen}/{selected.size} scenarios have archive history; the rest use the archive mean of {fmt.usd(estimate.perTrial, 4)} per trial)</span> : <span class="muted"> · no archive yet to estimate cost</span>}</p>
           <label>Budget cap (USD) <input type="text" value={maxUsd} placeholder="optional" onInput={e => setMaxUsd((e.target as HTMLInputElement).value)} /></label>
           <p class="muted small">Detectability: with {selected.size} scenarios the run can resolve a cost effect roughly of size 2.5 × (per-scenario spread) / √{selected.size}; a first A/A run tells you the spread. Fewer than 3 comparable scenarios never yields a direction.</p>
-          <button class="btn primary" disabled={busy || baseline === '' || (!aa && candidates.length === 0) || selected.size === 0 || (multi && !allowMulti)} onClick={() => void start()}>{busy ? 'starting…' : 'Start run'}</button>
+          <button class="btn primary" disabled={busy || baseline === '' || (!aa && activeCandidates.length === 0) || selected.size === 0 || (multi && !allowMulti)} onClick={() => void start()}>{busy ? 'starting…' : 'Start run'}</button>
           <p class="muted small">Every scenario is self-checked (oracle must pass, untouched workspace must fail) before the first trial.</p>
         </div>
       </div>

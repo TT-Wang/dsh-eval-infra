@@ -151,3 +151,18 @@ describe('dsh plugin entry', () => {
     expect(registered).toHaveLength(0)
   })
 })
+
+describe('new-run arm selection', () => {
+  it('never keeps the baseline in the candidate list when the baseline changes', async () => {
+    const { pickCandidates } = await import('../src/ui/select-arms.js')
+    const arms = ['baseline', 'candidate', 'fold']
+    // the reported bug: baseline switched to the arm that was the candidate
+    expect(pickCandidates(['candidate'], 'candidate', arms)).toEqual(['baseline'])
+    // an unrelated candidate survives the switch
+    expect(pickCandidates(['candidate', 'fold'], 'candidate', arms)).toEqual(['fold'])
+    // arms that no longer exist are dropped
+    expect(pickCandidates(['gone'], 'baseline', arms)).toEqual(['candidate'])
+    // a single arm leaves nothing to compare, and the form must not invent one
+    expect(pickCandidates(['baseline'], 'baseline', ['baseline'])).toEqual([])
+  })
+})
