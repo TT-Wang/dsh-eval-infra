@@ -12,8 +12,33 @@ export function HistoryView() {
   return (
     <section>
       <div class="page-head"><div><h1>Scenario history</h1><p class="muted">{h.scenarios.length} scenarios × {h.arms.length} arms over {h.runs.length} runs · pass / runs, mean cost, mean steps</p></div></div>
+        <div class="card">
+        <b>Patterns</b> <span class="muted small">recurring failure signatures and behaviour regimes across every archived run, ranked by how unevenly they hit the arms</span>
+        {(!h.patterns || h.patterns.length === 0) && <p class="muted small">Nothing recurs at least three times yet.</p>}
+        {h.patterns && h.patterns.length > 0 && (
+          <div class="scroll-x">
+            <table class="grid">
+              <thead><tr><th>pattern</th><th>kind</th><th class="num">trials</th><th class="num">share</th><th class="num">arm skew</th><th>scenarios</th><th>arms</th><th>last seen</th></tr></thead>
+              <tbody>
+                {h.patterns.map(p => (
+                  <tr key={p.signature}>
+                    <td title={p.example}><code>{p.signature}</code></td>
+                    <td><span class={`cls ${p.kind === 'failure' ? 'regression' : 'incomplete'}`}>{p.kind}</span></td>
+                    <td class="num">{p.count}</td>
+                    <td class="num">{(p.share * 100).toFixed(0)}%</td>
+                    <td class="num">{p.armSkew > 0.2 ? <b title="this pattern hits one arm far more than another">{(p.armSkew * 100).toFixed(0)}%</b> : `${(p.armSkew * 100).toFixed(0)}%`}</td>
+                    <td class="muted small">{p.scenarios.slice(0, 3).join(', ')}{p.scenarios.length > 3 ? ` +${p.scenarios.length - 3}` : ''}</td>
+                    <td class="muted small">{p.arms.join(', ')}</td>
+                    <td class="muted small">{p.lastSeen ? new Date(p.lastSeen).toLocaleDateString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
       {h.chronic && (h.chronic.flaky.length + h.chronic.failing.length + h.chronic.saturated.length) > 0 && (
-        <div class="card small">
+      <div class="card small">
           <b>Scenario health</b> (4+ trials, every arm alike):
           {h.chronic.flaky.length > 0 && <span> <span class="cls both-fail">chronically flaky</span> {h.chronic.flaky.join(', ')} — more repeats or a sharper prompt before trusting a regression here;</span>}
           {h.chronic.failing.length > 0 && <span> <span class="cls regression">never passes</span> {h.chronic.failing.join(', ')} — no signal until something passes;</span>}

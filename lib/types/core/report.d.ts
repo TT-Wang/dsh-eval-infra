@@ -233,6 +233,17 @@ export interface CandidateReport {
         longerWinsShare?: number | null;
         interJudgeKappa?: number | null;
         lengthBalancedWinRate?: number | null;
+        equalLengthWinRate?: {
+            rate: number;
+            slope: number;
+            n: number;
+        } | null;
+        effectiveJudges?: {
+            k: number;
+            rhoBar: number;
+            nEff: number;
+            basis: 'error' | 'vote';
+        } | null;
         abstention?: {
             alpha: number;
             tau: number;

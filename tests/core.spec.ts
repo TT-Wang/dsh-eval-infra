@@ -422,3 +422,38 @@ describe('served-model probes', () => {
     expect(gated.notes.some(n => n.startsWith('Served-model probe'))).toBe(true)
   })
 })
+
+describe('pattern discovery', () => {
+  it('collapses like failures into one signature, thresholds behaviour on the archive, and ranks arm-skewed patterns first', async () => {
+    const { discoverPatterns, failureSignature } = await import('../src/core/patterns.js')
+    expect(failureSignature("answers.json missing/unreadable: [Errno 2] No such file or directory: '/tmp/x/answers.json'"))
+      .toBe(failureSignature("answers.json missing/unreadable: [Errno 2] No such file or directory: '/tmp/other/answers.json'"))
+    const mk = (scenario: string, arm: string, rep: number, ok: boolean, detail: string, toolErrors = 0) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: `r${rep}`, scenario, arm, rep, order: 0, startedAt: `2026-09-0${rep}T00:00:00Z`, endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 5, turns: 1, usd: 1, usdPeak: 1, usdOffpeak: 1, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail }, behaviour: { toolErrors, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const ledgers = [
+      ...[1, 2, 3].map(r => mk('s1', 'cand', r, false, `out.json missing: [Errno 2] No such file or directory: '/tmp/${r}/out.json'`, 4)),
+      ...[1, 2, 3].map(r => mk('s1', 'base', r, true, 'ok')),
+      ...[1, 2, 3].map(r => mk('s2', 'base', r, true, 'ok')),
+      ...[1, 2, 3].map(r => mk('s2', 'cand', r, true, 'ok')),
+    ]
+    const patterns = discoverPatterns(ledgers)
+    const failure = patterns.find(p => p.kind === 'failure')!
+    expect(failure.count).toBe(3)              // three differing paths, one signature
+    expect(failure.arms).toEqual(['cand'])
+    expect(failure.armSkew).toBeCloseTo(0.5, 6)  // half of cand's trials, none of base's
+    expect(patterns[0]!.signature).toBe(failure.signature)   // most arm-skewed first
+    expect(discoverPatterns(ledgers.slice(0, 2))).toEqual([])  // nothing recurs three times
+  })
+
+  it('maps a diverging tool call to the number of provider responses to replay', async () => {
+    const { forkPointForCall } = await import('../src/core/orchestrate.js')
+    const ledger = { steps: [{ calls: [{ name: 'read' }] }, { calls: [{ name: 'grep' }, { name: 'read' }] }, { calls: [{ name: 'write' }] }] } as never
+    expect(forkPointForCall(ledger, 1)).toEqual({ forkAt: 0, step: 1 })
+    expect(forkPointForCall(ledger, 2)).toEqual({ forkAt: 1, step: 2 })
+    expect(forkPointForCall(ledger, 3)).toEqual({ forkAt: 1, step: 2 })
+    expect(forkPointForCall(ledger, 4)).toEqual({ forkAt: 2, step: 3 })
+    expect(forkPointForCall(ledger, 99)).toEqual({ forkAt: 2, step: 3 })
+  })
+})

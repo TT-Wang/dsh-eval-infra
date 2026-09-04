@@ -55,8 +55,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
+export interface Pattern { kind: 'failure' | 'behaviour'; signature: string; count: number; scenarios: string[]; arms: string[]; runs: string[]; firstSeen: string; lastSeen: string; example: string; share: number; armSkew: number }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
-export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }
+export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] }; patterns?: Pattern[] }
 
 export interface RunRow extends RunIndexEntry { sandbox?: 'host' | 'docker'; verdicts?: Array<{ arm: string; gate: string; costReading: string; costPct: number; regressions: number; improvements: number }> }
 

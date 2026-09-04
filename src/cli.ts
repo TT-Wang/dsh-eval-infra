@@ -34,7 +34,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -294,13 +294,13 @@ async function cmdRerun(project: Project, args: Args): Promise<number> {
   const [id, scenario] = args.positional
   if (id === undefined || scenario === undefined) { err('usage: dsh-eval rerun <runId> <scenario> [--repeats 3] [--arm <candidate>]'); return 3 }
   const r = await regradeSafeRerun(project, id, scenario, args)
-  out(`rerun ${r.newRunId}: ${r.verdict} — ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, same first divergence (call ${r.original.call}) in ${r.sameCall}/${r.reps}` : `${r.failedAgain}/${r.reps} reruns had one failing arm`}`)
+  out(`${r.fork ? `fork from step ${r.fork.step}` : 'rerun'} ${r.newRunId}: ${r.verdict} — ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, same first divergence (call ${r.original.call}) in ${r.sameCall}/${r.reps}` : `${r.failedAgain}/${r.reps} reruns had one failing arm`}`)
   return 0
 }
 
 async function regradeSafeRerun(project: Project, id: string, scenario: string, args: Args): Promise<import('./core/orchestrate.js').RerunResult> {
   const { rerunScenario } = await import('./core/orchestrate.js')
-  return rerunScenario(project, id, scenario, { ...(num(args.flags['repeats']) !== undefined ? { repeats: num(args.flags['repeats'])! } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), log: out })
+  return rerunScenario(project, id, scenario, { ...(num(args.flags['repeats']) !== undefined ? { repeats: num(args.flags['repeats'])! } : {}), ...(typeof args.flags['arm'] === 'string' ? { candidate: args.flags['arm'] } : {}), ...(args.flags['fork'] === true ? { fork: true } : {}), log: out })
 }
 
 function cmdPublish(project: Project, args: Args): number {
@@ -463,7 +463,7 @@ function help(): number {
   probe [--model M] [--samples N] [--enroll]   fingerprint the route's served model against an enrolled reference (exit 1 when it differs)
   perturb <globs> [--n N] [--model M]   write semantics-preserving paraphrases (prompts.variants.json) for --perturb
   verify <runId | dir> [--json]   check the sealed evidence hashes and that the report re-derives from them
-  rerun <runId> <scenario> [--repeats 3]   rerun one scenario's pair to validate a failure and its divergence point
+  rerun <runId> <scenario> [--repeats 3] [--fork]   rerun one scenario's pair to validate a failure (--fork replays the identical prefix and goes live at the divergence)
   publish <runId> [--out dir]  copy the sealed run with report.html and VERIFY.md into a bundle a third party can verify
   run … [--sandbox host|docker] [--docker-runtime runsc|kata] [--docker-keep-sandbox]   container per trial (default when third-party plugins are linked and Docker is available)
   regrade <runId>              re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal

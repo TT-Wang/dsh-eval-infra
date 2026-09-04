@@ -187,6 +187,12 @@ export interface RerunResult {
     scenario: string;
     candidate: string;
     newRunId: string;
+    /** Fork mode: the trials replayed the original run's responses up to the divergence and went live from there. */
+    fork?: {
+        sourceRunId: string;
+        forkAt: number;
+        step: number;
+    };
     reps: number;
     original: {
         rep: number;
@@ -201,6 +207,18 @@ export interface RerunResult {
     sameCall: number;
     verdict: 'reproduced' | 'partly reproduced' | 'not reproduced' | 'no original failure';
 }
+/**
+ * How many provider responses precede the step that holds the given tool call.
+ * One assistant message is one provider response, so this is the fork point:
+ * replaying that many responses reproduces the trial's prefix exactly, and the
+ * next call is made live (Repair or Resample, 2608.25920: a cause only counts
+ * when the failure recurs from an identical prefix more often than resampling
+ * alone reproduces it).
+ */
+export declare function forkPointForCall(ledger: RunLedger, call: number): {
+    forkAt: number;
+    step: number;
+};
 /** First tool call at which two trials' tool sequences part, and which arm failed (null when both passed or both failed). */
 export declare function pairDivergence(rb: RunLedger, rc: RunLedger, candidateName: string, baselineName: string): {
     call: number;
@@ -217,6 +235,7 @@ export declare function pairDivergence(rb: RunLedger, rc: RunLedger, candidateNa
 export declare function rerunScenario(project: Project, runId: string, scenario: string, options?: {
     repeats?: number;
     candidate?: string;
+    fork?: boolean;
     log?: (line: string) => void;
     hooks?: LaunchHooks;
 }): Promise<RerunResult>;

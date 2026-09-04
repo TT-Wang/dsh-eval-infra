@@ -5,6 +5,7 @@
  */
 import { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type RunRequest } from '../core/orchestrate.js';
+import { type Pattern } from '../core/patterns.js';
 import { type Project } from '../core/project.js';
 export interface EvalAppOptions {
     project: Project;
@@ -39,6 +40,7 @@ export interface HistoryPoint {
     ok: boolean;
 }
 export interface History {
+    patterns?: Pattern[];
     arms: string[];
     scenarios: Array<{
         name: string;

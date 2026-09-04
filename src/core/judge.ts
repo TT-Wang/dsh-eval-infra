@@ -80,8 +80,12 @@ export interface JudgeReport {
   longerWinsShare: number | null
   /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
   interJudgeKappa: number | null
-  /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata (length-balanced, AlpacaEval-LC style); null without both strata. */
+  /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata; null without both strata. */
   lengthBalancedWinRate: number | null
+  /** Win rate at zero length difference from a logistic fit on the length difference (AlpacaEval-LC in one covariate). */
+  equalLengthWinRate: { rate: number; slope: number; n: number } | null
+  /** Effective independent judges in the panel (Kish n_eff) from vote or error correlation. */
+  effectiveJudges: { k: number; rhoBar: number; nEff: number; basis: 'error' | 'vote' } | null
   /** Conformal abstention (SCOPE-style): threshold calibrated on human-labelled pairs so the error rate among kept judgments is at most alpha; null without labels. */
   abstention: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number } | null
   /** Anchor set: archived human-labelled trials re-graded by this panel; agreement with the humans and stability vs the previous judge run on the same anchors. */
@@ -176,12 +180,110 @@ export function conformalAbstentionThreshold(labelled: Array<{ score: number; co
   return best
 }
 
-export function abstentionScore(votes: Array<{ preference: string; answers: [string, string]; confidence?: number }>): number {
+/**
+ * Bidirectional preference entropy (SCOPE, 2602.13110): pool every order-answer
+ * of every panel member into a distribution over {candidate, baseline, tie} and
+ * take its normalized entropy. 0 = every answer in both orders agrees, 1 = the
+ * answers are spread evenly, which is exactly the case a judge should not decide.
+ */
+export function bidirectionalPreferenceEntropy(votes: Array<{ answers: [string, string] }>, firstShown: 'baseline' | 'candidate'): number {
+  const counts = { candidate: 0, baseline: 0, tie: 0 }
+  const other = firstShown === 'baseline' ? 'candidate' : 'baseline'
+  for (const v of votes) {
+    // call 1: "1" = the artifact shown first; call 2: "1" = the other one
+    const a = v.answers[0] === '1' ? firstShown : v.answers[0] === '2' ? other : 'tie'
+    const b = v.answers[1] === '1' ? other : v.answers[1] === '2' ? firstShown : 'tie'
+    counts[a] += 1
+    counts[b] += 1
+  }
+  const n = counts.candidate + counts.baseline + counts.tie
+  if (n === 0) return 1
+  let h = 0
+  for (const c of [counts.candidate, counts.baseline, counts.tie]) { const p = c / n; if (p > 0) h -= p * Math.log(p) }
+  return h / Math.log(3)
+}
+
+/** Abstention score in [0, 1]: certainty from the bidirectional entropy, scaled by the judges' own confidence. */
+export function abstentionScore(votes: Array<{ preference: string; answers: [string, string]; confidence?: number }>, firstShown: 'baseline' | 'candidate' = 'baseline'): number {
   if (votes.length === 0) return 0
-  const consistent = votes.filter(v => v.preference !== 'tie' || (v.answers[0] === 'tie' && v.answers[1] === 'tie'))
-  const conf = consistent.length ? consistent.reduce((a, v) => a + (v.confidence ?? 0.5), 0) / votes.length : 0
-  const unanimous = new Set(votes.map(v => v.preference)).size <= 1
-  return unanimous ? conf : conf / 2
+  const certainty = 1 - bidirectionalPreferenceEntropy(votes, firstShown)
+  const conf = votes.reduce((a, v) => a + (v.confidence ?? 0.5), 0) / votes.length
+  return certainty * conf
+}
+
+/**
+ * Effective number of independent judges (Kish; "Nine Judges, Two Effective
+ * Votes", 2605.29800): k / (1 + (k-1)ρ̄) with ρ̄ the mean pairwise correlation
+ * of the judges' answers (of their errors, when human labels exist).
+ */
+export function effectiveJudges(votesPerItem: string[][], truth?: Array<string | null>): { k: number; rhoBar: number; nEff: number; basis: 'error' | 'vote' } | null {
+  const k = votesPerItem[0]?.length ?? 0
+  if (k < 2 || votesPerItem.length < 3) return null
+  const basis: 'error' | 'vote' = truth && truth.filter(t => t !== null && t !== undefined).length >= 3 ? 'error' : 'vote'
+  const series: number[][] = []
+  for (let j = 0; j < k; j += 1) {
+    const col: number[] = []
+    for (let i = 0; i < votesPerItem.length; i += 1) {
+      const v = votesPerItem[i]![j]
+      if (v === undefined) { col.push(0); continue }
+      if (basis === 'error') { const t = truth![i]; col.push(t === null || t === undefined ? 0 : v === t ? 0 : 1) }
+      else col.push(v === 'candidate' ? 1 : v === 'baseline' ? -1 : 0)
+    }
+    series.push(col)
+  }
+  const corr = (a: number[], b: number[]): number => {
+    const n = a.length
+    const ma = a.reduce((x, y) => x + y, 0) / n
+    const mb = b.reduce((x, y) => x + y, 0) / n
+    let num = 0, da = 0, db = 0
+    for (let i = 0; i < n; i += 1) { num += (a[i]! - ma) * (b[i]! - mb); da += (a[i]! - ma) ** 2; db += (b[i]! - mb) ** 2 }
+    return da > 0 && db > 0 ? num / Math.sqrt(da * db) : 0
+  }
+  const rs: number[] = []
+  for (let i = 0; i < k; i += 1) for (let j = i + 1; j < k; j += 1) rs.push(corr(series[i]!, series[j]!))
+  const rhoBar = rs.reduce((a, b) => a + b, 0) / rs.length
+  const nEff = k / (1 + (k - 1) * Math.max(0, rhoBar))
+  return { k, rhoBar, nEff, basis }
+}
+
+/**
+ * Win rate at zero length difference (AlpacaEval length-controlled, 2404.04475,
+ * reduced to one covariate): logistic regression of "candidate won" on the
+ * normalized length difference, read at difference zero. Ridge-regularized so
+ * perfectly separated data still returns a finite estimate.
+ */
+export function equalLengthWinRate(pairs: Array<{ won: boolean; lengthDiff: number }>): { rate: number; slope: number; n: number } | null {
+  const n = pairs.length
+  if (n < 4) return null
+  const scale = Math.max(1, ...pairs.map(p => Math.abs(p.lengthDiff)))
+  const xs = pairs.map(p => p.lengthDiff / scale)
+  const ys = pairs.map(p => (p.won ? 1 : 0))
+  let b0 = 0
+  let b1 = 0
+  const lambda = 1e-3
+  for (let it = 0; it < 100; it += 1) {
+    let g0 = -lambda * b0, g1 = -lambda * b1
+    let h00 = lambda, h01 = 0, h11 = lambda
+    for (let i = 0; i < n; i += 1) {
+      const z = b0 + b1 * xs[i]!
+      const p = 1 / (1 + Math.exp(-z))
+      const r = ys[i]! - p
+      g0 += r
+      g1 += r * xs[i]!
+      const w = p * (1 - p)
+      h00 += w
+      h01 += w * xs[i]!
+      h11 += w * xs[i]! * xs[i]!
+    }
+    const det = h00 * h11 - h01 * h01
+    if (Math.abs(det) < 1e-12) break
+    const d0 = (h11 * g0 - h01 * g1) / det
+    const d1 = (h00 * g1 - h01 * g0) / det
+    b0 += d0
+    b1 += d1
+    if (Math.abs(d0) + Math.abs(d1) < 1e-9) break
+  }
+  return { rate: 1 / (1 + Math.exp(-b0)), slope: b1, n }
 }
 
 function seeded(seed: number): () => number {
@@ -286,7 +388,7 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
       const half = votes.length / 2
       const preference: Judgment['preference'] = forC > forB && forC > half ? 'candidate' : forB > forC && forB > half ? 'baseline' : 'tie'
       const first = votes[0]!
-      judgments.push({ scenario, rep, preference, votes, score: abstentionScore(votes), answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha }, lengths: { baseline: artB.text.length, candidate: artC.text.length } })
+      judgments.push({ scenario, rep, preference, votes, score: abstentionScore(votes, firstShown), answers: first.answers, firstShown, reasons: first.reasons, usd: votes.reduce((a, v) => a + v.usd, 0), model: first.model, artifactSha: { baseline: artB.sha, candidate: artC.sha }, lengths: { baseline: artB.text.length, candidate: artC.text.length } })
       input.log?.(`judge ${scenario}#${rep}: ${preference} (${votes.map(v => `${v.model}: ${v.preference}`).join(', ')})`)
     }
   }
@@ -306,8 +408,10 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
   const shorter = decided.filter(j => j.lengths!.candidate < j.lengths!.baseline)
   const share = (xs: Judgment[]): number => xs.filter(j => j.preference === 'candidate').length / xs.length
   const lengthBalancedWinRate = longer.length && shorter.length ? (share(longer) + share(shorter)) / 2 : null
+  const equalLength = equalLengthWinRate(decided.map(j => ({ won: j.preference === 'candidate', lengthDiff: j.lengths!.candidate - j.lengths!.baseline })))
   let humanAgreement: JudgeReport['humanAgreement'] = null
   const labelledScores: Array<{ score: number; correct: boolean }> = []
+  const humanTruth: Array<string | null> = []
   if (input.annotations) {
     const pairs: Array<[string, string]> = []
     for (const j of judgments) {
@@ -317,9 +421,11 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
       const human = hc && !hb ? 'candidate' : hb && !hc ? 'baseline' : 'tie'
       pairs.push([j.preference, human])
       labelledScores.push({ score: j.score ?? 0, correct: j.preference === human })
+      humanTruth[judgments.indexOf(j)] = human
     }
     if (pairs.length) humanAgreement = { n: pairs.length, agree: pairs.filter(([a, b]) => a === b).length / pairs.length, kappa: kappa(pairs) }
   }
+  const nEff = effectiveJudges(judgments.map(j => j.votes.map(v => v.preference)), judgments.map((_, i) => humanTruth[i] ?? null))
   let abstention: JudgeReport['abstention'] = null
   if (labelledScores.length > 0) {
     const alpha = input.abstentionAlpha ?? 0.1
@@ -361,6 +467,8 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
     longerWinsShare,
     interJudgeKappa,
     lengthBalancedWinRate,
+    equalLengthWinRate: equalLength,
+    effectiveJudges: nEff,
     abstention,
     anchors,
     ...(anchorAnswers ? { anchorAnswers } : {}),

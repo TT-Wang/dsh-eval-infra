@@ -115,8 +115,10 @@ describe('abstention, length balance and anchors', () => {
     const tau = conformalAbstentionThreshold(labelled, 0.1)
     expect(tau).toBe(0.9)
     expect(conformalAbstentionThreshold([{ score: 0.9, correct: false }], 0.1)).toBeNull()   // one wrong label cannot meet the bound
-    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'candidate', answers: ['1', '2'], confidence: 0.6 }])).toBeCloseTo(0.7, 6)
-    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'tie', answers: ['1', '1'], confidence: 0.6 }])).toBeCloseTo(0.2, 6)   // inconsistent vote drops out, panel split halves
+    // both judges answer consistently for the same arm in both orders → certainty 1, score = mean confidence
+    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'candidate', answers: ['1', '2'], confidence: 0.6 }], 'candidate')).toBeCloseTo(0.7, 6)
+    // one judge flips between orders → the pooled answers spread, so the score falls well below the mean confidence
+    expect(abstentionScore([{ preference: 'candidate', answers: ['1', '2'], confidence: 0.8 }, { preference: 'tie', answers: ['1', '1'], confidence: 0.6 }], 'candidate')).toBeLessThan(0.45)
   })
 
   it('reports the length-balanced win rate and grades anchors for drift', async () => {
@@ -134,5 +136,37 @@ describe('abstention, length balance and anchors', () => {
     ], [{ model: 'deepseek-v4-flash', chat }])
     expect(g.answers).toEqual({ 'r1|s|a|1': true, 'r1|s|b|1': false })
     expect(g.summary).toMatchObject({ n: 2, humanAgreement: 1, stability: 0.5, comparedWithPrevious: 2, attribution: 'judge' })
+  })
+})
+
+describe('entropy abstention, effective judges and length control', () => {
+  it('scores certainty from both orderings, counts effective judges, and reads the win rate at equal length', async () => {
+    const { bidirectionalPreferenceEntropy, abstentionScore, effectiveJudges, equalLengthWinRate } = await import('../src/core/judge.js')
+    // both orders, both judges pick the candidate → zero entropy; a spread of answers → high entropy
+    const agree = [{ answers: ['2', '1'] as [string, string] }, { answers: ['2', '1'] as [string, string] }]
+    expect(bidirectionalPreferenceEntropy(agree, 'baseline')).toBeCloseTo(0, 6)
+    const spread = [{ answers: ['1', '1'] as [string, string] }, { answers: ['tie', '2'] as [string, string] }]
+    expect(bidirectionalPreferenceEntropy(spread, 'baseline')).toBeGreaterThan(0.9)
+    expect(abstentionScore(agree.map(v => ({ ...v, preference: 'candidate', confidence: 0.8 })), 'baseline')).toBeCloseTo(0.8, 6)
+    expect(abstentionScore(spread.map(v => ({ ...v, preference: 'tie', confidence: 0.8 })), 'baseline')).toBeLessThan(0.1)
+
+    // two judges that always agree carry one effective vote; independent ones carry two
+    const same = Array.from({ length: 6 }, (_, i) => [i % 2 ? 'candidate' : 'baseline', i % 2 ? 'candidate' : 'baseline'])
+    const eSame = effectiveJudges(same)!
+    expect(eSame.k).toBe(2)
+    expect(eSame.nEff).toBeCloseTo(1, 1)
+    const mixed = [['candidate', 'baseline'], ['baseline', 'candidate'], ['candidate', 'candidate'], ['baseline', 'baseline'], ['candidate', 'baseline'], ['baseline', 'candidate']]
+    expect(effectiveJudges(mixed)!.nEff).toBeGreaterThan(1.5)
+    expect(effectiveJudges([['a', 'b']])).toBeNull()
+
+    // when only long submissions win, the equal-length rate falls below the raw win rate
+    const biased = [
+      ...Array.from({ length: 8 }, () => ({ won: true, lengthDiff: 4000 })),
+      ...Array.from({ length: 8 }, () => ({ won: false, lengthDiff: -4000 })),
+    ]
+    const lc = equalLengthWinRate(biased)!
+    expect(lc.slope).toBeGreaterThan(0)
+    expect(lc.rate).toBeCloseTo(0.5, 1)
+    expect(equalLengthWinRate([{ won: true, lengthDiff: 1 }])).toBeNull()
   })
 })

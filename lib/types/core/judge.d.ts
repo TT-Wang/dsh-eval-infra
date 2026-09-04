@@ -81,8 +81,21 @@ export interface JudgeReport {
     longerWinsShare: number | null;
     /** Cohen's κ between the first two panel members' votes (error correlation of the panel), when a panel was used. */
     interJudgeKappa: number | null;
-    /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata (length-balanced, AlpacaEval-LC style); null without both strata. */
+    /** Candidate win share among decided pairs, averaged over the "candidate longer" and "candidate shorter" strata; null without both strata. */
     lengthBalancedWinRate: number | null;
+    /** Win rate at zero length difference from a logistic fit on the length difference (AlpacaEval-LC in one covariate). */
+    equalLengthWinRate: {
+        rate: number;
+        slope: number;
+        n: number;
+    } | null;
+    /** Effective independent judges in the panel (Kish n_eff) from vote or error correlation. */
+    effectiveJudges: {
+        k: number;
+        rhoBar: number;
+        nEff: number;
+        basis: 'error' | 'vote';
+    } | null;
     /** Conformal abstention (SCOPE-style): threshold calibrated on human-labelled pairs so the error rate among kept judgments is at most alpha; null without labels. */
     abstention: {
         alpha: number;
@@ -132,11 +145,46 @@ export declare function conformalAbstentionThreshold(labelled: Array<{
     score: number;
     correct: boolean;
 }>, alpha: number): number | null;
+/**
+ * Bidirectional preference entropy (SCOPE, 2602.13110): pool every order-answer
+ * of every panel member into a distribution over {candidate, baseline, tie} and
+ * take its normalized entropy. 0 = every answer in both orders agrees, 1 = the
+ * answers are spread evenly, which is exactly the case a judge should not decide.
+ */
+export declare function bidirectionalPreferenceEntropy(votes: Array<{
+    answers: [string, string];
+}>, firstShown: 'baseline' | 'candidate'): number;
+/** Abstention score in [0, 1]: certainty from the bidirectional entropy, scaled by the judges' own confidence. */
 export declare function abstentionScore(votes: Array<{
     preference: string;
     answers: [string, string];
     confidence?: number;
-}>): number;
+}>, firstShown?: 'baseline' | 'candidate'): number;
+/**
+ * Effective number of independent judges (Kish; "Nine Judges, Two Effective
+ * Votes", 2605.29800): k / (1 + (k-1)ρ̄) with ρ̄ the mean pairwise correlation
+ * of the judges' answers (of their errors, when human labels exist).
+ */
+export declare function effectiveJudges(votesPerItem: string[][], truth?: Array<string | null>): {
+    k: number;
+    rhoBar: number;
+    nEff: number;
+    basis: 'error' | 'vote';
+} | null;
+/**
+ * Win rate at zero length difference (AlpacaEval length-controlled, 2404.04475,
+ * reduced to one covariate): logistic regression of "candidate won" on the
+ * normalized length difference, read at difference zero. Ridge-regularized so
+ * perfectly separated data still returns a finite estimate.
+ */
+export declare function equalLengthWinRate(pairs: Array<{
+    won: boolean;
+    lengthDiff: number;
+}>): {
+    rate: number;
+    slope: number;
+    n: number;
+} | null;
 export interface JudgeModel {
     model: string;
     chat: ChatCall;

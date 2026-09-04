@@ -647,12 +647,13 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
     const j = judges[c.arm]
     if (j) {
       const models = j.models ?? [j.model]
-      const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; abstention?: NonNullable<Report['candidates'][number]['judge']>['abstention']; anchors?: NonNullable<Report['candidates'][number]['judge']>['anchors'] }
-      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null, lengthBalancedWinRate: jj.lengthBalancedWinRate ?? null, abstention: jj.abstention ?? null, anchors: jj.anchors ?? null }
+      const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; equalLengthWinRate?: NonNullable<Report['candidates'][number]['judge']>['equalLengthWinRate']; effectiveJudges?: NonNullable<Report['candidates'][number]['judge']>['effectiveJudges']; abstention?: NonNullable<Report['candidates'][number]['judge']>['abstention']; anchors?: NonNullable<Report['candidates'][number]['judge']>['anchors'] }
+      c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null, lengthBalancedWinRate: jj.lengthBalancedWinRate ?? null, equalLengthWinRate: jj.equalLengthWinRate ?? null, effectiveJudges: jj.effectiveJudges ?? null, abstention: jj.abstention ?? null, anchors: jj.anchors ?? null }
       if (jj.abstention) report.notes.push(`${c.arm}: conformal abstention at α = ${jj.abstention.alpha} calibrated on ${jj.abstention.calibratedOn} human-labelled pair${jj.abstention.calibratedOn === 1 ? '' : 's'}: ${Number.isFinite(jj.abstention.tau) ? `threshold ${jj.abstention.tau.toFixed(2)}, ${jj.abstention.abstained} of ${jj.abstention.of} judgments withheld` : `no threshold meets the bound, all ${jj.abstention.of} judgments withheld`}.`)
       else report.notes.push(`${c.arm}: no human-labelled pairs on this run, so the judge cannot calibrate an abstention threshold; only order disagreement and panel splits abstain.`)
       if (jj.anchors) report.notes.push(`${c.arm}: judge anchors — ${jj.anchors.n} archived human-labelled trials re-graded: agreement with humans ${(jj.anchors.humanAgreement * 100).toFixed(0)}%${jj.anchors.stability !== null ? `, stability vs the previous judge run ${(jj.anchors.stability * 100).toFixed(0)}% on ${jj.anchors.comparedWithPrevious}` : ' (first run on these anchors, no previous answers yet)'}${jj.anchors.attribution === 'judge' ? ' → JUDGE DRIFT: the judge changed its mind on the anchors, so differences against earlier judge runs are attributed to the judge, not the system' : ''}.`)
-      if (jj.lengthBalancedWinRate !== null && jj.lengthBalancedWinRate !== undefined) report.notes.push(`${c.arm}: length-balanced candidate win rate ${(jj.lengthBalancedWinRate * 100).toFixed(0)}% (average of the candidate-longer and candidate-shorter strata).`)
+      if (jj.lengthBalancedWinRate !== null && jj.lengthBalancedWinRate !== undefined) report.notes.push(`${c.arm}: length-balanced candidate win rate ${(jj.lengthBalancedWinRate * 100).toFixed(0)}% (average of the candidate-longer and candidate-shorter strata)${jj.equalLengthWinRate ? `; at zero length difference the logistic fit gives ${(jj.equalLengthWinRate.rate * 100).toFixed(0)}% (length slope ${jj.equalLengthWinRate.slope.toFixed(2)} on ${jj.equalLengthWinRate.n} decided pairs)` : ''}.`)
+      if (jj.effectiveJudges) report.notes.push(`${c.arm}: the ${jj.effectiveJudges.k}-model panel carries about ${jj.effectiveJudges.nEff.toFixed(1)} independent votes (mean pairwise ${jj.effectiveJudges.basis} correlation ${jj.effectiveJudges.rhoBar.toFixed(2)}); a panel is not as many opinions as it has members.`)
       report.notes.push(`${c.arm}: blinded pairwise judge${models.length > 1 ? ` panel (${models.join(', ')}; majority of decided votes, panel unanimous on ${(j.panelAgreement * 100).toFixed(0)}% of pairs${jj.interJudgeKappa !== null && jj.interJudgeKappa !== undefined ? `, inter-judge κ ${jj.interJudgeKappa.toFixed(2)}` : ''})` : ` (${models[0]})`}, both orders, inconsistent orders count as ties: prefers the candidate on ${j.wins}, the baseline on ${j.losses}, ties ${j.ties} (mid-p ${j.midP.toFixed(2)}); order disagreement ${(j.inconsistentShare * 100).toFixed(0)}% of votes${jj.longerWinsShare !== null && jj.longerWinsShare !== undefined ? `; the longer submission won ${(jj.longerWinsShare * 100).toFixed(0)}% of decided pairs` : ''}${j.humanAgreement ? `; agreement with ${j.humanAgreement.n} human-reviewed pairs ${(j.humanAgreement.agree * 100).toFixed(0)}% (κ ${j.humanAgreement.kappa === null ? '—' : j.humanAgreement.kappa.toFixed(2)})` : '; no human labels to calibrate against yet'}${jj.sameFamilyAsArms ? '. WARNING: the judge shares a model family with the arms; self-preference bias applies' : ''}.`)
     }
     if (absolute) {
@@ -670,7 +671,7 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
       const r = JSON.parse(readFileSync(join(paths.dir, f), 'utf8')) as RerunResult
       const cand = report.candidates.find(c => c.arm === r.candidate)
       if (cand) cand.rerun = r
-      report.notes.push(`${r.candidate}: rerun validation of ${r.scenario} (run ${r.newRunId}, ${r.reps} reruns): ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, first divergence at the same call (${r.original.call}: ${r.original.baseline} vs ${r.original.candidate}) in ${r.sameCall}/${r.reps}` : `no original divergence to validate; ${r.failedAgain}/${r.reps} reruns had exactly one failing arm`} → ${r.verdict}.`)
+      report.notes.push(`${r.candidate}: ${r.fork ? `fork validation of ${r.scenario} from step ${r.fork.step} (identical prefix replayed, live from the divergence)` : `rerun validation of ${r.scenario} (everything resampled)`} — run ${r.newRunId}, ${r.reps} attempts: ${r.original ? `${r.original.failing} failed again in ${r.failedAgain}/${r.reps}, first divergence at the same call (${r.original.call}: ${r.original.baseline} vs ${r.original.candidate}) in ${r.sameCall}/${r.reps}` : `no original divergence to validate; ${r.failedAgain}/${r.reps} attempts had exactly one failing arm`} → ${r.verdict}${r.fork ? '. Compare with the plain rerun to tell a cause from resampling luck.' : ''}`)
     } catch { /* unreadable rerun file */ }
   }
   return report
@@ -680,6 +681,8 @@ export interface RerunResult {
   scenario: string
   candidate: string
   newRunId: string
+  /** Fork mode: the trials replayed the original run's responses up to the divergence and went live from there. */
+  fork?: { sourceRunId: string; forkAt: number; step: number }
   reps: number
   original: { rep: number; call: number; baseline: string; candidate: string; failing: string } | null
   /** Reruns in which the originally failing arm failed again (or, without an original, exactly one arm failed). */
@@ -687,6 +690,24 @@ export interface RerunResult {
   /** Reruns whose first divergence happened at the same call index as the original. */
   sameCall: number
   verdict: 'reproduced' | 'partly reproduced' | 'not reproduced' | 'no original failure'
+}
+
+/**
+ * How many provider responses precede the step that holds the given tool call.
+ * One assistant message is one provider response, so this is the fork point:
+ * replaying that many responses reproduces the trial's prefix exactly, and the
+ * next call is made live (Repair or Resample, 2608.25920: a cause only counts
+ * when the failure recurs from an identical prefix more often than resampling
+ * alone reproduces it).
+ */
+export function forkPointForCall(ledger: RunLedger, call: number): { forkAt: number; step: number } {
+  let seen = 0
+  for (let i = 0; i < ledger.steps.length; i += 1) {
+    const step = ledger.steps[i]!
+    seen += step.calls.length
+    if (seen >= call) return { forkAt: i, step: i + 1 }
+  }
+  return { forkAt: Math.max(0, ledger.steps.length - 1), step: ledger.steps.length }
 }
 
 /** First tool call at which two trials' tool sequences part, and which arm failed (null when both passed or both failed). */
@@ -708,7 +729,7 @@ export function pairDivergence(rb: RunLedger, rc: RunLedger, candidateName: stri
  * first divergence recurs at the same call. The result is stored beside the
  * original run (a derived file, so its seal stays valid) and shown in its report.
  */
-export async function rerunScenario(project: Project, runId: string, scenario: string, options: { repeats?: number; candidate?: string; log?: (line: string) => void; hooks?: LaunchHooks } = {}): Promise<RerunResult> {
+export async function rerunScenario(project: Project, runId: string, scenario: string, options: { repeats?: number; candidate?: string; fork?: boolean; log?: (line: string) => void; hooks?: LaunchHooks } = {}): Promise<RerunResult> {
   const paths = runPaths(project.runsRoot, runId)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${runId} not found`, 'usage')
   const plan = readPlan(paths)
@@ -721,7 +742,17 @@ export async function rerunScenario(project: Project, runId: string, scenario: s
     return null
   })()
   const reps = options.repeats ?? 3
-  const launched = await launchRun(project, { baseline: plan.baseline.name, candidates: [candidate], scenarios: [scenario], repeats: reps, concurrency: 2, label: `rerun:${runId}:${scenario}`, includeHoldout: true, skipSelfcheck: true, sandbox: plan.sandbox === 'docker' ? 'docker' : 'host' }, { ...(options.hooks ?? {}), ...(options.log ? { log: options.log } : {}) })
+  let fork: RerunResult['fork']
+  if (options.fork) {
+    if (original === null) throw new LaunchError(`no failing pair on ${scenario} in run ${runId}: there is no divergence to fork from`, 'usage')
+    const failingLedger = readLedgers(paths).find(l => l.scenario === scenario && l.arm === original.failing && l.rep === original.rep)
+    if (!failingLedger) throw new LaunchError(`the failing trial of ${scenario} is missing from run ${runId}`, 'usage')
+    if (!existsSync(join(paths.dir, 'meter', scenario, original.failing, `rep${original.rep}.responses.jsonl`))) throw new LaunchError(`run ${runId} has no recorded responses for ${scenario} (it ran without the meter), so it cannot be forked`, 'usage')
+    const point = forkPointForCall(failingLedger, original.call)
+    fork = { sourceRunId: runId, ...point }
+    options.log?.(`forking at step ${point.step} (${point.forkAt} recorded responses replayed, then live) — the prefix is identical, only the continuation is resampled`)
+  }
+  const launched = await launchRun(project, { baseline: plan.baseline.name, candidates: [candidate], scenarios: [scenario], repeats: reps, concurrency: 2, label: `rerun${fork ? '-fork' : ''}:${runId}:${scenario}`, includeHoldout: true, skipSelfcheck: true, sandbox: plan.sandbox === 'docker' ? 'docker' : 'host', ...(fork ? { replay: { runId, forkAt: fork.forkAt } } : {}) }, { ...(options.hooks ?? {}), ...(options.log ? { log: options.log } : {}) })
   await launched.done
   const fresh = readLedgers(runPaths(project.runsRoot, launched.id))
   let failedAgain = 0
@@ -736,8 +767,8 @@ export async function rerunScenario(project: Project, runId: string, scenario: s
     if (original !== null && d.failing === original.failing && d.call === original.call) sameCall += 1
   }
   const verdict: RerunResult['verdict'] = original === null ? 'no original failure' : failedAgain === 0 ? 'not reproduced' : failedAgain === reps ? 'reproduced' : 'partly reproduced'
-  const result: RerunResult = { scenario, candidate, newRunId: launched.id, reps, original, failedAgain, sameCall, verdict }
-  writeJsonAtomic(join(paths.dir, `rerun-${scenario}.json`), result)
+  const result: RerunResult = { scenario, candidate, newRunId: launched.id, ...(fork ? { fork } : {}), reps, original, failedAgain, sameCall, verdict }
+  writeJsonAtomic(join(paths.dir, `rerun-${fork ? 'fork-' : ''}${scenario}.json`), result)
   rebuildReport(project, runId)
   return result
 }
