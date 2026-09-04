@@ -69,8 +69,8 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
     return a.length === b.length ? -1 : n
   }, [trial, other])
 
-  if (error) return <p class="error">{error}</p>
-  if (!trial) return <p class="muted">loading…</p>
+  if (error !== null) return <section class="mx-auto max-w-[1400px] px-5 py-5"><div class="uk-alert uk-alert-destructive">{error}</div></section>
+  if (trial === null) return <section class="mx-auto max-w-[1400px] px-5 py-5 text-muted-foreground">loading…</section>
   const { ledger, trace } = trial
   const t = ledger.totals
   const promptMax = Math.max(1, ...trace.map(r => (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)), ...(other?.trace.map(r => (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)) ?? []))
@@ -79,100 +79,188 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
   const durMax = Math.max(1, ...durations.values(), ...otherDurations.values())
   const row = trace[selected]
   const b = ledger.behaviour
+  const outcome = ledger.error !== undefined ? 'error' : ledger.verdict?.ok === true ? 'pass' : 'fail'
+  const outcomeClass = outcome === 'pass' ? 'text-emerald-600' : outcome === 'fail' ? 'text-destructive' : 'text-muted-foreground'
 
   return (
-    <section class="trace">
-      <div class="page-head">
-        <div>
-          <p class="crumbs"><a href={`#/run/${runId}`}>{runId}</a> / <code>{scenario}</code> / <b>{masked ? 'arm ●' : arm}</b> / rep {rep}</p>
+    <section class="mx-auto max-w-[1400px] px-5 py-4 flex flex-col gap-4">
+      {/* what this trial is, and how it ended */}
+      <header class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-xs text-muted-foreground">
+            <a class="hover:text-foreground" href={`#/run/${runId}`}>{runId}</a>
+            <span class="mx-1">/</span><code>{scenario}</code>
+            <span class="mx-1">/</span><b class="text-foreground">{masked ? 'arm ●' : arm}</b>
+            <span class="mx-1">/</span>repeat {rep}
+          </p>
           {masked
-            ? <h1><span class="cls incomplete">blind review</span> <span class="muted small">arm and machine verdict hidden until you save a verdict</span></h1>
-            : <h1><span class={`cls ${ledger.error ? 'incomplete' : ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.error ? 'error' : ledger.verdict?.ok ? 'pass' : 'fail'}</span> <span class="muted small">{ledger.error ?? ledger.verdict?.detail}</span></h1>}
+            ? <h1 class="text-lg font-semibold">Blind review <span class="text-sm font-normal text-muted-foreground">arm and machine verdict hidden until you save a verdict</span></h1>
+            : (
+              <h1 class="text-lg font-semibold flex items-baseline gap-2">
+                <span class={outcomeClass}>{outcome}</span>
+                <span class="text-sm font-normal text-muted-foreground truncate">{ledger.error ?? ledger.verdict?.detail}</span>
+              </h1>
+            )}
         </div>
-        <div class="row">
-          <button class={`btn ${blind ? 'primary' : ''}`} title="hide the arm name and machine verdicts until a verdict is saved (Braintrust-style blind review)" onClick={toggleBlind}>blind review {blind ? 'on' : 'off'}</button>
-          {other && <button class={`btn ${compare ? 'primary' : ''}`} onClick={() => setCompare(!compare)}>{compare ? 'hide' : 'compare'} with {masked ? 'arm ○' : otherArm} <kbd>c</kbd></button>}
-          <a class="btn" href={api.atifUrl(runId, scenario, arm, rep)} target="_blank">ATIF</a>
-          {!STATIC && <a class="btn" title={`start a new run that replays this trial's first ${selected} recorded provider responses, then goes live from this step (OrcaReplay-style fork)`} href={`#/new?replay=${encodeURIComponent(runId)}&forkAt=${selected}&scenario=${encodeURIComponent(scenario)}`}>fork from step {selected + 1}</a>}
-        </div>
-      </div>
-      <div class="card">
-        <div class="cards">
-          <div class="stat"><div class="stat-label">cost</div><div class="stat-vals"><span>{fmt.usd(t.usd)}</span><span class="muted small">peak {fmt.usd(t.usdPeak)} · off-peak {fmt.usd(t.usdOffpeak)}</span></div></div>
-          <div class="stat"><div class="stat-label">steps / turns</div><div class="stat-vals"><span>{t.steps} / {t.turns}</span><span class="muted small">{fmt.secs(ledger.wallMs)} · {ledger.sessions ?? 1} session{(ledger.sessions ?? 1) === 1 ? '' : 's'}</span></div></div>
-          <div class="stat"><div class="stat-label">tokens</div><div class="stat-vals"><TokenBar hit={t.hit} miss={t.miss} output={t.output} /></div><div class="muted small">hit {fmt.k(t.hit)} · miss {fmt.k(t.miss)} · out {fmt.k(t.output)} (reasoning {fmt.k(t.reasoning)}) · peak prompt {fmt.k(t.peakPrompt)}</div></div>
-          <div class="stat"><div class="stat-label">behaviour</div><div class="stat-vals small"><span>{b ? `${b.toolErrors} tool errors · ${b.repeatedCalls} repeated calls · ${b.noActionSteps} no-action · ${fmt.k(b.observationChars)} chars observed · ${b.compactions} compactions` : '—'}</span></div></div>
-          <div class="stat"><div class="stat-label">route</div><div class="stat-vals"><span>{ledger.headerModel ?? ledger.model}</span><span class="muted small">effort {ledger.resolvedEffort ?? 'default'} · {ledger.tools.length} tools · system prompt {fmt.k(ledger.systemPromptChars)} chars</span></div></div>
-        </div>
-        <div class="muted small">tools used: {Object.entries(ledger.toolHistogram).map(([k, v]) => `${k}×${v}`).join(' · ') || 'none'} · keys: <kbd>j</kbd>/<kbd>k</kbd> steps, <kbd>r</kbd> reasoning, <kbd>c</kbd> compare, <kbd>esc</kbd> back</div>
-      </div>
-
-      <div class={`trace-grid ${compare && other ? 'compare' : ''}`}>
-        <div class="card steps">
-          <h2>{arm} <span class="muted small">bars: prompt size (green = cache hit) and wall time per step</span></h2>
-          <StepList trace={trace} selected={selected} onSelect={setSelected} promptMax={promptMax} divergence={compare ? divergence : -1} durations={durations} durMax={durMax} />
-        </div>
-        {compare && other && (
-          <div class="card steps">
-            <h2>{masked ? 'arm ○' : otherArm} <span class="muted small">{masked ? 'verdict hidden' : other.ledger.verdict?.ok ? 'pass' : 'fail'} · {fmt.usd(other.ledger.totals.usd)} · {other.ledger.totals.steps} steps{divergence >= 0 ? ` · diverges at step ${divergence + 1}` : ' · same tool sequence'}</span></h2>
-            <StepList trace={other.trace} selected={compare ? Math.min(selected, other.trace.length - 1) : -1} onSelect={() => { /* mirrors the main selection */ }} promptMax={promptMax} divergence={divergence} durations={otherDurations} durMax={durMax} />
-          </div>
-        )}
-        <div class="card detail">
-          <div class="tabs">
-            {(['step', 'verdict', 'raw'] as Tab[]).map(k => <button class={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{k === 'step' ? 'step' : k === 'verdict' ? 'verdict' : 'raw'}</button>)}
-          </div>
-          {tab === 'verdict' && (
-            <div>
-              <h2>Verdict</h2>
-              {masked
-                ? <p class="muted small">machine verdict hidden (blind review); save your own verdict below to reveal it</p>
-                : <><p><span class={`cls ${ledger.verdict?.ok ? 'same' : 'regression'}`}>{ledger.verdict?.ok ? 'pass' : 'fail'}</span></p>
-                  <pre>{ledger.verdict?.detail ?? '(no verdict)'}</pre></>}
-              {ledger.error && <p class="error">runtime error: {ledger.error}</p>}
-              <p class="muted small">turn ends: {ledger.turns.map(x => `${x.turn}:${x.end}`).join(' · ')}</p>
-              <div class="annotate">
-                <h3>Human review</h3>
-                {annotation && <p class="small"><span class={`cls ${annotation.verdict === null ? 'incomplete' : annotation.verdict ? 'same' : 'regression'}`}>{annotation.verdict === null ? 'note' : annotation.verdict ? 'marked pass' : 'marked fail'}</span> by {annotation.by} at {fmt.time(annotation.at)}{annotation.note ? ` — ${annotation.note}` : ''}</p>}
-                <textarea rows={2} placeholder="why (kept with the run, shown in the report)" value={note} onInput={e => setNote((e.target as HTMLTextAreaElement).value)} />
-                <div class="row">
-                  <button class="btn" disabled={saving} onClick={() => void annotate(true)}>mark pass</button>
-                  <button class="btn" disabled={saving} onClick={() => void annotate(false)}>mark fail</button>
-                  <button class="btn" disabled={saving} onClick={() => void annotate(null)}>note only</button>
-                  {annotation && <button class="btn small" disabled={saving} onClick={() => void annotate(null, true)}>remove</button>}
-                </div>
-                <p class="muted small">Overrides replace the verdict in the report (the machine verdict stays in the ledger and the report says how many were overridden).</p>
-              </div>
-              {compare && other && !masked && <p class="muted small">{otherArm}: <span class={`cls ${other.ledger.verdict?.ok ? 'same' : 'regression'}`}>{other.ledger.verdict?.ok ? 'pass' : 'fail'}</span> {other.ledger.verdict?.detail}</p>}
-            </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button class={`uk-btn uk-btn-sm ${blind ? 'uk-btn-primary' : 'uk-btn-default'}`} title="hide the arm name and the machine verdict until you have recorded your own" onClick={toggleBlind}>blind review {blind ? 'on' : 'off'}</button>
+          {other !== null && <button class={`uk-btn uk-btn-sm ${compare ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setCompare(!compare)}>{compare ? 'hide' : 'compare with'} {masked ? 'arm ○' : otherArm}</button>}
+          <a class="uk-btn uk-btn-default uk-btn-sm" href={api.atifUrl(runId, scenario, arm, rep)} target="_blank">ATIF</a>
+          {STATIC === undefined && (
+            <a class="uk-btn uk-btn-default uk-btn-sm" title="start a run that replays this trial up to here, then goes live from this step" href={`#/new?replay=${encodeURIComponent(runId)}&forkAt=${selected}&scenario=${encodeURIComponent(scenario)}`}>fork from step {selected + 1}</a>
           )}
-          {tab === 'raw' && <div><h2>Ledger</h2><pre>{JSON.stringify({ ...ledger, steps: `${ledger.steps.length} steps (see step tab)` }, null, 2)}</pre></div>}
-          {tab === 'step' && (row ? (
-            <>
-              <h2>Turn {row.turn} · step {row.step} <span class="muted small">{new Date(row.time).toLocaleTimeString()} · {fmt.usd(row.usd)}{row.usage ? ` · hit ${fmt.k(row.usage.hit)} miss ${fmt.k(row.usage.miss)} out ${fmt.k(row.usage.output)}` : ''}</span></h2>
-              {row.reasoning && <div class="reasoning"><button class="btn small" onClick={() => setShowReasoning(!showReasoning)}>{showReasoning ? 'hide' : 'show'} reasoning ({fmt.k(row.reasoning.length)} chars)</button>{showReasoning && <pre>{row.reasoning}</pre>}</div>}
-              {row.text && <pre class="assistant">{row.text}</pre>}
-              {row.calls.map((c, i) => {
-                const obs = row.observations?.[i]
-                const open = openObs.has(i)
-                return (
-                  <div class="call">
-                    <div class="call-head"><code>{c.name}</code>{obs ? <span class={`muted small ${obs.isError ? 'error' : ''}`}> → {obs.isError ? 'error · ' : ''}{fmt.k(obs.chars)} chars</span> : null}</div>
-                    <pre>{pretty(c.arguments)}</pre>
-                    {obs && (
-                      <div class="obs">
-                        <button class="btn small" onClick={() => { const n = new Set(openObs); if (open) n.delete(i); else n.add(i); setOpenObs(n) }}>{open ? 'hide' : 'show'} result</button>
-                        {open && <pre class={obs.isError ? 'obs-err' : ''}>{obs.text || '(empty)'}</pre>}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </>
-          ) : <p class="muted">no steps</p>)}
         </div>
+      </header>
+
+      {/* the trial's facts, one line each */}
+      <section class="uk-card">
+        <div class="uk-card-body py-3 grid gap-3 md:grid-cols-3 lg:grid-cols-5 text-sm">
+          <Fact label="cost" value={fmt.usd(t.usd)} hint={`peak ${fmt.usd(t.usdPeak)} · off-peak ${fmt.usd(t.usdOffpeak)}`} />
+          <Fact label="steps / turns" value={`${t.steps} / ${t.turns}`} hint={`${fmt.secs(ledger.wallMs)} · ${ledger.sessions ?? 1} session${(ledger.sessions ?? 1) === 1 ? '' : 's'}`} />
+          <div>
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground">tokens</div>
+            <TokenBar hit={t.hit} miss={t.miss} output={t.output} />
+            <div class="text-xs text-muted-foreground">hit {fmt.k(t.hit)} · miss {fmt.k(t.miss)} · out {fmt.k(t.output)} · peak prompt {fmt.k(t.peakPrompt)}</div>
+          </div>
+          <Fact label="route" value={ledger.headerModel ?? ledger.model} hint={`effort ${ledger.resolvedEffort ?? 'default'} · ${ledger.tools.length} tools`} />
+          <Fact
+            label="behaviour"
+            value={b ? `${b.toolErrors} tool error${b.toolErrors === 1 ? '' : 's'}` : '—'}
+            hint={b ? `${b.repeatedCalls} repeated · ${b.noActionSteps} no-action · ${fmt.k(b.observationChars)} chars read · ${b.compactions} compactions` : ''}
+          />
+        </div>
+        <div class="uk-card-footer py-2 text-xs text-muted-foreground">
+          tools: {Object.entries(ledger.toolHistogram).map(([k, v]) => `${k}×${v}`).join(' · ') || 'none'}
+          <span class="mx-2">·</span>
+          <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>r</kbd> reasoning, <kbd>c</kbd> compare, <kbd>esc</kbd> back
+        </div>
+      </section>
+
+      <div class={`grid gap-4 ${compare && other !== null ? 'trace-grid-compare' : 'trace-grid'}`}>
+        <section class="uk-card min-w-0">
+          <div class="uk-card-header py-2">
+            <h2 class="uk-card-title text-sm">{masked ? 'this arm' : arm}</h2>
+            <p class="text-xs text-muted-foreground">bars: prompt size, green is cache hit; the thin bar is wall time</p>
+          </div>
+          <div class="uk-card-body py-1">
+            <StepList trace={trace} selected={selected} onSelect={setSelected} promptMax={promptMax} divergence={compare ? divergence : -1} durations={durations} durMax={durMax} />
+          </div>
+        </section>
+
+        {compare && other !== null && (
+          <section class="uk-card min-w-0">
+            <div class="uk-card-header py-2">
+              <h2 class="uk-card-title text-sm">{masked ? 'other arm' : otherArm}</h2>
+              <p class="text-xs text-muted-foreground">
+                {masked ? 'verdict hidden' : other.ledger.verdict?.ok === true ? 'passed' : 'failed'} · {fmt.usd(other.ledger.totals.usd)} · {other.ledger.totals.steps} steps
+                {divergence >= 0 ? ` · parts from this arm at step ${divergence + 1}` : ' · same tool sequence throughout'}
+              </p>
+            </div>
+            <div class="uk-card-body py-1">
+              <StepList trace={other.trace} selected={Math.min(selected, other.trace.length - 1)} onSelect={setSelected} promptMax={promptMax} divergence={divergence} durations={otherDurations} durMax={durMax} />
+            </div>
+          </section>
+        )}
+
+        <section class="uk-card min-w-0">
+          <div class="uk-card-header py-2 flex items-center gap-1">
+            {(['step', 'verdict', 'raw'] as Tab[]).map(k => (
+              <button key={k} class={`uk-btn uk-btn-sm ${tab === k ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setTab(k)}>{k}</button>
+            ))}
+          </div>
+          <div class="uk-card-body py-3 detail-pane">
+            {tab === 'verdict' && (
+              <div class="flex flex-col gap-3">
+                {masked
+                  ? <p class="text-sm text-muted-foreground">The machine verdict is hidden. Record your own below to reveal it.</p>
+                  : (
+                    <div>
+                      <div class={`text-sm font-medium ${ledger.verdict?.ok === true ? 'text-emerald-600' : 'text-destructive'}`}>{ledger.verdict?.ok === true ? 'passed the verifier' : 'failed the verifier'}</div>
+                      <pre class="mt-1 text-xs whitespace-pre-wrap">{ledger.verdict?.detail ?? '(no verdict)'}</pre>
+                    </div>
+                  )}
+                {ledger.error !== undefined && <div class="uk-alert uk-alert-destructive text-sm">runtime error: {ledger.error}</div>}
+                <p class="text-xs text-muted-foreground">turn ends: {ledger.turns.map(x => `${x.turn}:${x.end}`).join(' · ')}</p>
+
+                <div class="rounded-md border border-border p-3 flex flex-col gap-2">
+                  <h3 class="text-sm font-medium">Human review</h3>
+                  {annotation !== null && (
+                    <p class="text-xs">
+                      <span class={`cls ${annotation.verdict === null ? 'incomplete' : annotation.verdict ? 'same' : 'regression'}`}>{annotation.verdict === null ? 'note' : annotation.verdict ? 'marked pass' : 'marked fail'}</span>
+                      {' '}by {annotation.by} at {fmt.time(annotation.at)}{annotation.note !== '' ? ` — ${annotation.note}` : ''}
+                    </p>
+                  )}
+                  <textarea class="uk-textarea text-sm" rows={2} placeholder="why — kept with the run and quoted in the report" value={note} onInput={e => setNote((e.target as HTMLTextAreaElement).value)} />
+                  <div class="flex flex-wrap gap-2">
+                    <button class="uk-btn uk-btn-default uk-btn-sm" disabled={saving} onClick={() => void annotate(true)}>mark pass</button>
+                    <button class="uk-btn uk-btn-default uk-btn-sm" disabled={saving} onClick={() => void annotate(false)}>mark fail</button>
+                    <button class="uk-btn uk-btn-default uk-btn-sm" disabled={saving} onClick={() => void annotate(null)}>note only</button>
+                    {annotation !== null && <button class="uk-btn uk-btn-default uk-btn-sm" disabled={saving} onClick={() => void annotate(null, true)}>remove</button>}
+                  </div>
+                  <p class="text-xs text-muted-foreground">An override replaces the verdict in the report. The machine verdict stays in the ledger, and the report says how many were overridden.</p>
+                </div>
+
+                {compare && other !== null && !masked && (
+                  <p class="text-xs text-muted-foreground">{otherArm}: <span class={other.ledger.verdict?.ok === true ? 'text-emerald-600' : 'text-destructive'}>{other.ledger.verdict?.ok === true ? 'passed' : 'failed'}</span> {other.ledger.verdict?.detail}</p>
+                )}
+              </div>
+            )}
+
+            {tab === 'raw' && <pre class="text-xs whitespace-pre-wrap">{JSON.stringify({ ...ledger, steps: `${ledger.steps.length} steps — see the step tab` }, null, 2)}</pre>}
+
+            {tab === 'step' && (row === undefined ? <p class="text-sm text-muted-foreground">no steps</p> : (
+              <div class="flex flex-col gap-3">
+                <div>
+                  <h2 class="text-sm font-medium">Turn {row.turn} · step {row.step}</h2>
+                  <p class="text-xs text-muted-foreground">
+                    {new Date(row.time).toLocaleTimeString()} · {fmt.usd(row.usd)}
+                    {row.usage ? ` · hit ${fmt.k(row.usage.hit)} miss ${fmt.k(row.usage.miss)} out ${fmt.k(row.usage.output)}` : ''}
+                  </p>
+                </div>
+                {row.reasoning !== undefined && row.reasoning !== '' && (
+                  <div>
+                    <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setShowReasoning(!showReasoning)}>{showReasoning ? 'hide' : 'show'} reasoning · {fmt.k(row.reasoning.length)} chars</button>
+                    {showReasoning && <pre class="mt-2 text-xs whitespace-pre-wrap text-muted-foreground">{row.reasoning}</pre>}
+                  </div>
+                )}
+                {row.text !== undefined && row.text !== '' && <pre class="text-xs whitespace-pre-wrap rounded-md bg-muted p-2">{row.text}</pre>}
+                {row.calls.map((c, i) => {
+                  const obs = row.observations?.[i]
+                  const open = openObs.has(i)
+                  return (
+                    <article key={`${c.name}-${i}`} class="rounded-md border border-border">
+                      <div class="flex items-center justify-between gap-2 border-b border-border px-2 py-1.5">
+                        <code class="text-xs font-medium">{c.name}</code>
+                        {obs !== undefined && (
+                          <span class={`text-xs ${obs.isError ? 'text-destructive' : 'text-muted-foreground'}`}>{obs.isError ? 'error · ' : ''}{fmt.k(obs.chars)} chars back</span>
+                        )}
+                      </div>
+                      <pre class="px-2 py-1.5 text-xs whitespace-pre-wrap">{pretty(c.arguments)}</pre>
+                      {obs !== undefined && (
+                        <div class="border-t border-border px-2 py-1.5">
+                          <button class="uk-btn uk-btn-default uk-btn-xs" onClick={() => { const n = new Set(openObs); if (open) n.delete(i); else n.add(i); setOpenObs(n) }}>{open ? 'hide' : 'show'} what came back</button>
+                          {open && <pre class={`mt-2 text-xs whitespace-pre-wrap ${obs.isError ? 'text-destructive' : ''}`}>{obs.text === '' ? '(empty)' : obs.text}</pre>}
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </section>
+  )
+}
+
+function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div>
+      <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div class="font-medium">{value}</div>
+      {hint !== undefined && hint !== '' && <div class="text-xs text-muted-foreground">{hint}</div>}
+    </div>
   )
 }
 
@@ -182,18 +270,30 @@ function StepList({ trace, selected, onSelect, promptMax, divergence, durations,
   trace.forEach((r, i) => { if (r.turn !== lastTurn) { turnStarts.add(i); lastTurn = r.turn } })
   return (
     <ol class="steplist">
-      <VirtualRows items={trace} rowHeight={28} height={560} threshold={200} render={(r, i) => {
+      <VirtualRows items={trace} rowHeight={30} height={520} threshold={200} render={(r, i) => {
         const prompt = (r.usage?.hit ?? 0) + (r.usage?.miss ?? 0)
         const hitPct = prompt > 0 ? (r.usage?.hit ?? 0) / prompt * 100 : 0
-        const turnStart = turnStarts.has(i)
         const errs = (r.observations ?? []).filter(o => o.isError).length
+        const dur = durations.get(`${r.turn}/${r.step}`) ?? 0
         return (
           <>
-            {turnStart && <li class="turn-sep">turn {r.turn}</li>}
-            <li class={`${i === selected ? 'sel' : ''} ${i === divergence ? 'diverge' : ''}`} onClick={() => onSelect(i)} ref={(el) => { if (i === selected) el?.scrollIntoView({ block: 'nearest' }) }}>
+            {turnStarts.has(i) && <li class="turn-sep">turn {r.turn}</li>}
+            <li
+              class={`step-row ${i === selected ? 'sel' : ''} ${i === divergence ? 'diverge' : ''}`}
+              onClick={() => onSelect(i)}
+              ref={(el) => { if (i === selected) el?.scrollIntoView({ block: 'nearest' }) }}
+            >
               <span class="step-no">{r.step}</span>
-              <span class="step-calls">{r.calls.length ? r.calls.map(c => <code>{c.name}</code>) : <span class="muted">{r.text ? r.text.slice(0, 60) : '…'}</span>}{errs ? <span class="tag warn">{errs} err</span> : null}</span>
-              <span class="spark" title={`prompt ${fmt.k(prompt)} tokens, ${hitPct.toFixed(0)}% cache hit`}><i style={{ width: `${prompt / promptMax * 100}%` }}><b style={{ width: `${hitPct}%` }} /></i>{(durations.get(`${r.turn}/${r.step}`) ?? 0) > 0 && <em class="dur" title={`${((durations.get(`${r.turn}/${r.step}`) ?? 0) / 1000).toFixed(1)}s wall`} style={{ width: `${(durations.get(`${r.turn}/${r.step}`) ?? 0) / durMax * 100}%` }} />}</span>
+              <span class="step-calls">
+                {r.calls.length > 0
+                  ? r.calls.map(c => <code key={c.name}>{c.name}</code>)
+                  : <span class="text-muted-foreground">{r.text !== undefined && r.text !== '' ? r.text.slice(0, 60) : '…'}</span>}
+                {errs > 0 && <span class="tag">{errs} err</span>}
+              </span>
+              <span class="spark" title={`prompt ${fmt.k(prompt)} tokens, ${hitPct.toFixed(0)}% from cache${dur > 0 ? `, ${(dur / 1000).toFixed(1)}s` : ''}`}>
+                <i style={{ width: `${prompt / promptMax * 100}%` }}><b style={{ width: `${hitPct}%` }} /></i>
+                {dur > 0 && <em style={{ width: `${dur / durMax * 100}%` }} />}
+              </span>
               <span class="step-cost">{fmt.usd(r.usd)}</span>
             </li>
           </>
@@ -205,7 +305,13 @@ function StepList({ trace, selected, onSelect, promptMax, divergence, durations,
 
 function TokenBar({ hit, miss, output }: { hit: number; miss: number; output: number }) {
   const total = Math.max(1, hit + miss + output)
-  return <span class="tokenbar" title={`hit ${hit} · miss ${miss} · output ${output}`}><i class="hit" style={{ width: `${hit / total * 100}%` }} /><i class="miss" style={{ width: `${miss / total * 100}%` }} /><i class="out" style={{ width: `${output / total * 100}%` }} /></span>
+  return (
+    <span class="tokenbar" title={`hit ${hit} · miss ${miss} · output ${output}`}>
+      <i class="hit" style={{ width: `${hit / total * 100}%` }} />
+      <i class="miss" style={{ width: `${miss / total * 100}%` }} />
+      <i class="out" style={{ width: `${output / total * 100}%` }} />
+    </span>
+  )
 }
 
 function pretty(args: string): string {
