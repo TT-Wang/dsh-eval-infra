@@ -45,6 +45,31 @@ export interface Project {
   bundledScenarioRoot: string
 }
 
+/**
+ * Bundles a profile activates for every arm. A plugin that declares `dsh.bundle`
+ * is added here the moment it is installed, which puts it in both arms of every
+ * comparison and makes it impossible to measure. `setProfileBundles` is how an
+ * eval project takes it back out while keeping the package installed, so an arm
+ * can still reference it.
+ */
+export function profileBundles(evalHome: string, profile: string): string[] {
+  const manifest = join(evalHome, 'profiles', profile, 'package.json')
+  if (!existsSync(manifest)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    return parsed.dsh?.profile?.bundles ?? []
+  } catch { return [] }
+}
+
+export function setProfileBundles(evalHome: string, profile: string, bundles: string[]): void {
+  const manifest = join(evalHome, 'profiles', profile, 'package.json')
+  const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as Record<string, unknown>
+  const dsh = (parsed['dsh'] ?? {}) as Record<string, unknown>
+  const prof = (dsh['profile'] ?? {}) as Record<string, unknown>
+  parsed['dsh'] = { ...dsh, profile: { ...prof, bundles } }
+  writeFileSync(manifest, JSON.stringify(parsed, null, 2) + '\n')
+}
+
 export const DEFAULT_CONFIG: ProjectConfig = { profile: 'eval', repeats: 3, concurrency: 2 }
 
 /** The scenario library shipped with this package. */

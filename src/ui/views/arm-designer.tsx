@@ -280,7 +280,7 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
                 draggable
                 onDragStart={(e) => { e.dataTransfer?.setData('text/plain', p.name); e.dataTransfer!.effectAllowed = 'copy' }}
                 onDblClick={() => addPlugin(p)}
-                title={`${p.path}\ndouble-click or drag into arm B`}
+                title={`${p.path}${(p.duplicates ?? []).length > 0 ? `\n${(p.duplicates ?? []).length} other copy(s) on this machine were hidden:\n${(p.duplicates ?? []).join('\n')}` : ''}\ndouble-click or drag into arm B`}
               >
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-sm font-medium truncate">{p.rowId}</span>

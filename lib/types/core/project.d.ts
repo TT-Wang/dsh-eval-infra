@@ -38,6 +38,15 @@ export interface Project {
     scenarioRoot: string;
     bundledScenarioRoot: string;
 }
+/**
+ * Bundles a profile activates for every arm. A plugin that declares `dsh.bundle`
+ * is added here the moment it is installed, which puts it in both arms of every
+ * comparison and makes it impossible to measure. `setProfileBundles` is how an
+ * eval project takes it back out while keeping the package installed, so an arm
+ * can still reference it.
+ */
+export declare function profileBundles(evalHome: string, profile: string): string[];
+export declare function setProfileBundles(evalHome: string, profile: string, bundles: string[]): void;
 export declare const DEFAULT_CONFIG: ProjectConfig;
 /** The scenario library shipped with this package. */
 export declare function bundledScenarioRoot(): string;

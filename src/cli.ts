@@ -20,7 +20,7 @@ import { join, resolve } from 'node:path'
 import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
 import { describeDiff, prepareArms } from './core/plan.js'
-import { ensureEvalProfile, loadProject, saveProjectConfig, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
+import { ensureEvalProfile, loadProject, profileBundles, saveProjectConfig, setProfileBundles, STARTER_BASELINE, starterCandidate, type Project } from './core/project.js'
 import { fmtPct, fmtUsd, renderMarkdown, type Report } from './core/report.js'
 import { selfcheckAll } from './core/selfcheck.js'
 import { listRuns, readJson, readLedgers, readPlan, runPaths } from './core/store.js'
@@ -35,7 +35,7 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry'])
+const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -120,10 +120,28 @@ async function cmdInit(project: Project, args: Args): Promise<number> {
 
 async function cmdAdd(project: Project, args: Args): Promise<number> {
   const spec = args.positional[0]
-  if (spec === undefined) { err('usage: dsh-eval add <path|package>'); return 3 }
+  if (spec === undefined) { err('usage: dsh-eval add <path|package> [--activate]'); return 3 }
   ensureEvalProfile(project.home, project.config.profile)
   const target = existsSync(resolve(spec)) ? resolve(spec) : spec
-  return runDsh(['plugin', '--profile', project.config.profile, 'add', target], { DSH_HOME: project.home })
+  const before = profileBundles(project.home, project.config.profile)
+  const code = await runDsh(['plugin', '--profile', project.config.profile, 'add', target], { DSH_HOME: project.home })
+  if (code !== 0) return code
+  // A plugin that declares `dsh.bundle` becomes a profile layer the moment it is
+  // installed, which puts it in *both* arms and makes it impossible to measure.
+  // An evaluation project wants it installed but inert, so an arm can add it.
+  const after = profileBundles(project.home, project.config.profile)
+  const activated = after.filter(b => !before.includes(b))
+  if (activated.length === 0) return 0
+  if (args.flags['activate'] === true) {
+    out(`${activated.join(', ')} activated for every arm in the ${project.config.profile} profile`)
+    return 0
+  }
+  setProfileBundles(project.home, project.config.profile, before)
+  out('')
+  for (const name of activated) out(`${name} declares a bundle, so installing it would have switched it on for every arm.`)
+  out('It is installed but left inert, which is what an A/B comparison needs: add it to one arm and the other stays without it.')
+  out(`Pass --activate to make it part of the baseline instead.`)
+  return 0
 }
 
 function scenarioFilter(args: Args): { scenarios: string[]; categories: string[]; tags: string[]; includeHoldout?: boolean } {
@@ -468,7 +486,7 @@ function help(): number {
 
 SET UP
   init [--plugin <path|pkg>]...       create .dsh-eval/home + eval profile, add plugins, write starter arms
-  add <path|pkg>                      add a plugin to the eval profile
+  add <path|pkg> [--activate]         install a plugin into the eval profile; a bundle plugin is left inert so an arm can be the thing that adds it (--activate puts it in every arm)
   scenarios [globs] [--category c]    list scenarios
   selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
   diff <baseline> <candidate>...      composed-tree diff between arms

@@ -55,7 +55,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
-export interface PluginInfo { name: string; version?: string; description?: string; path: string; source: 'profile' | 'local' | 'global'; installed: boolean; bundle: boolean; bundlePatch?: string; replaces?: string[]; inserts?: string[]; client: boolean; rowId: string }
+export interface PluginInfo { name: string; version?: string; description?: string; path: string; source: 'profile' | 'local' | 'global'; installed: boolean; bundle: boolean; bundlePatch?: string; replaces?: string[]; inserts?: string[]; client: boolean; rowId: string; duplicates?: string[] }
 export interface Preflight {
   arm: string; baseline: string; ok: boolean
   stages: Array<{ name: 'compose' | 'mounted' | 'runs'; ok: boolean; detail: string }>

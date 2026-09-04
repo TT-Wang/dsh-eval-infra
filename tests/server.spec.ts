@@ -289,3 +289,32 @@ describe('replacement plugins', () => {
     expect(armToYaml(design)).toContain(`patchFiles:\n  - ${file}`)
   })
 })
+
+describe('profile bundles', () => {
+  it('reads and rewrites the bundle list a profile activates', async () => {
+    const { profileBundles, setProfileBundles, ensureEvalProfile } = await import('../src/core/project.js')
+    const { mkdtempSync, readFileSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const home = mkdtempSync(join(tmpdir(), 'dsh-eval-home-'))
+    ensureEvalProfile(home, 'eval')
+    const manifest = join(home, 'profiles', 'eval', 'package.json')
+    const base = profileBundles(home, 'eval')
+    expect(base.length).toBeGreaterThan(0)
+
+    // what installing a bundle plugin does, and what taking it back out must restore
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as { dsh: { profile: { bundles: string[]; patchReload?: string } } }
+    const activated = [...base, '@x/replacement']
+    setProfileBundles(home, 'eval', activated)
+    expect(profileBundles(home, 'eval')).toEqual(activated)
+    setProfileBundles(home, 'eval', base)
+    expect(profileBundles(home, 'eval')).toEqual(base)
+    // the rest of the manifest survives the rewrite
+    const after = JSON.parse(readFileSync(manifest, 'utf8')) as { name: string; dsh: { profile: { patchReload?: string } } }
+    expect(after.name).toBe(parsed === null ? '' : (JSON.parse(readFileSync(manifest, 'utf8')) as { name: string }).name)
+    expect(after.dsh.profile.patchReload).toBe(parsed.dsh.profile.patchReload)
+    expect(profileBundles(join(home, 'nope'), 'eval')).toEqual([])
+    writeFileSync(manifest, 'not json')
+    expect(profileBundles(home, 'eval')).toEqual([])
+  })
+})

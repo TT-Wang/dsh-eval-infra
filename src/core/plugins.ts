@@ -60,6 +60,8 @@ export interface DiscoveredPlugin {
   client: boolean
   /** Suggested row id for an insert patch. */
   rowId: string
+  /** Other copies of the same plugin found on this machine, hidden behind this one. */
+  duplicates?: string[]
 }
 
 /** Row id conventionally derived from a package name: the last segment without the dsh- prefix. */
@@ -110,6 +112,11 @@ function describe(dir: string, source: DiscoveredPlugin['source'], installedName
     client: dsh['client'] !== undefined,
     rowId: rowIdFor(name),
   }
+}
+
+/** Which copy of a plugin to offer: installed first, then one that declares its own patch, then the shortest path. */
+function rank(p: DiscoveredPlugin): number {
+  return (p.installed ? 100 : 0) + (p.bundlePatch !== undefined ? 10 : 0) + (p.source === 'profile' ? 5 : 0) - Math.min(4, p.path.split('/').length / 10)
 }
 
 /** Package directories one level under a root, including one level of scope directories. */
@@ -165,5 +172,17 @@ export function discoverPlugins(options: DiscoverOptions = {}): DiscoveredPlugin
   const globalRoot = options.globalRoot ?? [join(home, '.local', 'lib', 'node_modules'), '/usr/local/lib/node_modules'].find(existsSync)
   if (globalRoot !== undefined) for (const dir of packageDirs(globalRoot)) consider(dir, 'global')
 
-  return [...found.values()].sort((a, b) => (Number(b.installed) - Number(a.installed)) || a.name.localeCompare(b.name))
+  // Working copies and audit worktrees of one plugin appear under different package
+  // names but occupy the same row. Offering both invites picking the stale one, which
+  // composes fine and then fails at load, so only the best copy is shown.
+  const byRow = new Map<string, DiscoveredPlugin>()
+  for (const plugin of found.values()) {
+    const seen = byRow.get(plugin.rowId)
+    if (seen === undefined) { byRow.set(plugin.rowId, plugin); continue }
+    const better = rank(plugin) > rank(seen) ? plugin : seen
+    const worse = better === plugin ? seen : plugin
+    better.duplicates = [...(better.duplicates ?? []), ...(worse.duplicates ?? []), worse.path]
+    byRow.set(plugin.rowId, better)
+  }
+  return [...byRow.values()].sort((a, b) => (Number(b.installed) - Number(a.installed)) || a.name.localeCompare(b.name))
 }

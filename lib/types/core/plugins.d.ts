@@ -29,6 +29,8 @@ export interface DiscoveredPlugin {
     client: boolean;
     /** Suggested row id for an insert patch. */
     rowId: string;
+    /** Other copies of the same plugin found on this machine, hidden behind this one. */
+    duplicates?: string[];
 }
 /** Row id conventionally derived from a package name: the last segment without the dsh- prefix. */
 export declare function rowIdFor(name: string): string;
