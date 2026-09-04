@@ -241,3 +241,16 @@ fork  : 2 trials served 6 recorded responses and forked to live calls after 3 (1
 ```
 
 A whole run re-executes from its recordings without a key and without spend, and a fork replays an identical prefix before going live, which is what The Replay Gap (2608.08239) says a fork must do.
+
+### probe-gated run (2026-09-04, label probe-gated-3)
+
+`run --probe` on two scenarios: the battery runs before the trials, the verdict is stored with the run and the report carries it.
+
+```
+probe: matches (distance 0.213, p = 0.323) · $0.0153
+✓ f6_csv_reconcile/fold#1 · $0.0073 · 8 steps · 15s   (4 trials, all passed)
+- Usage provenance: 4/4 trials reconciled against the independent wire meter (38 provider requests).
+- Served-model probe: 8 answers on each of 12 probes vs the reference enrolled 2026-09-04: distance 0.213, p = 0.323 → matches.
+```
+
+A first attempt at this run exposed another flaw worth keeping: one transient `fetch failed` inside the pre-flight battery aborted the entire run. A check must never be able to do that, so probe calls now retry, a battery that cannot be collected reports `not-completed` (explicitly not evidence either way), and the run continues with the report saying the check was not made.
