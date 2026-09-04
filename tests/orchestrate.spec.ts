@@ -232,3 +232,19 @@ describe('signed receipts', () => {
     expect(verifyRunIntegrity(p, launched.id).status).toBe('INCONCLUSIVE')
   })
 })
+
+describe('cli entry point', () => {
+  it('runs when invoked through a symlinked global bin, not only by its own filename', async () => {
+    const { execFile } = await import('node:child_process')
+    const { mkdtempSync, symlinkSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join, resolve } = await import('node:path')
+    const cli = resolve('lib/cli.js')
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-eval-bin-'))
+    const link = join(dir, 'dsh-eval')          // what `npm link` creates: a differently named symlink
+    symlinkSync(cli, link)
+    const run = (path: string): Promise<string> => new Promise((res, rej) => execFile(process.execPath, [path, 'version'], (e, stdout) => (e ? rej(e) : res(stdout.trim()))))
+    expect(await run(link)).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(await run(cli)).toBe(await run(link))
+  })
+})

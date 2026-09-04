@@ -14,7 +14,8 @@
  *   dsh-eval export <runId> [--out dir]      ATIF trajectories of every trial
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync , cpSync} from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, cpSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
@@ -513,7 +514,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && /cli\.(js|ts)$/.test(process.argv[1])
+// True when this file is the process entry point. argv[1] is the path as invoked, which is a symlink
+// under a global bin directory (`dsh-eval`) and the source path under tsx, so both sides are resolved.
+const invokedDirectly = ((): boolean => {
+  const argv1 = process.argv[1]
+  if (argv1 === undefined) return false
+  try { return realpathSync(argv1) === realpathSync(fileURLToPath(import.meta.url)) } catch { return /cli\.(js|ts)$/.test(argv1) }
+})()
 if (invokedDirectly) {
   main().then((code) => { process.exitCode = code }).catch((error: unknown) => { err(error instanceof Error ? error.stack ?? error.message : String(error)); process.exitCode = 1 })
 }
