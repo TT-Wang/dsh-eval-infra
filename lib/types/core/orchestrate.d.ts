@@ -1,7 +1,7 @@
 import { prepareArms, type ArmDiff } from './plan.js';
 import { type Project } from './project.js';
 import { type NoiseFloor, type Report } from './report.js';
-import { type VerifyResult } from './manifest.js';
+import { type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js';
 import { type ProbeVerdict } from './probe.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
@@ -139,6 +139,21 @@ export declare function runJudge(project: Project, id: string, options?: JudgeOp
 /** Absolute judge report stored with a run, if any. */
 export declare function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('./judge.js').AbsoluteReport | null;
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+/** The analysis contract this tool applies; fixed by the code and the plan, not chosen after seeing the data. */
+export declare function analysisContract(plan: RunPlan): AnalysisContract;
+/** Seal the evidence and issue a signed receipt carrying the contract, the claims and the coverage counts. */
+export declare function sealAndIssue(project: Project, paths: ReturnType<typeof runPaths>, plan: RunPlan, report: Report): RunReceipt;
+/**
+ * Status of a run's claims (ClaimReceipt semantics): INVALID when the evidence
+ * or the signature is broken or the report no longer follows from the ledgers;
+ * INCONCLUSIVE when nothing is falsified but there is no receipt, or the run's
+ * own evidence is incomplete (unrun trials, errors, or usage that never
+ * reconciled); PASS when the signed claims recompute from intact evidence.
+ */
+export declare function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null): {
+    status: ReceiptStatus;
+    reason: string;
+};
 export declare function probeOf(paths: ReturnType<typeof runPaths>): {
     probe?: ProbeVerdict;
 };

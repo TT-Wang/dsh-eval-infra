@@ -319,7 +319,8 @@ function cmdPublish(project: Project, args: Args): number {
     `Run \`${id}\`, sealed ${v.sealedAt ?? '(unsealed)'}; evidence sha256 \`${v.evidenceSha ?? '—'}\`.`, '',
     'Every evidence file (plan, environment, arms, ledgers, events, traces, meter ledgers, artifacts) is listed with its sha256 in `manifest.json`, and `report.json` / `report.md` / `report.html` are derived from those files. To check that nothing was altered and that the report follows from the evidence:', '',
     '```bash', `dsh-eval verify ${outDir}`, '```', '',
-    'The command recomputes every hash, lists missing or changed files, re-derives the report from the ledgers and compares its readings (gate, cost reading, grade, verdict) with the stored report. Exit code 0 means the bundle verifies.', '',
+    'The command recomputes every hash, lists missing or changed files, re-derives the report from the ledgers, compares its readings with the stored report, and checks the signed receipt. It answers PASS (signed claims recompute from intact evidence, exit 0), INVALID (evidence, signature or derivation broken, exit 1) or INCONCLUSIVE (nothing falsified, but the run has no contract or its evidence is incomplete, exit 2).', '',
+    '`receipt.json` carries the analysis contract (estimand, pairing, estimator, α, SESOI, seed, gate order), the claims, the coverage counts and an Ed25519 signature over all of it; `manifest.json` carries the same contract and every evidence hash.', '',
     'Meter ledgers under `meter/` carry a hash chain per trial (`prev`/`hash`), and `*.responses.jsonl` files hold the recorded provider responses so the run can be replayed without a key: `dsh-eval run --replay <runId> …` from a project that contains this run directory under `.dsh-eval/runs/`.', '',
   ].join('\n'))
   out(`bundle → ${outDir}`)
@@ -340,8 +341,8 @@ function cmdVerify(project: Project, args: Args): number {
   if (v.reportReproduces === null) out('  report: none stored')
   else if (v.reportReproduces) out('  report: reproduces from the sealed ledgers')
   else { out('  report: DOES NOT reproduce from the ledgers'); for (const d of v.reportDiff) out(`    ${d}`) }
-  out(v.ok ? '  OK' : '  FAILED')
-  return v.ok ? 0 : 1
+  out(`  ${v.status ?? (v.ok ? 'PASS' : 'INVALID')} — ${v.statusReason ?? ''}`)
+  return v.status === 'INVALID' || !v.ok ? 1 : v.status === 'INCONCLUSIVE' ? 2 : 0
 }
 
 async function cmdRegrade(project: Project, args: Args): Promise<number> {

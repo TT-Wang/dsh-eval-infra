@@ -6,10 +6,24 @@
  * evidence they were given. Report, annotations and judge files are derived
  * or added later and are checked separately.
  */
-import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify as verifySignature } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { writeJsonAtomic, type RunPaths } from './store.js'
+
+/** The analysis contract, fixed before the readings are made and signed with the receipt. */
+export interface AnalysisContract {
+  estimand: string
+  pairing: string
+  estimator: string
+  alpha: number
+  sesoiPct: number
+  minScenarios: number
+  bootstrapDraws: number
+  seed: number
+  gateOrder: string
+  costRule: string
+}
 
 export interface RunManifest {
   schema: 'dsh-eval-manifest/1'
@@ -22,10 +36,31 @@ export interface RunManifest {
   /** sha256 over the sorted (path, sha) list: one id for the whole evidence set. */
   evidenceSha: string
   regrades: Array<{ at: string; changed: number; regradable: number; verifiers: Record<string, string> }>
+  contract?: AnalysisContract
 }
+
+/** A signed, self-contained statement of what this run claims and what evidence backs it. */
+export interface RunReceipt {
+  schema: 'dsh-eval-receipt/1'
+  runId: string
+  issuedAt: string
+  evidenceSha: string
+  contract: AnalysisContract
+  claims: Array<{ arm: string; gate: string; costReading: string; grade: string; verdict: string }>
+  coverage: { trials: number; scenarios: number; repeats: number; arms: number; reconciled: number; metered: number; unrun: number; errors: number }
+  environment: { dshVersion?: string; dshRevision?: string; evalInfraVersion?: string; sandbox?: string; composedTreeSha?: Record<string, string> }
+  publicKey: string
+  /** Ed25519 signature over the canonical JSON of everything above except this field. */
+  signature: string
+}
+
+export type ReceiptStatus = 'PASS' | 'INVALID' | 'INCONCLUSIVE'
 
 export interface VerifyResult {
   ok: boolean
+  /** PASS: signed claims recomputed from intact evidence. INVALID: evidence or signature broken. INCONCLUSIVE: nothing was falsified but the run carries no receipt, or its evidence is incomplete. */
+  status?: ReceiptStatus
+  statusReason?: string
   sealedAt: string | null
   evidenceSha: string | null
   missing: string[]
@@ -37,7 +72,7 @@ export interface VerifyResult {
   reportDiff: string[]
 }
 
-const DERIVED = new Set(['manifest.json', 'report.json', 'report.md', 'annotations.json'])
+const DERIVED = new Set(['manifest.json', 'report.json', 'report.md', 'annotations.json', 'receipt.json'])
 
 function isDerived(rel: string): boolean {
   if (DERIVED.has(rel)) return true
@@ -73,7 +108,7 @@ export function evidenceShaOf(files: Record<string, string>): string {
   return h.digest('hex')
 }
 
-export function sealRun(paths: RunPaths, runId: string, regrade?: RunManifest['regrades'][number]): RunManifest {
+export function sealRun(paths: RunPaths, runId: string, regrade?: RunManifest['regrades'][number], contract?: AnalysisContract): RunManifest {
   const previous = readManifest(paths)
   const files: Record<string, string> = {}
   let bytes = 0
@@ -90,6 +125,7 @@ export function sealRun(paths: RunPaths, runId: string, regrade?: RunManifest['r
     bytes,
     evidenceSha: evidenceShaOf(files),
     regrades: [...(previous?.regrades ?? []), ...(regrade ? [regrade] : [])],
+    ...(contract ?? previous?.contract ? { contract: contract ?? previous!.contract! } : {}),
   }
   writeJsonAtomic(join(paths.dir, 'manifest.json'), manifest)
   return manifest
@@ -129,4 +165,55 @@ export function verifyRun(paths: RunPaths, derive?: () => { fresh: Record<string
     }
   }
   return { ok: missing.length === 0 && changed.length === 0 && reportReproduces !== false, sealedAt: manifest.sealedAt, evidenceSha: manifest.evidenceSha, missing, changed, added, reportReproduces, reportDiff }
+}
+
+
+// ---------------------------------------------------------------------------
+// Signed receipts (ClaimReceipt, arXiv 2609.01992: a manifest with an analysis
+// contract, a public receipt of the claims, and a verifier that returns
+// PASS / INVALID / INCONCLUSIVE — distinguishing a broken claim from a claim
+// that was never contracted or is not backed by enough evidence).
+// ---------------------------------------------------------------------------
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeys(value))
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map(k => [k, sortKeys((value as Record<string, unknown>)[k])]))
+  return value
+}
+
+/** The project's signing key, generated once and kept private; the public half travels in every receipt. */
+export function signingKey(evalDir: string): { privateKey: string; publicKey: string } {
+  const file = join(evalDir, 'receipt-key.json')
+  if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as { privateKey: string; publicKey: string }
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const pair = {
+    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+  }
+  writeFileSync(file, JSON.stringify(pair, null, 2), { mode: 0o600 })
+  return pair
+}
+
+export function signReceipt(receipt: Omit<RunReceipt, 'signature'>, privateKeyPem: string): RunReceipt {
+  const signature = sign(null, Buffer.from(canonicalJson(receipt)), createPrivateKey(privateKeyPem)).toString('base64')
+  return { ...receipt, signature }
+}
+
+export function receiptSignatureValid(receipt: RunReceipt): boolean {
+  const { signature, ...rest } = receipt
+  try { return verifySignature(null, Buffer.from(canonicalJson(rest)), createPublicKey(receipt.publicKey), Buffer.from(signature, 'base64')) } catch { return false }
+}
+
+export function readReceipt(paths: RunPaths): RunReceipt | null {
+  const file = join(paths.dir, 'receipt.json')
+  if (!existsSync(file)) return null
+  try { return JSON.parse(readFileSync(file, 'utf8')) as RunReceipt } catch { return null }
+}
+
+export function writeReceipt(paths: RunPaths, receipt: RunReceipt): void {
+  writeJsonAtomic(join(paths.dir, 'receipt.json'), receipt)
 }

@@ -198,3 +198,37 @@ describe('rerun validation and bundles', () => {
     expect(v.reportReproduces).toBe(true)
   })
 })
+
+describe('signed receipts', () => {
+  it('issues a signed receipt with the contract and answers PASS, INVALID or INCONCLUSIVE', async () => {
+    const { verifyRunIntegrity } = await import('../src/core/orchestrate.js')
+    const { readReceipt, receiptSignatureValid } = await import('../src/core/manifest.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { readFileSync, writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const p = project()
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await launched.done
+    const paths = runPaths(p.runsRoot, launched.id)
+    const receipt = readReceipt(paths)!
+    expect(receipt.schema).toBe('dsh-eval-receipt/1')
+    expect(receipt.contract.minScenarios).toBe(5)
+    expect(receipt.contract.alpha).toBeCloseTo(0.025, 6)
+    expect(receipt.claims[0]!.arm).toBe('persona')
+    expect(receipt.coverage).toMatchObject({ trials: 2, arms: 2, unrun: 0, errors: 0 })
+    expect(receiptSignatureValid(receipt)).toBe(true)
+    const clean = verifyRunIntegrity(p, launched.id)
+    expect(clean.status).toBe('PASS')
+    expect(clean.ok).toBe(true)
+
+    // a forged claim in the receipt is caught even though every evidence hash still matches
+    const forged = { ...receipt, claims: [{ ...receipt.claims[0]!, grade: 'improvement', costReading: 'cheaper' }] }
+    writeFileSync(join(paths.dir, 'receipt.json'), JSON.stringify(forged))
+    const tampered = verifyRunIntegrity(p, launched.id)
+    expect(tampered.status).toBe('INVALID')
+    expect(tampered.statusReason).toMatch(/signature/)
+    // removing the receipt entirely is not a falsified claim, it is an uncontracted one
+    writeFileSync(join(paths.dir, 'receipt.json'), JSON.stringify({ ...receipt, schema: 'nope' }).slice(0, 10))
+    expect(verifyRunIntegrity(p, launched.id).status).toBe('INCONCLUSIVE')
+  })
+})

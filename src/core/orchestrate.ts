@@ -10,7 +10,7 @@ import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project } from './project.js'
 import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
-import { fileSha, sealRun, verifyRun, type VerifyResult } from './manifest.js'
+import { fileSha, readReceipt, receiptSignatureValid, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
 import { driftTest } from './drift.js'
 import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './probe.js'
@@ -315,7 +315,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     if (prepared.diffs.some(d => d.variables > 1)) report.notes.unshift('Multi-variable comparison: at least one candidate differs from the baseline in more than one row; the result cannot be attributed to a single change.')
     writeJsonAtomic(paths.report, report)
     writeFileSync(paths.reportMd, renderMarkdown(report))
-    sealRun(paths, plan.id)
+    sealAndIssue(project, paths, plan, report)
     return { progress, report }
   })()
   return { id, plan, diffs: prepared.diffs, scenarios, selfcheck, done }
@@ -491,6 +491,87 @@ export function readAbsoluteJudge(paths: ReturnType<typeof runPaths>): import('.
 }
 
 /** Final confidence sequences of a sequential run, as report options (empty when the run was not sequential). */
+/** The analysis contract this tool applies; fixed by the code and the plan, not chosen after seeing the data. */
+export function analysisContract(plan: RunPlan): AnalysisContract {
+  return {
+    estimand: 'per-scenario paired difference in USD cost on repeat-pairs where both arms passed, and the paired difference in pass rate',
+    pairing: 'scenario x repeat, arms interleaved A B on odd repeats and B A on even ones, one process per trial',
+    estimator: 'mean over scenarios with a Student-t interval below 10 scenarios and a percentile bootstrap from 10; sequential mode replaces it with a hedged betting confidence sequence on the winsorized cost ratio',
+    alpha: 0.05 / (2 * Math.max(1, plan.candidates.length)),
+    sesoiPct: 10,
+    minScenarios: 5,
+    bootstrapDraws: 2000,
+    seed: 42,
+    gateOrder: 'correctness gate first: any regression blocks the cost reading',
+    costRule: 'cost compared only on repeat-pairs where both arms passed; a direction also needs >= 5 comparable scenarios, an interval excluding zero, and no overlap with a measured A/A floor',
+  }
+}
+
+/** Seal the evidence and issue a signed receipt carrying the contract, the claims and the coverage counts. */
+export function sealAndIssue(project: Project, paths: ReturnType<typeof runPaths>, plan: RunPlan, report: Report): RunReceipt {
+  const contract = analysisContract(plan)
+  const manifest = sealRun(paths, plan.id, undefined, contract)
+  const ledgers = readLedgers(paths)
+  const metered = ledgers.filter(l => l.usageProvenance?.source === 'meter' || l.usageProvenance?.source === 'replay')
+  const env = existsSync(paths.env) ? (JSON.parse(readFileSync(paths.env, 'utf8')) as Record<string, unknown>) : {}
+  const { privateKey, publicKey } = signingKey(project.evalDir)
+  const receipt = signReceipt({
+    schema: 'dsh-eval-receipt/1',
+    runId: plan.id,
+    issuedAt: new Date().toISOString(),
+    evidenceSha: manifest.evidenceSha,
+    contract,
+    claims: report.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })),
+    coverage: {
+      trials: ledgers.length,
+      scenarios: plan.scenarios.length,
+      repeats: plan.repeats,
+      arms: 1 + plan.candidates.length,
+      metered: metered.length,
+      reconciled: metered.filter(l => l.usageProvenance!.reconciled === true).length,
+      unrun: Math.max(0, plan.scenarios.length * plan.repeats * (1 + plan.candidates.length) - ledgers.length),
+      errors: ledgers.filter(l => l.error !== undefined).length,
+    },
+    environment: {
+      ...(typeof env['dshVersion'] === 'string' ? { dshVersion: env['dshVersion'] } : {}),
+      ...(typeof env['dshRevision'] === 'string' ? { dshRevision: env['dshRevision'] } : {}),
+      ...(typeof env['evalInfraVersion'] === 'string' ? { evalInfraVersion: env['evalInfraVersion'] } : {}),
+      ...(typeof env['sandbox'] === 'string' ? { sandbox: env['sandbox'] } : {}),
+      ...(env['composedTreeSha'] && typeof env['composedTreeSha'] === 'object' ? { composedTreeSha: env['composedTreeSha'] as Record<string, string> } : {}),
+    },
+    publicKey,
+  }, privateKey)
+  writeReceipt(paths, receipt)
+  return receipt
+}
+
+/**
+ * Status of a run's claims (ClaimReceipt semantics): INVALID when the evidence
+ * or the signature is broken or the report no longer follows from the ledgers;
+ * INCONCLUSIVE when nothing is falsified but there is no receipt, or the run's
+ * own evidence is incomplete (unrun trials, errors, or usage that never
+ * reconciled); PASS when the signed claims recompute from intact evidence.
+ */
+export function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null): { status: ReceiptStatus; reason: string } {
+  if (base.missing.length || base.changed.length) return { status: 'INVALID', reason: `${base.missing.length} missing and ${base.changed.length} changed evidence file(s) since the seal` }
+  if (base.reportReproduces === false) return { status: 'INVALID', reason: 'the stored report does not re-derive from the sealed ledgers' }
+  const receipt = readReceipt(paths)
+  if (receipt === null) return { status: 'INCONCLUSIVE', reason: 'no receipt: this run was sealed without an analysis contract' }
+  if (!receiptSignatureValid(receipt)) return { status: 'INVALID', reason: 'the receipt signature does not verify against its public key' }
+  if (base.evidenceSha !== null && receipt.evidenceSha !== base.evidenceSha) return { status: 'INVALID', reason: 'the receipt was issued for a different evidence set (evidence sha mismatch)' }
+  if (report !== null) {
+    for (const claim of receipt.claims) {
+      const c = report.candidates.find(x => x.arm === claim.arm)
+      if (!c) return { status: 'INVALID', reason: `the receipt claims arm ${claim.arm}, which the re-derived report does not contain` }
+      if (c.gate !== claim.gate || c.costReading !== claim.costReading || c.grade !== claim.grade) return { status: 'INVALID', reason: `re-derived readings for ${claim.arm} differ from the receipt (${claim.grade}/${claim.costReading} vs ${c.grade}/${c.costReading})` }
+    }
+  }
+  if (receipt.coverage.unrun > 0) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.unrun} planned trial(s) never ran` }
+  if (receipt.coverage.errors > 0) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.errors} trial(s) ended in a runtime error` }
+  if (receipt.coverage.metered > 0 && receipt.coverage.reconciled < receipt.coverage.metered) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.metered - receipt.coverage.reconciled} trial(s) never reconciled against the wire meter` }
+  return { status: 'PASS', reason: `signed claims recompute from ${Object.keys(base.changed).length === 0 ? 'intact' : 'the'} evidence (${receipt.coverage.trials} trials, ${receipt.coverage.reconciled}/${receipt.coverage.metered} reconciled)` }
+}
+
 export function probeOf(paths: ReturnType<typeof runPaths>): { probe?: ProbeVerdict } {
   const file = join(paths.dir, 'probe.json')
   if (!existsSync(file)) return {}
@@ -667,7 +748,9 @@ export function verifyRunDir(project: Project, dir: string): VerifyResult {
   if (!existsSync(paths.plan)) throw new LaunchError(`${dir} is not a run directory (no plan.json)`, 'usage')
   const id = readPlan(paths).id
   const pick = (r: Report): Record<string, unknown> => ({ candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })) })
-  return verifyRun(paths, () => ({ fresh: pick(deriveReport(project, id, paths)), stored: existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null }))
+  const base = verifyRun(paths, () => ({ fresh: pick(deriveReport(project, id, paths)), stored: existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null }))
+  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id, paths))
+  return { ...base, status, statusReason: reason, ok: base.ok && status !== 'INVALID' }
 }
 
 export function rebuildReport(project: Project, id: string): Report {
@@ -685,11 +768,13 @@ export function verifyRunIntegrity(project: Project, id: string): VerifyResult {
   const pick = (r: Report): Record<string, unknown> => ({
     candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })),
   })
-  return verifyRun(paths, () => {
+  const base = verifyRun(paths, () => {
     const fresh = pick(deriveReport(project, id))
     const stored = existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null
     return { fresh, stored }
   })
+  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id))
+  return { ...base, status, statusReason: reason, ok: base.ok && status !== 'INVALID' }
 }
 
 /** Archived human-labelled trials with judge artifacts, newest first, for the judge drift check. */
@@ -760,7 +845,8 @@ export async function regradeRun(project: Project, id: string, options: { log?: 
     writeLedger(paths, { ...ledger, verdict: after, regrade: { at, previous: before }, ...(result.verifiers[scenario.name] !== undefined ? { verifierSha: result.verifiers[scenario.name]! } : {}) })
   }
   writeJsonAtomic(join(paths.dir, `regrade-${at.replace(/[:.]/g, '-')}.json`), result)
-  rebuildReport(project, id)
-  sealRun(paths, plan.id, { at, changed: result.changed.length, regradable: result.regradable, verifiers: result.verifiers })
+  const rebuilt = rebuildReport(project, id)
+  sealRun(paths, plan.id, { at, changed: result.changed.length, regradable: result.regradable, verifiers: result.verifiers }, analysisContract(plan))
+  sealAndIssue(project, paths, plan, rebuilt)
   return result
 }
