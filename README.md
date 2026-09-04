@@ -1,33 +1,93 @@
 # dsh-eval-infra
 
-Paired A/B evaluation for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) components — plugins, system prompts, loop and context designs, tool sets, memory backends, safety guards. Two configurations of the agent run the same scenarios back to back through the real dsh SDK runtime; the tool checks the verifiers before the first trial, refuses comparisons that change more than one thing, gates on regressions before it talks about cost, prices every call the way DeepSeek bills it, and rebuilds every number from the ledgers on disk.
+Paired A/B evaluation for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) components: plugins, system prompts, loop and context designs, tool sets, memory backends, safety guards.
 
-English | [中文](README.zh.md) · [design](docs/design.md) · [results](docs/results.md) · [landscape survey](docs/landscape.md) · [methodology](docs/methodology.md)
+Two configurations of the agent run the same scenarios back to back through the real dsh SDK runtime. The tool checks the verifiers before the first trial, refuses comparisons that change more than one thing, gates on regressions before it talks about cost, prices every call the way DeepSeek bills it, meters usage on the wire, and rebuilds every number from the ledgers on disk. When the evidence does not support a conclusion, it says so instead of producing one.
 
-## What you get
+English | [中文](README.zh.md) · [design](docs/design.md) · [scenarios](docs/scenarios.md) · [scorecard](docs/sota-scorecard.md) · [results](docs/results.md)
 
-- **Arms** are dsh patch overlays (`bench/arms/*.yml`): the same rows `dsh --patch` accepts. Insert your plugin, disable a row, change a config field, change the model or reasoning effort.
-- **One-variable check**: each arm is composed through `dsh --dump-config` and diffed row by row; more than one differing row is refused unless you ask for it.
-- **Scenarios** with deterministic verifiers and an oracle; **selfcheck** proves every verifier rejects an untouched workspace and accepts the reference answer. 35 scenarios ship in `bench/scenarios` (context, tools, coding, prompt, memory, safety, cost, verification) — see [docs/scenarios.md](docs/scenarios.md).
-- **Paired, interleaved, repeated runs**: scenario → repeat → arm, A B on odd repeats and B A on even ones, each trial in a fresh workspace and a fresh runtime process under an isolated `DSH_HOME`. A/A mode measures the noise floor.
-- **Ledgers**: per-step cache-hit / cache-miss / output / reasoning tokens, price at the DeepSeek peak or off-peak rate of that minute plus both fixed-band re-pricings, tool histogram, session events, per-step trace with reasoning text.
-- **Report**: regressions first, cost compared only on repeat-pairs both arms passed, bootstrap intervals over scenarios for cost and pass rate, a one-word grade (improvement / regression / tradeoff / tie / inconclusive), pass^k, tokens and dollars per solved task, cache-hit share, flaky-scenario flags, grouped failure reasons, behaviour signatures (tool errors, repeated calls, no-action steps), the minimum detectable effect of the design, and the A/A noise floor when one exists. Markdown and JSON.
-- **Guard rails**: `selfcheck --strict` mutates every oracle output to catch verifiers that ignore it; `--max-usd` caps spend; dsh's workspace-write sandbox confines every trial's shell to its own workspace; scenarios marked `"holdout": true` stay sealed until `--include-holdout`, and the report shows the dev–holdout gap; with several candidates the intervals are read at α/m (Bonferroni); a directional cost call is withheld when its interval reaches into the A/A noise band.
-- **Human review**: mark any trial pass/fail with a note from the trace page; the report applies the override and says so.
-- **Sequential mode** (`--sequential`): scenarios run in a seeded random order (or by archive signal with `--order signal`) and the run stops as soon as an anytime-valid confidence sequence decides the comparison: a hedged betting sequence on the paired cost ratio (non-asymptotic, the deciding one) and a betting sequence on the pass difference; the report then reads the sequence, which stays valid under early stopping, instead of the fixed-sample bootstrap.
-- **Wire meter**: every trial's provider calls pass through a local proxy that records the provider's own usage, served model and fingerprint per request in a hash-chained ledger; the runtime's self-reported usage is reconciled against it and any cost call is withheld when they disagree. `--fault-rate` injects 429s and stalls through the same proxy.
-- **Sealed evidence**: a finished run is hashed into `manifest.json`; `dsh-eval verify` recomputes every hash and re-derives the report from the ledgers, so a report can be checked by someone who did not run it. `dsh-eval regrade` re-runs verifiers on kept workspaces without re-running agents and re-seals.
-- **Record, replay, fork**: every trial's provider responses are recorded through the meter; `run --replay <id>` re-executes a whole run keylessly and without spend, `--fork-at N` replays N responses per trial and goes live from there (the trace page offers "fork from step k").
-- **Rerun validation** (`dsh-eval rerun <id> <scenario>`): runs a failing pair again and reports whether the failure and its first divergence recur; **publish** (`dsh-eval publish <id>`) writes a bundle with `report.html` and `VERIFY.md` that `dsh-eval verify <dir>` checks anywhere.
-- **Judge safeguards**: same-family judges are refused by default; conformal abstention from bidirectional preference entropy calibrated on human labels, anchor-set re-grading that attributes drift to the judge, win rate at equal length, TPR/TNR, inter-judge κ and the panel's effective number of independent votes.
-- **Served-model checks**: the meter records the model, fingerprint and client identity of every provider exchange; `dsh-eval probe` fingerprints the route's answer distribution against an enrolled reference; after every run the baseline's tool-use distribution is permutation-tested against the archive. A report reads nothing when any of the three says the conditions changed.
-- **Signed receipts**: every finished run is sealed and receipted with its analysis contract and an Ed25519 signature; `dsh-eval verify` answers PASS, INVALID or INCONCLUSIVE, and `dsh-eval publish` writes a bundle a third party can check.
-- **Patterns**: the history view mines every archived run for recurring failure signatures and behaviour regimes, ranked by how unevenly they hit the arms.
-- **Perturbation floor**: `dsh-eval perturb` drafts paraphrases of a scenario's prompts; `--perturb` runs a seeded variant on repeats above 1, the same one for every arm, and `--aa --perturb` measures how much of the spread is prompt-wording sensitivity rather than rerun noise.
-- **Blinded judge** (`dsh-eval judge <run>`): for scenarios that declare a rubric and artifacts, judge models that never see arm or model names compare the baseline's and the candidate's files in both orders; disagreement between orders counts as a tie, several `--model` flags form a panel decided by a strict majority, the order-disagreement and unanimity rates are reported, and `--mode absolute` grades each trial and rectifies pass rates with the run's human annotations (PPI++).
-- **Container isolation** (`--sandbox docker`): each trial's dsh runtime runs in its own container with only the read-only dsh checkout and plugins, the eval home and the trial workspace mounted.
-- **Web UI** (`dsh-eval ui`, or `/eval` inside the dsh web app): new-run wizard with the live diff and an archive-based cost estimate, live trial matrix, verdict banner with a forest strip (intervals, ±10% band, MDE lines, A/A floor), regressions-first paired table with flaky/failure filters, per-scenario history with cost sparklines, trace viewer with folded tool results, keyboard navigation, and side-by-side compare with a first-divergence marker; self-contained HTML and ATIF export.
-- **CLI exit codes for CI**: 0 no regressions, 1 regressions, 2 incomplete or errors.
+## Typical uses
+
+**Does my plugin actually save money?** The baseline is stock dsh, the candidate inserts one plugin row. The report answers whether the pass rate held and whether the cost difference is real or inside the noise floor of your own setup.
+
+```bash
+dsh-eval run --baseline baseline --arm fold --repeats 3
+```
+
+**Is my safety guard doing anything?** One persona sentence is the only variable; the injection scenarios are the workload. The pass columns also tell you whether your injection pool can discriminate at all, or whether the baseline already resists everything in it.
+
+```bash
+dsh-eval run --baseline baseline --arm guard-persona 'x*' --repeats 5
+```
+
+**Is the bigger model worth it?** Put `model: deepseek-v4-pro` at the top of the arm file and nothing else changes. The grade comes back as a tradeoff when quality rises and cost rises with it, with dollars and tokens per solved task on both sides.
+
+```bash
+dsh-eval run --baseline baseline --arm pro --repeats 3
+```
+
+**Which setting of this knob is best?** Several candidates share one baseline and one set of trials, and the intervals are read at α/m so the family-wise error stays at 5%.
+
+```bash
+dsh-eval run --baseline baseline --arm compact-60 --arm compact-75 --arm compact-90
+```
+
+**Does my memory plugin actually remember?** Scenarios can end the runtime process mid-scenario and start a fresh one on the same workspace, so what the agent recalls after the break is what the plugin really stored, not what was still in context.
+
+```bash
+dsh-eval run --baseline baseline --arm memory 'm*' --repeats 5
+```
+
+**Gate a pull request.** Exit code 1 on any regression and 2 on incomplete runs, with a spend cap so a stuck trial cannot drain a budget. A GitHub workflow is in [docs/ci](docs/ci/github-workflow.yml).
+
+```bash
+dsh-eval run --baseline main --arm pr --repeats 3 --max-usd 5
+```
+
+**Evaluate a plugin you did not write.** With Docker available, third-party plugins get a container per trial by default, and `--docker-keep-sandbox` stacks dsh's own sandbox inside that container.
+
+```bash
+dsh-eval init --plugin ./third-party-plugin
+dsh-eval run --baseline baseline --arm third-party --docker-keep-sandbox
+```
+
+**Did the provider quietly change the model?** Enrol a fingerprint of the route once, then check it before a run. A route whose answer distribution no longer matches blocks the readings rather than silently shifting them.
+
+```bash
+dsh-eval probe --enroll
+dsh-eval run --baseline baseline --arm candidate --probe
+```
+
+**Was that failure a cause or bad luck?** A rerun resamples everything; a fork replays the identical prefix and goes live at the exact call where the two arms parted. A failure that recurs after the fork but not after a plain rerun is caused by what happened there.
+
+```bash
+dsh-eval rerun <runId> f9_docs_research --repeats 3 --fork
+```
+
+**Publish a claim someone else can check.** The bundle carries the report, the evidence hashes, the analysis contract and a signature, and `verify` answers PASS, INVALID or INCONCLUSIVE on any machine. To re-examine a run without spending anything, replay it from its recordings with no API key at all.
+
+```bash
+dsh-eval publish <runId> --out ./bundle
+dsh-eval run --replay <runId>
+```
+
+## What it gives you
+
+**Fair comparison by construction.** Arms are dsh patch overlays, the same rows `dsh --patch` accepts. Each arm is composed through `dsh --dump-config` and diffed row by row, and more than one differing row is refused unless you ask for it. Trials interleave scenario, repeat and arm, A B on odd repeats and B A on even ones, each in a fresh workspace and a fresh runtime process under an isolated `DSH_HOME`. An A/A run measures what "no change" looks like on your own setup, and `--perturb` extends that floor to prompt-wording sensitivity using paraphrases every arm sees identically.
+
+**Verifiers you can trust.** Scenarios carry a deterministic verifier and a reference oracle. `selfcheck` proves that an untouched workspace fails and the oracle passes; `--strict` deletes or blanks each oracle output in turn and requires the verifier to notice, which is what catches a grader that always says pass. Ground truth lives outside the workspace, so the agent cannot read it. 35 scenarios ship across context, tools, coding, prompt, memory, safety, cost and verification, four of them sealed as a confirmation pool.
+
+**Measurement that is not self-reported.** Every provider call passes through a local proxy that records the provider's own usage, the served model, the system fingerprint and the client identity in a hash-chained ledger. The runtime's own numbers are reconciled against it, and a cost conclusion is withheld when the two disagree. Ledgers hold per-step cache-hit, cache-miss, output and reasoning tokens, priced at the DeepSeek rate of that minute plus both fixed-band re-pricings, along with tool histograms, behaviour counters and a per-step trace.
+
+**Statistics that refuse to overclaim.** Regressions gate the report before cost is discussed, and cost is compared only on repeat-pairs both arms passed. Intervals cluster by scenario and carry the intraclass correlation and design effect of the repeats. A direction needs at least five comparable scenarios, an interval excluding zero, and an interval that stays clear of the measured A/A floor; equivalence needs an interval inside ±10%; everything else reads inconclusive. Reports state the minimum detectable effect of the design and the resolution of the observed one, test paired outcomes with McNemar's mid-p and a posterior, and adjust with CUPED when the archive supports it. Sequential mode stops as soon as a non-asymptotic confidence sequence decides, and stays valid under that early stopping.
+
+**Judges with guard rails.** For scenarios that code cannot grade, blinded judge models compare the two submissions without seeing arm or model names, in both orders, with disagreement counted as a tie. Several models form a panel decided by strict majority, reported with its unanimity rate, inter-judge agreement and effective number of independent votes. A judge from the arms' own model family is refused by default. Uncertain judgments are withheld under conformal risk control, a frozen anchor set catches the judge drifting between runs, and length effects are reported both stratified and at zero length difference. Absolute mode grades each trial and rectifies pass rates with human labels through PPI++.
+
+**Evidence you can hand to someone else.** A finished run is hashed into a manifest and receipted with its analysis contract and an Ed25519 signature. `verify` recomputes every hash, re-derives the report from the ledgers, checks the signature and the claims, and answers PASS, INVALID or INCONCLUSIVE. `regrade` re-runs verifiers on kept workspaces without re-running any agent. Recorded provider responses make a whole run replayable without a key or spend, and forkable at any step.
+
+**Execution and safety.** A container per trial is the default for third-party plugins, with optional gVisor or Kata runtimes and the option to keep dsh's in-process sandbox active inside the container. Network tools are off unless a scenario asks for them. Spend caps apply per run and per trial, on observed usage. Provider faults such as rate limits and stalls can be injected through the same proxy that meters the run.
+
+**A UI built for reading results.** New-run wizard with the live configuration diff and an archive-based cost estimate. Live trial matrix. A verdict banner with a forest strip showing intervals, the equivalence band, the detectable effect and the noise floor. Regressions-first paired table with filters. Trace viewer with folded tool results, keyboard navigation, side-by-side arm comparison and a first-divergence marker with a fork action. Cross-run history with cost sparklines, per-scenario signal-to-noise and automatic mining of recurring failure signatures and behaviour regimes. Self-contained HTML and ATIF export.
 
 ## Quick start
 
@@ -37,7 +97,7 @@ npm run link:dsh        # symlink the dsh peers from ~/.dsh/source/current
 npm run build
 
 cd /path/to/your-plugin
-dsh-eval init --plugin .            # .dsh-eval/home with an `eval` profile (dsh-base + dsh-sdk-app), your plugin added, starter arms
+dsh-eval init --plugin .            # .dsh-eval/home with an `eval` profile, your plugin added, starter arms
 $EDITOR bench/arms/candidate.yml    # the candidate inserts your plugin row; the baseline is stock dsh
 dsh-eval selfcheck                  # every scenario: untouched → fail, oracle → pass
 dsh-eval diff baseline candidate    # composed-tree diff; must be exactly one variable
@@ -70,24 +130,25 @@ bench/scenarios/<name>/
   meta.json     {"name": "...", "turns": 2, "category": "tools", "stressor": "...", "oracle": "required",
                  "network": false, "new_session_before_turns": [3]}   # last two optional
   prompts.json  ["turn 1 …", "turn 2 …"]
-  setup.py      def setup(root): …            # deterministic workspace; ground truth may live in root/.truth (hidden from the agent)
+  setup.py      def setup(root): …            # deterministic workspace; ground truth may live in root/.truth
   verify.py     def verify(root): return ok, detail   # grades the end state only
   oracle.py     def solve(root): …            # the reference answer
 ```
 
-`new_session_before_turns` ends the runtime process and starts a fresh one on the same workspace — the way to test what a memory plugin actually stored.
+`new_session_before_turns` ends the runtime process and starts a fresh one on the same workspace, which is the way to test what a memory plugin actually stored. `meta.judge` names a rubric and the artifacts a judge should read, `meta.holdout` seals a scenario into the confirmation pool, and `prompts.variants.json` supplies the paraphrases `--perturb` uses.
 
-## The report, read correctly
+## Reading the report
 
 1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no cost summary is offered.
 2. **Cost pairs.** Only repeat-pairs where both arms passed count. Δ$ and Δ% are per-scenario means over those pairs.
-3. **Interval.** The per-scenario Δ% is bootstrapped over scenarios as clusters (each carrying all its repeat pairs; B=2000, seeded), with the intraclass correlation and design effect of the repeats reported. *Cheaper* / *more expensive* need at least five comparable scenarios, an interval that excludes zero, and an interval that stays outside the A/A noise band when one has been measured; *equivalent* needs five scenarios and an interval inside ±10%; below ten scenarios the interval is a Student-t interval rather than a bootstrap; anything else is *inconclusive*, which is the honest default with few scenarios. The notes state the minimum detectable effect of the design, the resolution q = n/N* of the observed effect, and, when an A/A run exists, its noise floor. Paired pass/fail is tested with McNemar's mid-p on discordant pairs and read as a posterior P(candidate wins).
-4. **Bands.** Runs straddling the DeepSeek peak/off-peak boundary get a note; use the fixed-band columns.
-5. **Repeats.** Three is the floor; five is recommended for binary outcomes; run `--aa` first to see what "no change" looks like on your setup.
+3. **Interval.** Per-scenario Δ% is bootstrapped over scenarios as clusters, each carrying all its repeat pairs. *Cheaper* and *more expensive* need at least five comparable scenarios, an interval excluding zero, and an interval outside the measured A/A noise band; *equivalent* needs an interval inside ±10%; below ten scenarios the interval is Student-t rather than bootstrap; anything else is *inconclusive*. The notes state the minimum detectable effect and the resolution of the observed one.
+4. **Provenance.** A cost reading is withheld when the wire meter and the runtime disagree, when the two arms were served different models, or when a route probe says the served model changed.
+5. **Bands.** Runs straddling the DeepSeek peak and off-peak boundary get a note; use the fixed-band columns.
+6. **Repeats.** Three is the floor, five is recommended for binary outcomes. Run `--aa` first to see what "no change" looks like on your setup.
 
 ## Inside dsh
 
-Install the package into a web profile (`dsh plugin --profile web add @dsh-external/dsh-eval-infra`) and insert the row:
+Install the package into a web profile with `dsh plugin --profile web add @dsh-external/dsh-eval-infra` and insert the row:
 
 ```yaml
 - insert:
@@ -104,38 +165,42 @@ The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
 | command | does |
 |---|---|
 | `init [--plugin <path\|pkg>]…` | create `.dsh-eval/home` with the `eval` profile, add plugins, write starter arms |
-| `add <path\|pkg>` | add a plugin to the eval profile (`dsh plugin … add` under the hood) |
+| `add <path\|pkg>` | add a plugin to the eval profile |
 | `scenarios [globs] [--category c]` | list scenarios |
-| `selfcheck [globs]` | oracle must pass, untouched workspace must fail |
+| `selfcheck [globs] [--strict]` | oracle must pass, untouched workspace must fail; `--strict` mutates each oracle output |
 | `diff <baseline> <candidate>…` | composed-tree diff and variable count |
-| `run --baseline a --arm b [--arm c] [globs] [--repeats N] [--concurrency N] [--label L] [--aa] [--allow-multi] [--resume id] [--turn-timeout S] [--keep-workdirs] [--max-usd N] [--sequential --seed N] [--include-holdout]` | the paired run; prints the report |
-| `report <id> [--json]` | rebuild the report from the ledgers |
-| `judge <id> [--model M] [--arm A] [--seed N]` | blinded pairwise judge over scenarios with `meta.judge` |
-| `probe [--model M] [--samples N] [--enroll]` | fingerprint the route's served model against an enrolled reference (exit 1 when it differs) |
-| `rerun <id> <scenario> [--repeats 3] [--fork]` | rerun one scenario's pair to validate a failure; `--fork` replays the identical prefix and goes live at the divergence, separating a cause from resampling luck |
-| `publish <id> [--out dir]` | copy the sealed run with `report.html` and `VERIFY.md` into a bundle anyone can verify with `verify <dir>` |
-| `perturb <globs> [--n N] [--model M]` | write semantics-preserving paraphrases of a scenario's prompts (`prompts.variants.json`) for `--perturb`; review them by hand |
-| `verify <id \| dir> [--json]` | check the sealed hashes, re-derive the report and check the signed receipt: PASS (0), INVALID (1) or INCONCLUSIVE (2) |
-| `regrade <id>` | re-run verifiers on kept workspaces (`--keep-workdirs`), rebuild the report, re-seal |
+| `run --baseline a --arm b [--arm c] [globs]` | the paired run; prints the report |
+| ↳ budget | `[--max-usd N] [--max-usd-per-trial X]` |
+| ↳ statistics | `[--sequential [--seed N]] [--order signal] [--perturb] [--aa] [--include-holdout]` |
+| ↳ provenance | `[--probe] [--no-meter] [--fault-rate P]` |
+| ↳ isolation | `[--sandbox host\|docker] [--docker-runtime runsc\|kata] [--docker-keep-sandbox]` |
+| ↳ replay | `[--replay <id> [--fork-at N]]` |
+| `report <id> [--json] [--rebuild-ledgers]` | rebuild the report from the ledgers |
+| `judge <id> [--model M]… [--mode pairwise\|absolute\|both]` | blinded judge over scenarios with `meta.judge` |
+| `probe [--model M] [--samples N] [--enroll]` | fingerprint the route's served model; exit 1 when it differs |
+| `verify <id \| dir> [--json]` | sealed hashes, report re-derivation and signed receipt: PASS (0), INVALID (1), INCONCLUSIVE (2) |
+| `regrade <id>` | re-run verifiers on kept workspaces, rebuild the report, re-seal |
+| `rerun <id> <scenario> [--repeats N] [--fork]` | validate a failure; `--fork` replays the identical prefix and goes live at the divergence |
+| `publish <id> [--out dir]` | bundle the sealed run with `report.html` and `VERIFY.md` for a third party |
+| `perturb <globs> [--n N]` | draft paraphrases of a scenario's prompts for `--perturb` |
 | `runs` | list runs |
 | `ui [--port 4177] [--open]` | local web UI |
-| `export <id> [--out dir]` | ATIF v1.8 trajectories of every trial |
+| `export <id> [--out dir] [--html]` | ATIF v1.8 trajectories, or a self-contained HTML report |
 
 ## How it compares
 
-Harbor runs whole agents on task sets in containers; promptfoo, Braintrust, LangSmith, Langfuse, Weave and Phoenix compare experiments after the fact; Inspect has epochs, bootstrap errors and a judge panel per log; Claude Code's `plugin eval` (early access) ablates its own plugins with and without. Among tools built on dsh itself, muou000/dsh-eval pairs and interleaves cases with seeded AB/BA order and content-addressed artifacts, hccccc01333/dsh-eval replays recorded chunks keylessly, BiBoyang/dsh-eval-harness gates with TPR/TNR-validated judges, and dsheval.ai publishes a public plugin ledger. None of them combines paired interleaving with a one-variable check on the composed configuration, verifier self-checks with mutation, a regression-first gate that prices only matched passes, an A/A floor that can veto a directional call, a non-asymptotic sequential stop, usage metered on the wire and reconciled before any cost call, and sealed evidence with an independent report check. Where they are ahead is listed row by row in [docs/sota-scorecard.md](docs/sota-scorecard.md); sources in [docs/landscape.md](docs/landscape.md), [docs/landscape-2.md](docs/landscape-2.md) and the [adversarial review](docs/adversarial-review.md).
+Harbor runs whole agents on task sets in containers. promptfoo, Braintrust, LangSmith, Langfuse, Weave and Phoenix compare experiments after the fact. Inspect has epochs, bootstrap errors and judge panels per log. Claude Code's `plugin eval` ablates its own plugins with and without them. Among tools built on dsh itself, muou000/dsh-eval pairs and interleaves cases with a seeded AB/BA order and content-addressed artifacts, hccccc01333/dsh-eval replays recorded chunks keylessly, BiBoyang/dsh-eval-harness gates on judges validated by true-positive and true-negative rates, and dsheval.ai publishes a public plugin ledger.
 
-## Status and limitations
+What none of them combines is paired interleaving with a one-variable check on the composed configuration, verifier self-checks with mutation, a regression-first gate that prices only matched passes, an A/A floor that can veto a directional call, a non-asymptotic sequential stop, usage metered on the wire and reconciled before any cost conclusion, and sealed evidence with signed claims an outsider can re-derive. [docs/sota-scorecard.md](docs/sota-scorecard.md) scores every capability row by row against those tools and the literature, and names where each of them is ahead.
 
-Every capability above is exercised by keyless tests and has been run at least once against the real DeepSeek runtime ([docs/results.md](docs/results.md)); [docs/sota-scorecard.md](docs/sota-scorecard.md) scores the tool row by row against the tools and papers in the two surveys and states, narrowly, where it leads and where it does not. Known limits, stated rather than hidden:
+## Limits, stated rather than hidden
 
-- Third-party plugins run in a container per trial by default when Docker is available (dsh's SAFETY.md does not call the host sandbox a security boundary); `--docker-keep-sandbox` stacks dsh's own sandbox inside the container, and `--docker-runtime runsc|kata` uses a microVM or gVisor runtime when the host has one. The microVM path is passed through but has not been exercised here, for lack of such a host.
-- Usage is metered on the wire by a per-trial local proxy and reconciled with the runtime's own figures; a cost call is withheld when they disagree. `--no-meter` returns to self-reported usage, and the report says so.
-- A judge from the arms' model family is refused unless `--allow-same-family`; a second-family endpoint must be configured by you, and none was available here, so only the refusal and the panel mechanics have been run. Abstention needs human-labelled pairs to calibrate; anchors need annotated trials in the archive.
+- DeepSeek prices ship built in; other providers are configurable per project and otherwise recorded with cost 0 and flagged.
+- Cross-family judges need an endpoint you configure. Conformal abstention needs human-labelled pairs to calibrate, and drift anchors need annotated trials in the archive.
+- The gVisor and Kata runtimes are passed through to Docker and therefore need a host that provides them.
 - Replay re-runs each scenario's setup rather than restoring a per-turn workspace snapshot, so it reproduces scenarios whose setup is deterministic.
-- Deliberately not done, each with a reason: within-run adaptive scenario selection (it changes the estimand the confidence sequence covers unless inverse-probability weighted, and uniform ordering is competitive), predicted early termination (a predicted failure is not a measured one), simulated users (both arms must see identical inputs for the pairing to hold).
-- DeepSeek prices only; other providers are recorded with cost 0 and flagged.
-- Intervals below ten scenarios are Student-t; the bootstrap is used from ten. With fewer than five comparable scenarios the tool refuses to state a direction, by design. The sequential cost decision uses a non-asymptotic betting sequence and therefore needs more scenarios than a fixed-sample interval would; that is the price of validity at every look.
+- With fewer than five comparable scenarios the tool refuses to state a direction. Sequential mode uses a non-asymptotic sequence and therefore needs more scenarios than a fixed-sample interval would, which is the price of a result that stays valid at every look.
+- Three things are deliberately absent, each for a reason: within-run adaptive scenario selection changes the estimand a confidence sequence covers unless inverse-probability weighted; predicted early termination records a prediction where a measurement belongs; simulated users break the requirement that both arms see identical inputs.
 
 ## Development
 
