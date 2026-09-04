@@ -148,7 +148,7 @@ bench/scenarios/<name>/
 
 ## Inside dsh
 
-Install the package into a web profile with `dsh plugin --profile web add @dsh-external/dsh-eval-infra` and insert the row:
+Two surfaces, one API. Install the package into a web profile with `dsh plugin --profile web add @dsh-external/dsh-eval-infra` and insert the row:
 
 ```yaml
 - insert:
@@ -158,7 +158,7 @@ Install the package into a web profile with `dsh plugin --profile web add @dsh-e
         projectRoot: /path/to/your-plugin   # holds .dsh-eval/ and bench/
 ```
 
-The UI is then at `<host>/eval/` and `/eval runs` works as a slash command.
+The full UI is then at `<host>/eval/`, `/eval runs` works as a slash command, and a seat appears at the foot of the dsh sidebar showing the last comparison, its one-line verdict, and shortcuts to start a new one or open the result. The sidebar seat reads the same HTTP API the standalone UI does, so the two cannot drift apart; run `dsh-eval ui` instead when you want the tool on its own.
 
 ## Commands
 

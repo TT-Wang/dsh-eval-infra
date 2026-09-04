@@ -148,7 +148,7 @@ bench/scenarios/<name>/
 
 ## 装进 dsh
 
-装到 web profile(`dsh plugin --profile web add @dsh-external/dsh-eval-infra`)并插入一行:
+两种形态,同一套 API。装到 web profile(`dsh plugin --profile web add @dsh-external/dsh-eval-infra`)并插入一行:
 
 ```yaml
 - insert:
@@ -158,7 +158,7 @@ bench/scenarios/<name>/
         projectRoot: /path/to/your-plugin   # 放 .dsh-eval/ 与 bench/ 的目录
 ```
 
-界面在 `<host>/eval/`,聊天里 `/eval runs` 可用。
+完整界面在 `<host>/eval/`,聊天里 `/eval runs` 可用,同时 dsh 侧边栏底部会出现一个席位,显示最近一次对照的状态和一句话结论,并提供"新建对照"和"看上次结果"两个入口。侧边栏读的是标准网页端同一套 HTTP API,两边不会走偏;想单独用就跑 `dsh-eval ui`。
 
 ## 命令
 

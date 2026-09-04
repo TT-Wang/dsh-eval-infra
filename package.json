@@ -13,7 +13,10 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": {
+      "default": "./lib/client.js"
+    }
   },
   "files": [
     "lib/**/*",
@@ -25,11 +28,12 @@
     "url": "git+https://github.com/TT-Wang/dsh-eval-infra.git"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs && node scripts/build-client.mjs",
     "build:ui": "node scripts/build-ui.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.ui.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.ui.json --noEmit && tsc -p tsconfig.client.json",
     "test": "vitest run",
-    "link:dsh": "node scripts/link-dsh.mjs"
+    "link:dsh": "node scripts/link-dsh.mjs",
+    "build:client": "node scripts/build-client.mjs"
   },
   "license": "BSD-3-Clause",
   "dependencies": {
@@ -37,9 +41,9 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1 || ^0.1.0-rc.1",
     "@deepseek-ai/dsh-sdk-client": "^0.1.0-rc.1 || ^0.1.2-rc.1",
-    "@deepseek-ai/dsh-session": "^0.0.1-rc.1 || ^0.1.0-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1 || ^0.1.0-rc.1"
+    "@deepseek-ai/dsh-session": "^0.0.1-rc.1 || ^0.1.0-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -55,10 +59,21 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "@types/react": "~18.3",
     "esbuild": "^0.25.0",
     "preact": "^10.24.0",
+    "react": "^18.3.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.10"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
   }
 }
