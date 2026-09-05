@@ -24,8 +24,15 @@ export interface DriverTurnResult {
   sessionId: string | null
 }
 
+export interface TurnOptions {
+  timeoutMs: number
+  signal?: AbortSignal
+  /** Called with each runtime event as it arrives, for whoever is watching the run. Optional for a driver: the runner forwards the turn's batch afterwards when nothing came through here. */
+  onEvent?: (event: EventLike) => void
+}
+
 export interface Driver {
-  runTurn(prompt: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<DriverTurnResult>
+  runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult>
   close(): Promise<void>
 }
 
@@ -96,6 +103,8 @@ export interface RunDeps {
   keepWorkdirs?: boolean
   onProgress?: (progress: Progress) => void
   onLedger?: (ledger: RunLedger) => void
+  /** Every runtime event of every trial, as it happens: what a live view of the run is made of. */
+  onEvent?: (trial: { scenario: string; arm: string; rep: number }, event: EventLike) => void
   log?: (line: string) => void
   /** Override the per-turn timeout for every scenario (ms). */
   turnTimeoutMs?: number
@@ -384,11 +393,18 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
         }
         onTurn(i + 1)
         const t0 = Date.now()
-        const options: { timeoutMs: number; signal?: AbortSignal } = { timeoutMs }
+        const options: TurnOptions = { timeoutMs }
         if (deps.signal !== undefined) options.signal = deps.signal
+        // Events reach the run's watchers as they happen. A driver that only hands them
+        // over at the end of the turn gets them forwarded then, so the view still moves.
+        const trial = { scenario: scenario.name, arm: arm.name, rep: job.rep }
+        let streamed = false
+        if (deps.onEvent !== undefined) options.onEvent = (e) => { streamed = true; deps.onEvent!(trial, turnOffset === 0 ? e : offsetTurn(e, turnOffset)) }
         const result = await driver.runTurn(prompts[i]!, options)
         turnWall.set(i + 1, Date.now() - t0)
-        events.push(...(turnOffset === 0 ? result.events : result.events.map(e => offsetTurn(e, turnOffset))))
+        const turnEvents = turnOffset === 0 ? result.events : result.events.map(e => offsetTurn(e, turnOffset))
+        events.push(...turnEvents)
+        if (!streamed && deps.onEvent !== undefined) for (const e of turnEvents) deps.onEvent(trial, e)
         if (Number.isFinite(capUsd)) { const spent = spentSoFar(); if (spent > capUsd) capped = { maxUsd: capUsd, usdAtStop: spent, afterTurn: i + 1 } }
         if (result.sessionId !== null) sessionId = sessionId === null || sessionId === result.sessionId ? result.sessionId : `${sessionId},${result.sessionId}`
       }

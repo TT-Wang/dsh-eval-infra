@@ -6,7 +6,7 @@
  * the whole agent reports idle.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { Driver, DriverTurnResult } from './runner.js'
+import type { Driver, DriverTurnResult, TurnOptions } from './runner.js'
 import { TurnTimeoutError } from './runner.js'
 import type { EventLike } from './ledger.js'
 
@@ -111,7 +111,7 @@ export class RpcDriver implements Driver {
     })
   }
 
-  async runTurn(prompt: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<DriverTurnResult> {
+  async runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult> {
     await this.start()
     this.turn += 1
     const events: EventLike[] = []
@@ -144,6 +144,7 @@ export class RpcDriver implements Driver {
             else return
           }
           events.push(event)
+          options.onEvent?.(event)
         } else if (method === 'session.status' && received && params['status'] === 'idle') finish()
       }
       const listener = (method: string, params: Record<string, unknown>): void => {

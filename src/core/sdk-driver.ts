@@ -3,12 +3,13 @@
  * over stdio JSON-RPC by `@deepseek-ai/dsh-sdk-client`. The subprocess boots
  * the arm's profile with the arm's overlays under the isolated eval home.
  */
-import type { Driver, DriverFactory, DriverInput, DriverTurnResult } from './runner.js'
+import type { Driver, DriverFactory, DriverInput, DriverTurnResult, TurnOptions } from './runner.js'
 import { TurnTimeoutError } from './runner.js'
 import type { EventLike } from './ledger.js'
 
+interface HarnessNotificationLike { method: string; params: Record<string, unknown> }
 interface HarnessLike {
-  session(id?: string): { id: string; run(input: string): Promise<{ sessionId: string; events: unknown[] }> }
+  session(id?: string): { id: string; run(input: string, options?: { onNotification?: (n: HarnessNotificationLike) => void }): Promise<{ sessionId: string; events: unknown[] }> }
   close(): Promise<void>
 }
 
@@ -60,8 +61,16 @@ class SdkDriver implements Driver {
     return this.session
   }
 
-  async runTurn(prompt: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<DriverTurnResult> {
+  async runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult> {
     const session = await this.ensure()
+    // The client observes every notification as it comes off the wire; the root
+    // session's events are what a live view of the trial is made of.
+    const onEvent = options.onEvent
+    const runOptions = onEvent === undefined ? undefined : {
+      onNotification: (n: HarnessNotificationLike): void => {
+        if (n.method === 'session.event' && n.params['sessionId'] === session.id) onEvent(n.params['event'] as EventLike)
+      },
+    }
     this.turn += 1
     let timer: NodeJS.Timeout | undefined
     const timeout = new Promise<never>((_, reject) => {
@@ -71,7 +80,7 @@ class SdkDriver implements Driver {
       options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })
     })
     try {
-      const result = await Promise.race([session.run(prompt), timeout, abort])
+      const result = await Promise.race([session.run(prompt, runOptions), timeout, abort])
       return { events: result.events as EventLike[], sessionId: result.sessionId }
     } finally {
       if (timer !== undefined) clearTimeout(timer)

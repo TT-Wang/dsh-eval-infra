@@ -1,4 +1,4 @@
-import type { Driver, DriverTurnResult } from './runner.js';
+import type { Driver, DriverTurnResult, TurnOptions } from './runner.js';
 export interface RpcLaunch {
     command: string;
     args: string[];
@@ -33,9 +33,6 @@ export declare class RpcDriver implements Driver {
     private onData;
     private onFrame;
     private request;
-    runTurn(prompt: string, options: {
-        timeoutMs: number;
-        signal?: AbortSignal;
-    }): Promise<DriverTurnResult>;
+    runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult>;
     close(): Promise<void>;
 }

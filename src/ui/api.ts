@@ -1,7 +1,7 @@
 import type { Report } from '../core/report.js'
 import type { RunEnvironment, RunIndexEntry, RunLedger, RunPlan, ScenarioMeta } from '../core/types.js'
 import type { Progress } from '../core/store.js'
-import type { TraceRow } from '../core/ledger.js'
+import type { TraceRow, Activity } from '../core/ledger.js'
 import type { ArmSpec } from '../core/types.js'
 
 /** Mount prefix: '' at the root, '/eval' inside the dsh web host. Hash routing keeps the pathname stable. */
@@ -101,12 +101,14 @@ export const api = {
 export function stream(id: string, on: (event: string, data: unknown) => void): () => void {
   if (STATIC !== undefined) return () => { /* nothing to stream in a static export */ }
   const es = new EventSource(`${BASE}/api/runs/${id}/stream`)
-  for (const ev of ['progress', 'log', 'ledger', 'done', 'error']) {
+  for (const ev of ['progress', 'log', 'ledger', 'activity', 'done', 'error']) {
     es.addEventListener(ev, (e) => { try { on(ev, JSON.parse((e as MessageEvent).data as string)) } catch { on(ev, null) } })
   }
   es.onerror = () => { /* the browser reconnects; a finished run closes the stream server-side */ }
   return () => es.close()
 }
+
+export type { Activity }
 
 export const fmt = {
   usd: (v: number | null | undefined, digits = 4): string => v === null || v === undefined ? '—' : `${v < 0 ? '−' : ''}$${Math.abs(v).toFixed(digits)}`,

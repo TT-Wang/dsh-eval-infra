@@ -83,6 +83,8 @@ export interface LaunchHooks {
   log?: (line: string) => void
   onProgress?: (p: Progress) => void
   onLedger?: (l: RunLedger) => void
+  /** Every runtime event as it happens, for a live view of the run. */
+  onEvent?: RunDeps['onEvent']
   signal?: AbortSignal
   /** Test seam: replace the SDK driver. */
   driverFactory?: RunDeps['driverFactory']
@@ -277,6 +279,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (hooks.signal !== undefined) deps.signal = hooks.signal
   if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
   if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
+  if (hooks.onEvent !== undefined) deps.onEvent = hooks.onEvent
   if (request.keepWorkdirs) deps.keepWorkdirs = true
   const prices = projectPrices(project.config)
   if (prices) deps.prices = prices

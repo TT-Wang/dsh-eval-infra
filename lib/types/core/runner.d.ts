@@ -6,11 +6,14 @@ export interface DriverTurnResult {
     events: EventLike[];
     sessionId: string | null;
 }
+export interface TurnOptions {
+    timeoutMs: number;
+    signal?: AbortSignal;
+    /** Called with each runtime event as it arrives, for whoever is watching the run. Optional for a driver: the runner forwards the turn's batch afterwards when nothing came through here. */
+    onEvent?: (event: EventLike) => void;
+}
 export interface Driver {
-    runTurn(prompt: string, options: {
-        timeoutMs: number;
-        signal?: AbortSignal;
-    }): Promise<DriverTurnResult>;
+    runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult>;
     close(): Promise<void>;
 }
 export interface DriverInput {
@@ -55,6 +58,12 @@ export interface RunDeps {
     keepWorkdirs?: boolean;
     onProgress?: (progress: Progress) => void;
     onLedger?: (ledger: RunLedger) => void;
+    /** Every runtime event of every trial, as it happens: what a live view of the run is made of. */
+    onEvent?: (trial: {
+        scenario: string;
+        arm: string;
+        rep: number;
+    }, event: EventLike) => void;
     log?: (line: string) => void;
     /** Override the per-turn timeout for every scenario (ms). */
     turnTimeoutMs?: number;

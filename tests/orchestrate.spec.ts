@@ -92,6 +92,21 @@ describe('launchRun', () => {
     await run.done
   })
 
+  it('hands every runtime event to a watcher as the trial runs, reduced to what a live view needs', async () => {
+    const { activityOf } = await import('../src/core/ledger.js')
+    const p = project()
+    const seen: Array<{ trial: string; kind: string; name?: string }> = []
+    const run = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, {
+      driverFactory: scriptedDriverFactory(), invoke: fakeDsh,
+      // The scripted driver hands its events over at the end of each turn; the runner forwards them then.
+      onEvent: (trial, e) => { const a = activityOf(trial, e); if (a !== null) seen.push({ trial: `${trial.arm}#${trial.rep}`, kind: a.kind, ...(a.name !== undefined ? { name: a.name } : {}) }) },
+    })
+    await run.done
+    expect(new Set(seen.map(x => x.trial))).toEqual(new Set(['baseline#1', 'persona#1']))   // both arms were watched
+    expect(seen.some(x => x.kind === 'message' && x.name === 'read')).toBe(true)          // a tool request reads as one
+    expect(seen.some(x => x.kind === 'message' && x.name === undefined)).toBe(true)       // and the final reply as a reply
+  })
+
   it('treats a route change (model) as the one variable, runs A/A on request, and marks multi-variable runs', async () => {
     const p = project()
     const pro = await launchRun(p, { baseline: 'baseline', candidates: ['pro'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })

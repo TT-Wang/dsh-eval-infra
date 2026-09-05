@@ -18,6 +18,60 @@ export interface EventLike {
 
 interface Block { type: string; text?: string; name?: string; arguments?: string }
 
+/**
+ * One runtime event reduced to what someone watching the run needs: which trial,
+ * what the agent just did, and a short excerpt. Never the payload — a tool result
+ * can be megabytes, and the page only has to show that the agent is moving.
+ */
+export interface Activity {
+  at: number
+  scenario: string
+  arm: string
+  rep: number
+  kind: 'step' | 'call' | 'result' | 'message' | 'compaction' | 'turn-end'
+  turn?: number
+  step?: number
+  /** Tool name for a call; the names of the tools a message asked for. */
+  name?: string
+  args?: string
+  /** Characters of tool result, or of assistant text. */
+  chars?: number
+  isError?: boolean
+  text?: string
+  reason?: string
+}
+
+const EXCERPT = 160
+
+export function activityOf(trial: { scenario: string; arm: string; rep: number }, e: EventLike): Activity | null {
+  const d = (e.data ?? {}) as Record<string, unknown>
+  const base = { at: e.time ?? Date.now(), ...trial }
+  switch (e.type) {
+    case 'step/start':
+      return { ...base, kind: 'step', turn: Number(d['turn'] ?? 0), step: Number(d['step'] ?? 0) }
+    case 'tool/call':
+      return { ...base, kind: 'call', name: String(d['name'] ?? '?'), args: String(d['arguments'] ?? '').slice(0, EXCERPT) }
+    case 'tool/result': {
+      const message = (d['message'] ?? {}) as { content?: Array<{ type: string; isError?: boolean; content?: Array<{ type: string; text?: string }> }> }
+      const block = (message.content ?? []).find(b => b.type === 'tool-result')
+      const text = (block?.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('')
+      return { ...base, kind: 'result', chars: text.length, isError: block?.isError === true || d['error'] !== undefined, text: text.slice(0, EXCERPT) }
+    }
+    case 'assistant/message': {
+      const content = ((d['message'] ?? {}) as { content?: Block[] }).content ?? []
+      const text = content.filter(b => b.type === 'text').map(b => b.text ?? '').join('')
+      const calls = content.filter(b => b.type === 'tool-call').map(b => b.name ?? '?')
+      return { ...base, kind: 'message', turn: Number(d['turn'] ?? 0), step: Number(d['step'] ?? 0), chars: text.length, text: text.slice(0, EXCERPT), ...(calls.length > 0 ? { name: calls.join(', ') } : {}) }
+    }
+    case 'compaction/start':
+      return { ...base, kind: 'compaction' }
+    case 'turn/end':
+      return { ...base, kind: 'turn-end', turn: Number(d['turn'] ?? 0), reason: String(((d['reason'] ?? {}) as { kind?: string }).kind ?? 'unknown') }
+    default:
+      return null
+  }
+}
+
 export interface LedgerInput {
   runId: string
   scenario: string

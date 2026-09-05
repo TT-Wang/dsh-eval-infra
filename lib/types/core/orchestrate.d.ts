@@ -68,6 +68,8 @@ export interface LaunchHooks {
     log?: (line: string) => void;
     onProgress?: (p: Progress) => void;
     onLedger?: (l: RunLedger) => void;
+    /** Every runtime event as it happens, for a live view of the run. */
+    onEvent?: RunDeps['onEvent'];
     signal?: AbortSignal;
     /** Test seam: replace the SDK driver. */
     driverFactory?: RunDeps['driverFactory'];

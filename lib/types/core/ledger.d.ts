@@ -7,6 +7,33 @@ export interface EventLike {
     time?: number;
     data?: unknown;
 }
+/**
+ * One runtime event reduced to what someone watching the run needs: which trial,
+ * what the agent just did, and a short excerpt. Never the payload — a tool result
+ * can be megabytes, and the page only has to show that the agent is moving.
+ */
+export interface Activity {
+    at: number;
+    scenario: string;
+    arm: string;
+    rep: number;
+    kind: 'step' | 'call' | 'result' | 'message' | 'compaction' | 'turn-end';
+    turn?: number;
+    step?: number;
+    /** Tool name for a call; the names of the tools a message asked for. */
+    name?: string;
+    args?: string;
+    /** Characters of tool result, or of assistant text. */
+    chars?: number;
+    isError?: boolean;
+    text?: string;
+    reason?: string;
+}
+export declare function activityOf(trial: {
+    scenario: string;
+    arm: string;
+    rep: number;
+}, e: EventLike): Activity | null;
 export interface LedgerInput {
     runId: string;
     scenario: string;

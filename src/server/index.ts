@@ -20,6 +20,7 @@ import type { Report } from '../core/report.js'
 import { selfcheckAll } from '../core/selfcheck.js'
 import { annotationKey, applyAnnotations, listRuns, readAnnotations, readEnvironment, readJson, readLedgers, readPlan, runPaths, writeAnnotations, type Annotation, type Progress } from '../core/store.js'
 import type { RunLedger } from '../core/types.js'
+import { activityOf } from '../core/ledger.js'
 import type { TraceRow } from '../core/ledger.js'
 
 interface ActiveRun {
@@ -94,6 +95,8 @@ export class EvalApp {
       log: (line) => { logs.push(line); if (logs.length > 500) logs.shift(); emit('log', line) },
       onProgress: (p) => { entry.progress = p; emit('progress', p) },
       onLedger: (l) => emit('ledger', { scenario: l.scenario, arm: l.arm, rep: l.rep, ok: l.verdict?.ok ?? null, usd: l.totals.usd, error: l.error ?? null }),
+      // Watchers get a short record per event, not the event: enough to see the agent move.
+      onEvent: (trial, e) => { const a = activityOf(trial, e); if (a !== null) emit('activity', a) },
     })
     entry.id = launched.id
     this.active.set(launched.id, entry)

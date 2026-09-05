@@ -9,8 +9,8 @@
  * conclusion drawn from a half-finished run is exactly the mistake this tool
  * exists to prevent.
  */
-import { useEffect, useState } from 'preact/hooks'
-import { fmt, type LedgerLite } from '../api.js'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { fmt, type Activity, type LedgerLite } from '../api.js'
 import type { Progress } from '../../core/store.js'
 import type { RunPlan } from '../../core/types.js'
 
@@ -38,11 +38,45 @@ function settledPairs(ledgers: LedgerLite[], baseline: string, candidate: string
   return out
 }
 
-export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
+/** One feed line: what the agent did, in the fewest words that still say which tool and how much. */
+function describe(a: Activity): { mark: string; text: string; tone?: 'bad' | 'muted' } {
+  switch (a.kind) {
+    case 'step': return { mark: '⋯', text: `thinking · turn ${a.turn} step ${a.step}`, tone: 'muted' }
+    case 'call': return { mark: '▸', text: `${a.name}  ${a.args ?? ''}`.trimEnd() }
+    case 'result': return a.isError ? { mark: '◂', text: `error back (${fmt.k(a.chars ?? 0)} chars)${a.text ? ` · ${a.text}` : ''}`, tone: 'bad' } : { mark: '◂', text: `${fmt.k(a.chars ?? 0)} chars back`, tone: 'muted' }
+    case 'message': return a.name !== undefined ? { mark: '→', text: `calls ${a.name}${a.text ? ` · ${a.text}` : ''}` } : { mark: '✎', text: a.text && a.text.trim() !== '' ? a.text : `wrote ${fmt.k(a.chars ?? 0)} chars` }
+    case 'compaction': return { mark: '↻', text: 'compacting context' }
+    case 'turn-end': return { mark: '⏹', text: `turn ${a.turn} ended (${a.reason ?? 'unknown'})`, tone: 'muted' }
+  }
+}
+
+/** The current state of one running trial, from its newest activity. */
+function stateOf(a: Activity | undefined): string {
+  if (a === undefined) return 'booting the runtime'
+  switch (a.kind) {
+    case 'step': return `thinking (turn ${a.turn}, step ${a.step})`
+    case 'call': return `running ${a.name}`
+    case 'result': return a.isError ? `${a.name ?? 'tool'} returned an error, deciding what next` : `read ${fmt.k(a.chars ?? 0)} chars back, deciding what next`
+    case 'message': return a.name !== undefined ? `asked for ${a.name}` : 'wrote a reply'
+    case 'compaction': return 'compacting its context'
+    case 'turn-end': return `finished turn ${a.turn}, next prompt`
+  }
+}
+
+function Legend() {
+  return (
+    <span class="font-normal text-muted-foreground legend">
+      <i class="pip pass" /> passed <i class="pip fail" /> failed <i class="pip err" /> errored <i class="pip live" /> running <i class="pip queued" /> waiting
+    </span>
+  )
+}
+
+export function LiveRun({ plan, progress, ledgers, events, activity, onCancel }: {
   plan: RunPlan
   progress: Progress
   ledgers: LedgerLite[]
   events: StreamEvent[]
+  activity: Activity[]
   onCancel: () => void
 }) {
   const baseline = plan.baseline.name
@@ -58,6 +92,18 @@ export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
     return () => clearInterval(t)
   }, [])
   const elapsedMs = Math.max(0, now - new Date(progress.startedAt).getTime())
+  // The feed scrolls to its newest line as lines arrive, like a terminal.
+  const feedRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { const el = feedRef.current; if (el) el.scrollTop = el.scrollHeight }, [activity.length, events.length])
+  const newestFor = (t: { scenario: string; arm: string; rep: number }): Activity | undefined => {
+    for (let i = activity.length - 1; i >= 0; i -= 1) { const a = activity[i]!; if (a.scenario === t.scenario && a.arm === t.arm && a.rep === t.rep) return a }
+    return undefined
+  }
+  const lastAt = activity.length > 0 ? activity[activity.length - 1]!.at : null
+  const feed = [
+    ...activity.map(a => ({ at: a.at, who: `${a.arm} #${a.rep}`, scenario: a.scenario, ...describe(a) })),
+    ...events.map(e => ({ at: e.at, who: '', scenario: '', mark: e.kind === 'done' ? '' : '·', text: e.text, tone: e.tone === 'bad' ? 'bad' as const : e.kind === 'done' ? undefined : 'muted' as const })),
+  ].sort((a, b) => a.at - b.at).slice(-150)
   const perTrial = done > 0 ? elapsedMs / done : null
   const remaining = perTrial === null ? null : perTrial * (progress.total - done)
   const spendPerTrial = done > 0 ? progress.usd / done : null
@@ -125,26 +171,51 @@ export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
           </div>
         </section>
 
-        {/* the stream */}
+        {/* what each running trial is doing right now */}
         <section class="uk-card">
-          <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Activity</h2></div>
-          <div class="uk-card-body py-2">
-            <div class="stream">
-              {events.length === 0 && <p class="text-sm text-muted-foreground">waiting for the first turn…</p>}
-              {events.map((e, i) => (
-                <div key={`${e.at}-${i}`} class="stream-row">
-                  <span class="when">{new Date(e.at).toLocaleTimeString([], { hour12: false })}</span>
-                  <span class={e.tone === 'good' ? 'text-foreground' : e.tone === 'bad' ? 'text-destructive' : 'text-muted-foreground'}>{e.text}</span>
+          <div class="uk-card-header py-3 flex items-center justify-between gap-2">
+            <h2 class="uk-card-title text-sm">Live</h2>
+            <span class="text-xs text-muted-foreground">{lastAt === null ? 'waiting for the first event' : `last event ${fmt.secs(Math.max(0, now - lastAt))} ago`}</span>
+          </div>
+          <div class="uk-card-body py-2 flex flex-col gap-2">
+            {progress.active.length === 0 && <p class="text-sm text-muted-foreground">nothing in flight</p>}
+            {progress.active.map((t) => {
+              const a = newestFor(t)
+              return (
+                <div key={`${t.scenario}-${t.arm}-${t.rep}`} class="live-now">
+                  <div class="flex items-center gap-2 text-sm">
+                    <span class="pip live" aria-hidden="true" />
+                    <b>{t.arm} #{t.rep}</b>
+                    <code class="text-xs truncate">{t.scenario}</code>
+                    <span class="text-muted-foreground text-xs ml-auto">turn {t.turn}/{t.turns}</span>
+                  </div>
+                  <div class="text-xs text-muted-foreground pl-5">{stateOf(a)}{a !== undefined && <span> · {fmt.secs(Math.max(0, now - a.at))} ago</span>}</div>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
         </section>
       </div>
 
+      {/* every event as it happens */}
+      <section class="uk-card">
+        <div class="uk-card-header py-2"><h2 class="uk-card-title text-sm">Activity <span class="font-normal text-muted-foreground">every tool call and reply, as it happens</span></h2></div>
+        <div class="live-feed" ref={feedRef}>
+          {feed.length === 0 && <p class="text-sm text-muted-foreground p-2">waiting for the first event…</p>}
+          {feed.map((l, i) => (
+            <div key={`${l.at}-${i}`} class={`feed-row ${l.tone ?? ''}`}>
+              <span class="when">{new Date(l.at).toLocaleTimeString([], { hour12: false })}</span>
+              <span class="who" title={l.scenario}>{l.who}</span>
+              <span class="mark">{l.mark}</span>
+              <span class="what">{l.text}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* the grid filling in */}
       <section class="uk-card">
-        <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Trials <span class="font-normal text-muted-foreground">● passed ● failed ● errored ○ waiting</span></h2></div>
+        <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Trials <Legend /></h2></div>
         <div class="uk-card-body py-0 table-scroll">
           <table class="uk-table uk-table-divider uk-table-sm text-sm">
             <thead><tr><th>scenario</th>{arms.map(a => <th key={a}>{a}</th>)}</tr></thead>

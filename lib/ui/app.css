@@ -202,3 +202,14 @@ details.fold > summary .cls { margin-left: 4px; }
 .starting-steps li.now { color: hsl(var(--foreground)); }
 .starting-steps li.now::before { content: '● '; color: hsl(var(--primary)); }
 .starting-steps li.done::before { content: '✓ '; }
+
+/* Live view: what each running trial is doing, and the feed of everything it did. */
+.legend .pip { display: inline-block; vertical-align: middle; margin: 0 2px 0 6px; cursor: default; }
+.live-now { border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 6px 8px; }
+.live-feed { height: 260px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 4px 0; }
+.feed-row { display: grid; grid-template-columns: 62px 110px 14px 1fr; gap: 6px; padding: 2px 10px; white-space: nowrap; }
+.feed-row .when, .feed-row .who { color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; }
+.feed-row .mark { color: hsl(var(--muted-foreground)); text-align: center; }
+.feed-row .what { overflow: hidden; text-overflow: ellipsis; }
+.feed-row.muted .what { color: hsl(var(--muted-foreground)); }
+.feed-row.bad .what { color: hsl(var(--destructive)); }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
-import { api, fmt, stream, STATIC, type LedgerLite, type RunDetail } from '../api.js'
+import { api, fmt, stream, STATIC, type Activity, type LedgerLite, type RunDetail } from '../api.js'
 import type { TraceRow } from '../../core/ledger.js'
 import { VirtualRows } from '../virtual.js'
 import { LiveRun, type StreamEvent } from './live.js'
@@ -21,6 +21,7 @@ export function RunView({ id }: { id: string }) {
   const [showLogs, setShowLogs] = useState(false)
   const [sortKey, setSortKey] = useState<'class' | 'cost' | 'name'>('class')
   const [events, setEvents] = useState<StreamEvent[]>([])
+  const [activity, setActivity] = useState<Activity[]>([])
 
   const load = (): void => {
     api.run(id).then((d) => { setDetail(d); setLogs(d.logs) }).catch(e => setError(String(e)))
@@ -45,6 +46,7 @@ export function RunView({ id }: { id: string }) {
         })
       }
       else if (event === 'log') setLogs(l => [...l.slice(-400), String(data)])
+      else if (event === 'activity' && data) setActivity(prev => [...prev.slice(-399), data as Activity])
       else if (event === 'ledger') {
         const l = data as { scenario?: string; arm?: string; rep?: number; ok?: boolean; usd?: number } | null
         if (l?.scenario !== undefined) {
@@ -87,7 +89,7 @@ export function RunView({ id }: { id: string }) {
       </div>
 
       {running && progress && (
-        <LiveRun plan={plan} progress={progress} ledgers={ledgers} events={events} onCancel={() => { void api.cancel(id) }} />
+        <LiveRun plan={plan} progress={progress} ledgers={ledgers} events={events} activity={activity} onCancel={() => { void api.cancel(id) }} />
       )}
 
       {!running && progress && (
@@ -113,7 +115,7 @@ export function RunView({ id }: { id: string }) {
 
       {!report && !running && (
       <div class="card">
-        <h2>Trials <span class="muted small">● pass ● fail ● error ○ queued · click a pip for its trace</span></h2>
+        <h2>Trials <span class="muted small legend"><i class="pip pass" /> pass <i class="pip fail" /> fail <i class="pip err" /> error <i class="pip queued" /> queued · click a pip for its trace</span></h2>
         <div class="scroll-x">
           <table class="data matrix">
             <thead><tr><th>scenario</th>{arms.map(a => <th>{a}</th>)}</tr></thead>
