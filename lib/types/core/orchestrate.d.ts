@@ -59,6 +59,10 @@ export interface RunRequest {
     dockerImage?: string;
     /** Seed for the sequential shuffle (default 42). */
     seed?: number;
+    /** Model id for every arm (default deepseek-v4-flash). An arm never picks its own. */
+    model?: string;
+    /** Reasoning effort for every arm; empty or absent keeps the adapter default. */
+    effort?: string;
 }
 export interface LaunchHooks {
     log?: (line: string) => void;

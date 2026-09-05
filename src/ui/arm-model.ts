@@ -88,7 +88,8 @@ export function designFromSpec(spec: ArmSpecLike, plugins: BundleSource[] = []):
 
 /** How many things this arm changes: the number the one-variable rule counts. */
 export function variableCount(design: ArmDesign): number {
-  return design.rows.length + (design.model !== undefined ? 1 : 0) + (design.effort !== undefined ? 1 : 0)
+  // model and effort are the run's, applied to both arms, so they never count
+  return design.rows.length
 }
 
 function scalar(value: unknown): string {

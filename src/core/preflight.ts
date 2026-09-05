@@ -16,7 +16,7 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { loadArmFile, parseComposedRows, resolveArm } from './arms.js'
+import { loadArmFile, parseComposedRows, resolveArm, applyRoute, type RunRoute } from './arms.js'
 import { prepareArms, describeDiff } from './plan.js'
 import { collectScenarios, LaunchError, resolveArmPath } from './orchestrate.js'
 import { executeRun, writeBaseOverlays, type DriverFactory } from './runner.js'
@@ -87,6 +87,8 @@ export interface PreflightOptions {
   driverFactory?: DriverFactory
   invoke?: Parameters<typeof prepareArms>[2]['invoke']
   log?: (line: string) => void
+  /** The run's model and effort, applied to both arms so the check composes what the run will. */
+  route?: RunRoute
 }
 
 export async function preflightArm(project: Project, armName: string, options: PreflightOptions = {}): Promise<PreflightResult> {
@@ -98,8 +100,8 @@ export async function preflightArm(project: Project, armName: string, options: P
 async function preflightIn(project: Project, armName: string, options: PreflightOptions, armsDir: string): Promise<PreflightResult> {
   const log = options.log ?? (() => { /* quiet */ })
   const baselineName = existsSync(resolveArmPath(project, 'baseline')) ? 'baseline' : armName
-  const arm = loadArmFile(resolveArmPath(project, armName))
-  const baseline = baselineName === armName ? arm : loadArmFile(resolveArmPath(project, baselineName))
+  const arm = applyRoute(loadArmFile(resolveArmPath(project, armName)), options.route ?? {})
+  const baseline = baselineName === armName ? arm : applyRoute(loadArmFile(resolveArmPath(project, baselineName)), options.route ?? {})
   const result: PreflightResult = { arm: armName, baseline: baselineName, ok: false, stages: [], rows: [], diff: [], variables: 0 }
 
   // 1. compose

@@ -189,3 +189,16 @@ details.fold > summary::before { content: '▸'; color: hsl(var(--muted-foregrou
 details.fold[open] > summary::before { content: '▾'; }
 details.fold > summary .muted { font-weight: 400; }
 details.fold > summary .cls { margin-left: 4px; }
+
+/* The moment between "Start evaluation" and the run page. */
+.starting { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 40px 20px; }
+.starting h1 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+.starting p { margin: 0; }
+.spinner { width: 36px; height: 36px; border-radius: 50%; border: 3px solid hsl(var(--border)); border-top-color: hsl(var(--primary)); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+.starting-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 46ch; font-size: .9rem; color: hsl(var(--muted-foreground)); }
+.starting-steps li::before { content: '○ '; }
+.starting-steps li.now { color: hsl(var(--foreground)); }
+.starting-steps li.now::before { content: '● '; color: hsl(var(--primary)); }
+.starting-steps li.done::before { content: '✓ '; }

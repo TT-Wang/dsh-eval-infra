@@ -7,7 +7,7 @@ import type { ArmSpec } from '../core/types.js'
 /** Mount prefix: '' at the root, '/eval' inside the dsh web host. Hash routing keeps the pathname stable. */
 export const BASE = location.pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '')
 
-export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; ownScenarioRoot?: string; armsDir: string; docker?: { available: boolean; detail: string }; defaults: { repeats: number; concurrency: number } }
+export interface Meta { version: string; project: string; home: string; profile: string; profileReady: boolean; plugins: string[]; scenarioRoot: string; ownScenarioRoot?: string; armsDir: string; docker?: { available: boolean; detail: string }; defaults: { repeats: number; concurrency: number; model: string; models: string[]; efforts: string[] } }
 export interface ScenarioInfo { name: string; dir: string; meta: ScenarioMeta; turns: number; hasOracle: boolean; variants?: number; prompts: string[] }
 export interface ArmInfo { file: string; path: string; spec?: ArmSpec; error?: string; text: string }
 export interface RunDetail { plan: RunPlan; progress: Progress | null; report: Report | null; env: (RunEnvironment & { diffs?: Array<{ candidate: string; variables: number; rows: unknown[]; route: string[] }>; multiVariable?: boolean }) | null; active: boolean; logs: string[]; sequential?: { seed: number; candidate: string | null; decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> } | null; integrity?: RunIntegrity | null }
@@ -64,6 +64,8 @@ export interface Preflight {
   diff: string[]; variables: number
   smoke?: { scenario: string; ok: boolean; usd: number; steps: number; tools: string[]; error?: string; wallMs: number }
 }
+/** The run's model and effort, shared by every arm. */
+export interface Route { model?: string; effort?: string }
 export interface RowInfo { id: string; name?: string; disabled: boolean; configKeys: string[]; config?: Record<string, unknown> }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
 export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }
@@ -77,7 +79,7 @@ export const api = {
   plugins: () => req<{ plugins: PluginInfo[] }>('/plugins'),
   addScenario: (name: string, files: Record<string, string>) => req<IntakeResult>('/scenarios', { method: 'POST', body: JSON.stringify({ name, files }) }),
   scenarioTemplate: (name: string) => req<Record<string, string>>(`/scenarios/template?name=${encodeURIComponent(name)}`),
-  preflight: (arm: string, dry: boolean) => req<Preflight>('/preflight', { method: 'POST', body: JSON.stringify({ arm, dry }) }),
+  preflight: (arm: string, dry: boolean, route: Route = {}) => req<Preflight>('/preflight', { method: 'POST', body: JSON.stringify({ arm, dry, ...route }) }),
   rows: (arm: string) => req<{ arm: string; rows: RowInfo[] }>(`/rows?arm=${encodeURIComponent(arm)}`),
   savePatch: (name: string, text: string) => req<{ saved: string }>(`/patch/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),
   saveArm: (name: string, text: string) => req<{ saved: string; spec: unknown }>(`/arms/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ text }) }),
@@ -88,7 +90,7 @@ export const api = {
   trace: (id: string, scenario: string, arm: string, rep: number) => req<TraceRow[]>(`/runs/${id}/ledgers/${scenario}/${arm}/rep${rep}/trace`),
   scenarios: () => req<{ scenarios: ScenarioInfo[]; invalid: Array<{ dir: string; error: string }> }>('/scenarios'),
   arms: () => req<{ dir: string; arms: ArmInfo[] }>('/arms'),
-  diff: (baseline: string, candidates: string[]) => req<{ diffs: Array<{ candidate: string; variables: number; lines: string[] }> }>('/arms/diff', { method: 'POST', body: JSON.stringify({ baseline, candidates }) }),
+  diff: (baseline: string, candidates: string[], route: Route = {}) => req<{ diffs: Array<{ candidate: string; variables: number; lines: string[] }> }>('/arms/diff', { method: 'POST', body: JSON.stringify({ baseline, candidates, ...route }) }),
   start: (body: unknown) => req<{ id: string }>('/runs', { method: 'POST', body: JSON.stringify(body) }),
   cancel: (id: string) => req<{ cancelled: boolean }>(`/runs/${id}/cancel`, { method: 'POST' }),
   annotations: (id: string) => req<Record<string, { verdict: boolean | null; note: string; by: string; at: string }>>(`/runs/${id}/annotations`),

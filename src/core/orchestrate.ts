@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { loadArmFile, type ArmError } from './arms.js'
+import { loadArmFile, type ArmError, applyRoute, type RunRoute } from './arms.js'
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project } from './project.js'
@@ -73,6 +73,10 @@ export interface RunRequest {
   dockerImage?: string
   /** Seed for the sequential shuffle (default 42). */
   seed?: number
+  /** Model id for every arm (default deepseek-v4-flash). An arm never picks its own. */
+  model?: string
+  /** Reasoning effort for every arm; empty or absent keeps the adapter default. */
+  effort?: string
 }
 
 export interface LaunchHooks {
@@ -171,8 +175,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     candidateSpecs = plan.candidates
   } else {
     if (request.candidates.length === 0 && !request.aa) throw new LaunchError('at least one candidate arm is required', 'usage')
+    const route: RunRoute = { ...(request.model !== undefined ? { model: request.model } : {}), ...(request.effort !== undefined ? { effort: request.effort } : {}) }
     const baselinePath = resolveArmPath(project, request.baseline)
-    baselineSpec = loadArmFile(baselinePath)
+    baselineSpec = applyRoute(loadArmFile(baselinePath), route, log)
     sources[baselineSpec.name] = baselinePath
     if (request.aa) {
       const twin: ArmSpec = { ...baselineSpec, name: `${baselineSpec.name}-aa`, description: `identical copy of ${baselineSpec.name} (A/A noise floor)` }
@@ -180,7 +185,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       candidateSpecs = [twin]
     } else candidateSpecs = request.candidates.map((c) => {
       const p = resolveArmPath(project, c)
-      const spec = loadArmFile(p)
+      const spec = applyRoute(loadArmFile(p), route, log)
       sources[spec.name] = p
       return spec
     })

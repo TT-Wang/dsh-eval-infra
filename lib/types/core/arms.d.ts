@@ -4,6 +4,18 @@ export declare class ArmError extends Error {
 export declare const DEFAULT_PROFILE = "eval";
 export declare const DEFAULT_PROVIDER = "deepseek-official";
 export declare const DEFAULT_MODEL = "deepseek-v4-flash";
+/** The model and effort a run uses; the same for every arm, since neither is a thing an arm may vary. */
+export interface RunRoute {
+    model?: string;
+    effort?: string;
+}
+/**
+ * Pin an arm to the run's route. The model and the reasoning effort belong to the
+ * experiment, not to an arm: two arms that differ in either are not a comparison
+ * of the component under test. A value the arm file declared is reported to the
+ * log when the run changes it, so the override is never silent.
+ */
+export declare function applyRoute(spec: ArmSpec, route: RunRoute, log?: (line: string) => void): ArmSpec;
 /** Parse an arm definition (YAML or JSON text). */
 export declare function parseArm(text: string, sourcePath?: string): ArmSpec;
 export declare function loadArmFile(path: string): ArmSpec;

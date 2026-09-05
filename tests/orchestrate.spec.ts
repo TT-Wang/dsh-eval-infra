@@ -80,6 +80,18 @@ describe('launchRun', () => {
     expect(readFileSync(paths.reportMd, 'utf8')).toContain('persona vs baseline')
   })
 
+  it('applies the run\'s model and effort to every arm, so an arm cannot differ in either', async () => {
+    const p = project()
+    const logs: string[] = []
+    // `pro` declares its own model; the run names one for both arms, and that is what runs.
+    const run = await launchRun(p, { baseline: 'baseline', candidates: ['pro'], scenarios: ['t1*'], repeats: 1, model: 'deepseek-v4-flash', effort: 'high' }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh, log: l => logs.push(l) })
+    expect(run.diffs[0]!.route).toEqual([])                       // no route variable left between the arms
+    expect([run.plan.baseline.model, run.plan.baseline.effort]).toEqual(['deepseek-v4-flash', 'high'])
+    expect([run.plan.candidates[0]!.model, run.plan.candidates[0]!.effort]).toEqual(['deepseek-v4-flash', 'high'])
+    expect(logs).toContain('arm pro declares model deepseek-v4-pro; the run uses deepseek-v4-flash for every arm')
+    await run.done
+  })
+
   it('treats a route change (model) as the one variable, runs A/A on request, and marks multi-variable runs', async () => {
     const p = project()
     const pro = await launchRun(p, { baseline: 'baseline', candidates: ['pro'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })

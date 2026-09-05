@@ -8,7 +8,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readdirSync } from 'node:fs'
-import { loadArmFile, parseArm } from '../core/arms.js'
+import { loadArmFile, parseArm, applyRoute, DEFAULT_MODEL, type RunRoute } from '../core/arms.js'
 import { load as parseYaml } from 'js-yaml'
 import { toAtif } from '../core/atif.js'
 import { evalInfraVersion, tilde } from '../core/env.js'
@@ -169,7 +169,7 @@ export class EvalApp {
         plugins: Object.keys(profile.dependencies),
         scenarioRoot: tilde(project.scenarioRoot), ownScenarioRoot: tilde(project.ownScenarioRoot), armsDir: tilde(project.armsDir),
         docker: { available: docker.ok, detail: docker.detail },
-        defaults: { repeats: project.config.repeats, concurrency: project.config.concurrency },
+        defaults: { repeats: project.config.repeats, concurrency: project.config.concurrency, model: DEFAULT_MODEL, models: MODELS, efforts: EFFORTS },
       })
       return
     }
@@ -219,9 +219,9 @@ export class EvalApp {
       return
     }
     if (method === 'POST' && path === '/preflight') {
-      const body = await readBody(req) as { arm: string; dry?: boolean; scenario?: string }
+      const body = await readBody(req) as { arm: string; dry?: boolean; scenario?: string; model?: string; effort?: string }
       const { preflightArm } = await import('../core/preflight.js')
-      json(res, 200, await preflightArm(project, body.arm, { ...(body.dry === true ? { dry: true } : {}), ...(typeof body.scenario === 'string' ? { scenario: body.scenario } : {}) }))
+      json(res, 200, await preflightArm(project, body.arm, { ...(body.dry === true ? { dry: true } : {}), ...(typeof body.scenario === 'string' ? { scenario: body.scenario } : {}), route: routeOf(body) }))
       return
     }
     // Plugins on this machine an arm can insert, so the designer offers real choices.
@@ -290,11 +290,13 @@ export class EvalApp {
       return
     }
     if (method === 'POST' && path === '/arms/diff') {
-      const body = await readBody(req) as { baseline?: string; candidates?: string[] }
+      const body = await readBody(req) as { baseline?: string; candidates?: string[]; model?: string; effort?: string }
       if (typeof body.baseline !== 'string' || body.baseline === '') { json(res, 400, { error: 'no baseline arm named' }); return }
       if (body.candidates !== undefined && !Array.isArray(body.candidates)) { json(res, 400, { error: 'candidates must be a list of arm names' }); return }
-      const baseline = loadArmFile(resolveArmPath(project, body.baseline))
-      const candidates = (body.candidates ?? []).map(c => loadArmFile(resolveArmPath(project, c)))
+      // The same route the run will apply, so the variable count here is the one the run sees.
+      const route = routeOf(body)
+      const baseline = applyRoute(loadArmFile(resolveArmPath(project, body.baseline)), route)
+      const candidates = (body.candidates ?? []).map(c => applyRoute(loadArmFile(resolveArmPath(project, c)), route))
       const prepared = await withPreviewArms(project, armsDir => prepareArms(baseline, candidates, { evalHome: project.home, armsDir }))
       json(res, 200, { diffs: prepared.diffs.map(d => ({ ...d, lines: describeDiff(d) })) })
       return
@@ -411,6 +413,18 @@ export class EvalApp {
     }
     void url
     json(res, 404, { error: `no route ${method} ${path}` })
+  }
+}
+
+/** Models and efforts the UI offers; an arm file accepts any string, these are the ones with a price row. */
+const MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp']
+const EFFORTS = ['off', 'low', 'high', 'max']
+
+/** The run-level route from a request body: a model when named, an effort when present ('' = adapter default). */
+function routeOf(body: { model?: unknown; effort?: unknown }): RunRoute {
+  return {
+    ...(typeof body.model === 'string' && body.model !== '' ? { model: body.model } : {}),
+    ...(typeof body.effort === 'string' ? { effort: body.effort } : {}),
   }
 }
 

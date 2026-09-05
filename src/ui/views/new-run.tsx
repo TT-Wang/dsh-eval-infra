@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { api, fmt, type ArmInfo, type History, type Meta, type ScenarioInfo } from '../api.js'
+import { api, fmt, type ArmInfo, type History, type Meta, type Route, type ScenarioInfo } from '../api.js'
 import { navigate } from '../main.js'
 import { pickCandidates } from '../select-arms.js'
 import { ArmDesigner } from './arm-designer.js'
@@ -18,6 +18,11 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [category, setCategory] = useState('')
   const [repeats, setRepeats] = useState(3)
   const [concurrency, setConcurrency] = useState(2)
+  // The run's route, the same for both arms; '' effort means the adapter default.
+  const [model, setModel] = useState('')
+  const [effort, setEffort] = useState('')
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const [label, setLabel] = useState('')
   const [allowMulti, setAllowMulti] = useState(false)
   const [aa, setAa] = useState(false)
@@ -48,7 +53,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
   useEffect(() => {
-    api.meta().then((m) => { setMeta(m); setRepeats(m.defaults.repeats); setConcurrency(m.defaults.concurrency) }).catch(e => setError(String(e)))
+    api.meta().then((m) => { setMeta(m); setRepeats(m.defaults.repeats); setConcurrency(m.defaults.concurrency); setModel(m.defaults.model) }).catch(e => setError(String(e)))
     api.arms().then((r) => {
       setArms(r.arms)
       const names = r.arms.filter(a => a.spec).map(a => a.spec!.name)
@@ -62,6 +67,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   }, [])
 
   const armNames = arms.filter(a => a.spec).map(a => a.spec!.name)
+  const route: Route = { ...(model !== '' ? { model } : {}), effort }
   // Belt and braces: even if state goes stale, nothing downstream sees the baseline as a candidate.
   const activeCandidates = candidates.filter(n => n !== baseline)
 
@@ -69,9 +75,15 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
     if (baseline === '' || (activeCandidates.length === 0 && !aa)) { setDiff(null); return }
     let cancelled = false
     setDiffError(null)
-    api.diff(baseline, aa ? [] : activeCandidates).then((r) => { if (!cancelled) setDiff(r.diffs) }).catch((e) => { if (!cancelled) { setDiff(null); setDiffError(String(e)) } })
+    api.diff(baseline, aa ? [] : activeCandidates, route).then((r) => { if (!cancelled) setDiff(r.diffs) }).catch((e) => { if (!cancelled) { setDiff(null); setDiffError(String(e)) } })
     return () => { cancelled = true }
-  }, [baseline, activeCandidates.join(','), aa])
+  }, [baseline, activeCandidates.join(','), aa, model, effort])
+  // A clock for the starting screen: selfcheck and composition take a few seconds and the page should say so.
+  useEffect(() => {
+    if (startedAt === null) return
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 500)
+    return () => clearInterval(t)
+  }, [startedAt])
 
   const categories = useMemo(() => [...new Set(scenarios.map(s => s.meta.category ?? 'uncategorised'))].sort(), [scenarios])
   const visible = scenarios.filter(s => (category === '' || (s.meta.category ?? 'uncategorised') === category) && (query === '' || s.name.includes(query) || (s.meta.stressor ?? '').toLowerCase().includes(query.toLowerCase())))
@@ -124,13 +136,14 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
 
   const toggle = (name: string): void => { const n = new Set(selected); if (n.has(name)) n.delete(name); else n.add(name); setSelected(n) }
   const start = async (): Promise<void> => {
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setStartedAt(Date.now()); setElapsed(0)
     try {
       const cap = Number(maxUsd)
       const perTrial = Number(maxUsdPerTrial)
       const fork = Number(forkAt)
       const { id } = await api.start({
         baseline, candidates: aa ? [] : activeCandidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa,
+        ...route,
         ...(sandbox !== 'auto' ? { sandbox } : docker ? { sandbox: 'docker' } : {}),
         ...(dockerRuntime.trim() !== '' ? { dockerRuntime: dockerRuntime.trim() } : {}),
         ...(keepDshSandbox ? { dockerKeepSandbox: true } : {}),
@@ -141,7 +154,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         ...(replayRun !== '' ? { replay: { runId: replayRun, ...(forkAt !== '' && Number.isFinite(fork) && fork >= 0 ? { forkAt: fork } : {}) } } : {}),
       })
       navigate(`/run/${id}`)
-    } catch (e) { setError(String(e)) } finally { setBusy(false) }
+    } catch (e) { setError(String(e)); setBusy(false); setStartedAt(null) }
   }
 
 
@@ -150,6 +163,26 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const canAdvance = step === 0
     ? baseline !== '' && (aa || primaryCandidate !== '') && (!multi || allowMulti)
     : step === 1 ? true : selected.size > 0
+
+  if (busy) {
+    // Between the click and the run page: the server is selfchecking every selected
+    // scenario and composing both arms, which takes seconds, and a page that says
+    // so is better than a button that changed its label.
+    const armCount = 1 + (aa ? 1 : activeCandidates.length)
+    return (
+      <section class="starting">
+        <div class="spinner" aria-hidden="true" />
+        <h1>Starting the evaluation</h1>
+        <p class="muted">{selected.size} scenario{selected.size === 1 ? '' : 's'} × {repeats} repeat{repeats === 1 ? '' : 's'} × {armCount} arms · {trials} trials</p>
+        <ol class="starting-steps">
+          <li class={elapsed < 2 ? 'now' : 'done'}>Checking every selected scenario's verifier</li>
+          <li class={elapsed < 2 ? '' : 'now'}>Composing both arms and confirming they differ in one thing</li>
+          <li>Booting the first trials</li>
+        </ol>
+        <p class="muted small">{elapsed}s</p>
+      </section>
+    )
+  }
 
   return (
     <section class="mx-auto max-w-[1400px] px-5 py-5 flex flex-col gap-5">
@@ -181,7 +214,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         <>
           {!aa && (
             <ArmDesigner
-              meta={meta} arms={arms} baseline={baseline} candidate={primaryCandidate}
+              meta={meta} arms={arms} baseline={baseline} candidate={primaryCandidate} route={route}
               onBaseline={(n) => { setBaseline(n); setCandidates(pickCandidates(candidates, n, armNames)) }}
               onCandidate={n => setCandidates([n])}
               onSaved={reloadArms}
@@ -205,6 +238,23 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
         <div class="flex flex-col gap-4">
           <section class="uk-card">
             <div class="uk-card-body py-4 flex flex-col gap-5">
+              <div class="grid gap-4 sm:grid-cols-2 max-w-xl">
+                <label class="flex flex-col gap-1">
+                  <span class="text-sm font-medium">Model</span>
+                  <select class="uk-select" value={model} onChange={e => setModel((e.target as HTMLSelectElement).value)}>
+                    {(meta?.defaults.models ?? [model]).map(m => <option value={m}>{m}</option>)}
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-sm font-medium">Reasoning effort</span>
+                  <select class="uk-select" value={effort} onChange={e => setEffort((e.target as HTMLSelectElement).value)}>
+                    <option value="">default</option>
+                    {(meta?.defaults.efforts ?? []).map(m => <option value={m}>{m}</option>)}
+                  </select>
+                </label>
+                <span class="text-xs text-muted-foreground sm:col-span-2">Both arms run on the same model at the same effort. Only the component under test differs.</span>
+              </div>
+
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">Repeats per scenario, per arm</span>
                 <input class="uk-input max-w-32" type="number" min={1} max={30} value={repeats} onInput={e => setRepeats(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
@@ -226,20 +276,6 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
                 </span>
               </label>
 
-              <div class="flex flex-col gap-1">
-                <span class="text-sm font-medium">Isolation</span>
-                <p class="text-sm text-muted-foreground">
-                  {sandbox === 'auto'
-                    ? autoIsolation.container
-                      ? <>Each trial runs in its own container, because {autoIsolation.reason}. Slower by twenty seconds or so per trial, and the safe default for code you did not write.</>
-                      : <>Each trial runs on this machine under dsh's own workspace sandbox, because {autoIsolation.reason}.</>
-                    : sandbox === 'docker'
-                      ? <>Forced to a container per trial.</>
-                      : <>Forced to this machine, under dsh's own workspace sandbox.</>}
-                  {' '}
-                  <button class="underline" onClick={() => setAdvanced(true)}>change</button>
-                </p>
-              </div>
             </div>
           </section>
 
@@ -259,7 +295,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
               </label>
               <label class="text-sm">Where each trial runs
                 <select class="uk-select" value={sandbox} onChange={(e) => { const v = (e.target as HTMLSelectElement).value as 'auto' | 'host' | 'docker'; setSandbox(v); setDocker(v === 'docker') }}>
-                  <option value="auto">auto — decide from what is linked and available</option>
+                  <option value="auto">auto — {autoIsolation.container ? `a container per trial (${autoIsolation.reason})` : `this machine (${autoIsolation.reason})`}</option>
                   <option value="host">host — dsh's own workspace sandbox, fastest</option>
                   <option value="docker">container per trial</option>
                 </select>

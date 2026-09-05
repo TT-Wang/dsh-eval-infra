@@ -1,3 +1,4 @@
+import { type RunRoute } from './arms.js';
 import { prepareArms } from './plan.js';
 import { type DriverFactory } from './runner.js';
 import { type Project } from './project.js';
@@ -51,5 +52,7 @@ export interface PreflightOptions {
     driverFactory?: DriverFactory;
     invoke?: Parameters<typeof prepareArms>[2]['invoke'];
     log?: (line: string) => void;
+    /** The run's model and effort, applied to both arms so the check composes what the run will. */
+    route?: RunRoute;
 }
 export declare function preflightArm(project: Project, armName: string, options?: PreflightOptions): Promise<PreflightResult>;

@@ -230,10 +230,11 @@ describe('arm design model', () => {
     expect(again).toEqual(design)
     expect(armToYaml(design)).toContain('pinSteps: 2')
 
-    // an arm with no differences is still a valid file, and model counts as a variable
+    // an arm with no differences is still a valid file; a declared model is kept in the file
+    // but is not a variable — the run's model applies to every arm
     const empty = { name: 'baseline', rows: [] }
     expect(armToYaml(empty)).toBe('name: baseline\npatches: []\n')
-    expect(variableCount({ name: 'pro', rows: [], model: 'deepseek-v4-pro' })).toBe(1)
+    expect(variableCount({ name: 'pro', rows: [], model: 'deepseek-v4-pro' })).toBe(0)
     expect(armToYaml({ name: 'pro', rows: [], model: 'deepseek-v4-pro' })).toBe('name: pro\nmodel: deepseek-v4-pro\n')
 
     // a hand-written row the designer does not model is carried through untouched

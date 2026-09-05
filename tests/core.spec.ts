@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { bandAt, priceUsage } from '../src/core/pricing.js'
 import { normalizeUsage } from '../src/core/usage.js'
 import { bootstrapMean, signTest, wilson, median } from '../src/core/stats.js'
-import { parseArm, parseComposedRows, diffComposedRows } from '../src/core/arms.js'
+import { applyRoute, parseArm, parseComposedRows, diffComposedRows } from '../src/core/arms.js'
 import { parseDotenv } from '../src/core/env.js'
 import { prepareArms } from '../src/core/plan.js'
 import { loadProject, withPreviewArms } from '../src/core/project.js'
@@ -503,5 +503,25 @@ describe('arm previews', () => {
     // and each directory is removed when its preview is done
     expect(readdirSync(project.evalDir).filter(e => e.startsWith('tmp-arms'))).toEqual([])
     rmSync(root, { recursive: true, force: true })
+  })
+})
+
+
+describe('run route', () => {
+  it('pins every arm to the run\'s model and effort, and says so when an arm declared its own', () => {
+    const lines: string[] = []
+    const log = (l: string): void => { lines.push(l) }
+    const a = applyRoute({ name: 'baseline' }, { model: 'deepseek-v4-pro', effort: 'high' }, log)
+    const b = applyRoute({ name: 'cand', model: 'deepseek-v4-flash', effort: 'low' }, { model: 'deepseek-v4-pro', effort: 'high' }, log)
+    expect([a.model, a.effort]).toEqual(['deepseek-v4-pro', 'high'])
+    expect([b.model, b.effort]).toEqual(['deepseek-v4-pro', 'high'])   // the arm's own choice does not survive
+    expect(lines).toEqual([
+      'arm cand declares model deepseek-v4-flash; the run uses deepseek-v4-pro for every arm',
+      'arm cand declares effort low; the run uses high for every arm',
+    ])
+    // '' effort means the adapter default, and clears a declared one
+    expect(applyRoute({ name: 'x', effort: 'max' }, { effort: '' }).effort).toBeUndefined()
+    // no route at all leaves the arm alone
+    expect(applyRoute({ name: 'x', model: 'm', effort: 'e' }, {})).toEqual({ name: 'x', model: 'm', effort: 'e' })
   })
 })

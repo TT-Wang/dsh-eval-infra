@@ -59,7 +59,7 @@ export function RunView({ id }: { id: string }) {
   }, [id])
 
   if (error) return <p class="error">{error}</p>
-  if (!detail) return <p class="muted">loading…</p>
+  if (!detail) return <section class="starting"><div class="spinner" aria-hidden="true" /><p class="muted">loading the run…</p></section>
   const { plan, progress, report, env } = detail
   const arms = [plan.baseline.name, ...plan.candidates.map(c => c.name)]
   const byCell = new Map<string, LedgerLite[]>()
@@ -111,7 +111,7 @@ export function RunView({ id }: { id: string }) {
         </div>
       )}
 
-      {!report && (
+      {!report && !running && (
       <div class="card">
         <h2>Trials <span class="muted small">● pass ● fail ● error ○ queued · click a pip for its trace</span></h2>
         <div class="scroll-x">

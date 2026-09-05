@@ -9,17 +9,16 @@
  * columns is the one-variable rule, live.
  */
 import { useEffect, useMemo, useState } from 'preact/hooks'
-import { api, fmt, type ArmInfo, type Meta, type PluginInfo, type Preflight, type RowInfo } from '../api.js'
+import { api, fmt, type ArmInfo, type Meta, type PluginInfo, type Preflight, type Route, type RowInfo } from '../api.js'
 import { armToYaml, describeRow, designFromSpec, inverseOf, variableCount, type ArmDesign, type DesignRow } from '../arm-model.js'
 
-const MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp']
-const EFFORTS = ['off', 'low', 'high', 'max']
-
-export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCandidate, onSaved }: {
+export function ArmDesigner({ meta, arms, baseline, candidate, route, onBaseline, onCandidate, onSaved }: {
   meta: Meta | null
   arms: ArmInfo[]
   baseline: string
   candidate: string
+  /** The run's model and effort: both arms get them, so the diff must be counted with them applied. */
+  route: Route
   onBaseline: (name: string) => void
   onCandidate: (name: string) => void
   onSaved: () => void
@@ -69,7 +68,7 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
     try {
       if (dirty) await api.saveArm(design.name, armToYaml(design))
       setDirty(false)
-      setCheck(await api.preflight(design.name, dry))
+      setCheck(await api.preflight(design.name, dry, route))
       onSaved()
     } catch (e) { setError(String(e)) } finally { setChecking(null) }
   }
@@ -93,13 +92,6 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
     && (query === '' || p.name.toLowerCase().includes(query.toLowerCase()) || (p.description ?? '').toLowerCase().includes(query.toLowerCase())))
 
   const change = (next: ArmDesign): void => { setDesign(next); setDirty(true) }
-  /** Set or clear an optional field without letting `undefined` through an exact-optional type. */
-  const setField = (field: 'model' | 'effort', value: string): void => {
-    if (design === null) return
-    const { model, effort, ...rest } = design
-    const kept = { ...rest, ...(field === 'model' ? {} : model !== undefined ? { model } : {}), ...(field === 'effort' ? {} : effort !== undefined ? { effort } : {}) }
-    change(value === '' ? kept : { ...kept, [field]: value })
-  }
   const addPlugin = (p: PluginInfo): void => {
     if (design === null || used.has(p.name)) return
     // A plugin that replaces part of dsh ships a patch saying what it turns off; apply that
@@ -143,11 +135,11 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
   useEffect(() => {
     if (candidate === '' || baseline === '') { setComposedVariables(null); return }
     let cancelled = false
-    api.diff(baseline, [candidate])
+    api.diff(baseline, [candidate], route)
       .then(r => { if (!cancelled) setComposedVariables(r.diffs[0]?.variables ?? 0) })
       .catch(() => { if (!cancelled) setComposedVariables(null) })
     return () => { cancelled = true }
-  }, [baseline, candidate, dirty, check])
+  }, [baseline, candidate, dirty, check, route.model, route.effort])
   const variables = composedVariables ?? (design === null ? 0 : variableCount(design))
   const tone = variables === 0 ? 'uk-alert' : variables === 1 ? 'uk-alert' : 'uk-alert'
 
@@ -208,18 +200,6 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setShowOff(!showOff)}>turn a component off</button>
-              <label class="text-sm text-muted-foreground flex items-center gap-1">model
-                <select class="uk-select uk-form-sm" value={design?.model ?? ''} onChange={e => setField('model', (e.target as HTMLSelectElement).value)}>
-                  <option value="">same as baseline</option>
-                  {MODELS.map(m => <option value={m}>{m}</option>)}
-                </select>
-              </label>
-              <label class="text-sm text-muted-foreground flex items-center gap-1">effort
-                <select class="uk-select uk-form-sm" value={design?.effort ?? ''} onChange={e => setField('effort', (e.target as HTMLSelectElement).value)}>
-                  <option value="">same as baseline</option>
-                  {EFFORTS.map(m => <option value={m}>{m}</option>)}
-                </select>
-              </label>
             </div>
             {showOff && (
               <select class="uk-select uk-form-sm mt-2" onChange={e => turnOff((e.target as HTMLSelectElement).value)}>
