@@ -9,6 +9,7 @@
  * conclusion drawn from a half-finished run is exactly the mistake this tool
  * exists to prevent.
  */
+import { useEffect, useState } from 'preact/hooks'
 import { fmt, type LedgerLite } from '../api.js'
 import type { Progress } from '../../core/store.js'
 import type { RunPlan } from '../../core/types.js'
@@ -49,7 +50,14 @@ export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
   const arms = [baseline, ...plan.candidates.map(c => c.name)]
   const done = progress.completed
   const pct = progress.total ? Math.round((done / progress.total) * 100) : 0
-  const elapsedMs = Date.now() - new Date(progress.startedAt).getTime()
+  // The page only re-renders when the stream delivers something, and a turn can take a
+  // minute; the clocks below need their own tick or "elapsed" freezes at its first value.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const elapsedMs = Math.max(0, now - new Date(progress.startedAt).getTime())
   const perTrial = done > 0 ? elapsedMs / done : null
   const remaining = perTrial === null ? null : perTrial * (progress.total - done)
   const spendPerTrial = done > 0 ? progress.usd / done : null
