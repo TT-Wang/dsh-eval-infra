@@ -179,10 +179,6 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
 
       {step === 0 && (
         <>
-          <label class="uk-form-label flex items-center gap-2 text-sm">
-            <input class="uk-checkbox" type="checkbox" checked={aa} onChange={e => setAa((e.target as HTMLInputElement).checked)} />
-            A/A run: compare the baseline with a copy of itself to measure this setup's noise floor
-          </label>
           {!aa && (
             <ArmDesigner
               meta={meta} arms={arms} baseline={baseline} candidate={primaryCandidate}
@@ -192,6 +188,10 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
             />
           )}
           {aa && <div class="uk-alert">Both arms will be <code>{baseline}</code>. Every difference the run reports is noise, which is what later runs are judged against.</div>}
+          <label class="flex items-center gap-2 text-sm text-muted-foreground">
+            <input class="uk-checkbox" type="checkbox" checked={aa} onChange={e => setAa((e.target as HTMLInputElement).checked)} />
+            Instead, run the baseline against itself to measure this setup's noise
+          </label>
           {multi && !aa && (
             <label class="uk-form-label flex items-center gap-2 text-sm">
               <input class="uk-checkbox" type="checkbox" checked={allowMulti} onChange={e => setAllowMulti((e.target as HTMLInputElement).checked)} />
@@ -307,7 +307,6 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
               <b class="text-foreground">{selected.size}</b> of {scenarios.length} selected
               {' · '}<b class="text-foreground">{trials}</b> trials at {repeats} repeat{repeats === 1 ? '' : 's'} across {1 + (aa ? 1 : activeCandidates.length)} arms
               {estimate ? <> · about <b class="text-foreground">{fmt.usd(estimate.usd, 2)}</b> by the archive's history</> : <> · no archive yet to estimate cost</>}
-              <br />Each scenario builds its own workspace, runs a fixed list of prompts, and is graded by a verifier that reads only the end state.
             </p>
             <div class="flex flex-wrap items-center gap-2">
               <input class="uk-input uk-form-sm" type="search" placeholder="filter by name or what it stresses" value={query} onInput={e => setQuery((e.target as HTMLInputElement).value)} />
@@ -351,9 +350,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
                               <code class="text-xs text-muted-foreground">{sc.name}</code>
                               <span class="text-xs text-muted-foreground">{sc.turns} turn{sc.turns === 1 ? '' : 's'}</span>
                               {!sc.hasOracle && <span class="uk-badge badge-xs" title="no reference answer, so selfcheck cannot prove the verifier discriminates">no oracle</span>}
-                              {sc.meta.new_session_before_turns?.length ? <span class="uk-badge badge-xs">restarts the runtime</span> : null}
                               {sc.meta.network ? <span class="uk-badge badge-xs">network</span> : null}
-                              {(sc.variants ?? 0) > 0 && <span class="uk-badge badge-xs" title="has paraphrases, so it can measure wording sensitivity">{sc.variants} paraphrases</span>}
                               {sc.meta.judge && <span class="uk-badge badge-xs">judged</span>}
                             </div>
                             <p class="text-xs text-muted-foreground">{sc.meta.stressor ?? ''}</p>

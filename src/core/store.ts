@@ -130,6 +130,7 @@ export function listRuns(root: string): RunIndexEntry[] {
       }
       if (plan.label !== undefined) entry.label = plan.label
       if (plan.sandbox === 'docker') entry.sandbox = 'docker'
+      if (plan.label?.startsWith('preflight:')) entry.kind = 'preflight'
       out.push(entry)
     } catch { /* unreadable run */ }
   }

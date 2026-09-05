@@ -10,6 +10,7 @@
  *   dsh-eval run --baseline a --arm b [--arm c] [globs...] [--repeats 3] [--concurrency 2] [--label ..]
  *   dsh-eval report <runId>                  rebuild and print the report
  *   dsh-eval runs                            list runs
+ *   dsh-eval patterns                        recurring failures across the archive, most arm-skewed first
  *   dsh-eval ui [--port 4177] [--open]       local web UI
  *   dsh-eval export <runId> [--out dir]      ATIF trajectories of every trial
  */
@@ -27,6 +28,8 @@ import { listRuns, readJson, readLedgers, readPlan, runPaths } from './core/stor
 import { toAtif } from './core/atif.js'
 import { evalInfraVersion, tilde } from './core/env.js'
 import type { TraceRow } from './core/ledger.js'
+import { discoverPatterns } from './core/patterns.js'
+import type { RunLedger } from './core/types.js'
 
 interface Args {
   command: string
@@ -446,6 +449,28 @@ async function cmdRegrade(project: Project, args: Args): Promise<number> {
   return 0
 }
 
+/**
+ * Recurring failures and behaviour regimes over every archived trial, ranked by
+ * how unevenly they land on the arms: a pattern that hits one arm far more than
+ * the other points at what that arm changed, while one that hits both alike is
+ * a property of the scenario or of dsh. Reference material, so it lives here
+ * rather than on the runs page.
+ */
+function cmdPatterns(project: Project): number {
+  const runs = listRuns(project.runsRoot)
+  const ledgers: RunLedger[] = []
+  for (const r of runs) { try { ledgers.push(...readLedgers(runPaths(project.runsRoot, r.id))) } catch { /* unreadable run */ } }
+  const patterns = discoverPatterns(ledgers)
+  if (patterns.length === 0) { out(`nothing recurs at least three times across ${ledgers.length} trials`); return 0 }
+  out(`${patterns.length} pattern(s) over ${ledgers.length} trials in ${runs.length} runs, most arm-skewed first`)
+  for (const p of patterns) {
+    const where = `${p.scenarios.slice(0, 4).join(', ')}${p.scenarios.length > 4 ? ` +${p.scenarios.length - 4}` : ''}`
+    out(`\n${p.kind.padEnd(9)} ${String(p.count).padStart(4)} trials  skew ${(p.armSkew * 100).toFixed(0).padStart(3)}%  arms ${p.arms.join(', ')}  in ${where}`)
+    out(`          ${p.signature}`)
+  }
+  return 0
+}
+
 function cmdRuns(project: Project): number {
   const runs = listRuns(project.runsRoot)
   if (runs.length === 0) { out(`no runs under ${project.runsRoot}/runs`); return 0 }
@@ -571,6 +596,7 @@ READ AND CHECK
   regrade <runId>                     re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal
   rerun <runId> <scenario> [--repeats N] [--fork]   re-run a failing pair to tell a cause from resampling luck (--fork replays the identical prefix)
   runs                                list runs
+  patterns                            what keeps failing across the archive, most arm-skewed first (skew = one arm's doing)
   ui [--port 4177] [--open]           local web UI
   publish <runId> [--out dir]         bundle the sealed run with report.html and VERIFY.md for a third party
   export <runId> [--out dir]          ATIF v1.8 trajectories
@@ -601,6 +627,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'publish': return cmdPublish(project, args)
     case 'judge': return cmdJudge(project, args)
     case 'runs': return cmdRuns(project)
+    case 'patterns': return cmdPatterns(project)
     case 'ui': return cmdUi(project, args)
     case 'export': return cmdExport(project, args)
     case 'version': out(evalInfraVersion()); return 0

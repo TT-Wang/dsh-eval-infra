@@ -288,4 +288,6 @@ export interface RunIndexEntry {
   total: number
   usd: number
   sandbox?: 'host' | 'docker'
+  /** Set for the one-trial smoke runs a preflight check archives; the UI keeps them out of the run list and the scenario record. */
+  kind?: 'preflight'
 }

@@ -5,7 +5,7 @@ import type { RunLedger } from '../../core/types.js'
 import type { TraceRow } from '../../core/ledger.js'
 
 interface Trial { ledger: RunLedger; trace: TraceRow[] }
-type Tab = 'step' | 'verdict' | 'raw'
+type Tab = 'step' | 'verdict'
 
 export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenario: string; arm: string; rep: number }) {
   const [trial, setTrial] = useState<Trial | null>(null)
@@ -164,7 +164,7 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
 
         <section class="uk-card min-w-0">
           <div class="uk-card-header py-2 flex items-center gap-1">
-            {(['step', 'verdict', 'raw'] as Tab[]).map(k => (
+            {(['step', 'verdict'] as Tab[]).map(k => (
               <button key={k} class={`uk-btn uk-btn-sm ${tab === k ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setTab(k)}>{k}</button>
             ))}
           </div>
@@ -205,8 +205,6 @@ export function TraceView({ runId, scenario, arm, rep }: { runId: string; scenar
                 )}
               </div>
             )}
-
-            {tab === 'raw' && <pre class="text-xs whitespace-pre-wrap">{JSON.stringify({ ...ledger, steps: `${ledger.steps.length} steps — see the step tab` }, null, 2)}</pre>}
 
             {tab === 'step' && (row === undefined ? <p class="text-sm text-muted-foreground">no steps</p> : (
               <div class="flex flex-col gap-3">

@@ -14,7 +14,6 @@ import { toAtif } from '../core/atif.js'
 import { evalInfraVersion, tilde } from '../core/env.js'
 import { collectScenarios, launchRun, LaunchError, rebuildReport, resolveArmPath, verifyRunIntegrity, type RunRequest } from '../core/orchestrate.js'
 import { scenarioSignal } from '../core/signal.js'
-import { discoverPatterns, type Pattern } from '../core/patterns.js'
 import { describeDiff, evalProfileManifest, prepareArms } from '../core/plan.js'
 import { loadProject, withPreviewArms, type Project } from '../core/project.js'
 import type { Report } from '../core/report.js'
@@ -175,7 +174,7 @@ export class EvalApp {
       return
     }
     if (method === 'GET' && path === '/runs') {
-      json(res, 200, listRuns(project.runsRoot).map((r) => {
+      json(res, 200, listRuns(project.runsRoot).filter(r => r.kind !== 'preflight').map((r) => {
         const reportPath = runPaths(project.runsRoot, r.id).report
         if (!existsSync(reportPath)) return r
         try {
@@ -418,7 +417,6 @@ export class EvalApp {
 export interface HistoryCell { runs: number; passes: number; errors: number; usdMean: number; stepsMean: number }
 export interface HistoryPoint { runId: string; usd: number; ok: boolean }
 export interface History {
-  patterns?: Pattern[]
   arms: string[]
   scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal: { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number } }>
   runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>
@@ -432,6 +430,7 @@ export function buildHistory(runsRoot: string): History {
   const arms = new Set<string>()
   const byScenario = new Map<string, { cells: Map<string, { runs: number; passes: number; errors: number; usd: number; steps: number }>; runIds: Set<string>; points: Map<string, HistoryPoint[]> }>()
   for (const r of [...runs].reverse()) {
+    if (r.kind === 'preflight') continue
     const paths = runPaths(runsRoot, r.id)
     for (const l of readLedgers(paths)) {
       arms.add(l.arm)
@@ -448,9 +447,6 @@ export function buildHistory(runsRoot: string): History {
       byScenario.set(l.scenario, entry)
     }
   }
-  const allLedgers: RunLedger[] = []
-  for (const r of runs) { try { allLedgers.push(...readLedgers(runPaths(runsRoot, r.id))) } catch { /* unreadable */ } }
-  const patterns = discoverPatterns(allLedgers)
   const chronic = { flaky: [] as string[], failing: [] as string[], saturated: [] as string[] }
   for (const [name, e] of byScenario) {
     const cells = [...e.cells.values()]
@@ -463,7 +459,6 @@ export function buildHistory(runsRoot: string): History {
   }
   return {
     chronic,
-    patterns,
     arms: [...arms].sort(),
     scenarios: [...byScenario.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, e]) => ({
       name,
@@ -472,7 +467,7 @@ export function buildHistory(runsRoot: string): History {
       points: Object.fromEntries([...e.points.entries()]),
       signal: scenarioSignal([...e.points.entries()].map(([arm, pts]) => ({ arm, usd: pts.map(p => p.usd), passes: pts.map(p => (p.ok ? 1 : 0)) }))),
     })),
-    runs: runs.map(r => ({ id: r.id, createdAt: r.createdAt, ...(r.label !== undefined ? { label: r.label } : {}), arms: r.arms })),
+    runs: runs.filter(r => r.kind !== 'preflight').map(r => ({ id: r.id, createdAt: r.createdAt, ...(r.label !== undefined ? { label: r.label } : {}), arms: r.arms })),
   }
 }
 

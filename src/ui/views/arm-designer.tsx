@@ -163,10 +163,9 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
                 {armNames.map(n => <option value={n}>{n}</option>)}
               </select>
             </div>
-            <span class="uk-badge uk-badge">reference</span>
           </div>
           <div class="uk-card-body py-3">
-            <p class="text-sm text-muted-foreground">Stock dsh composes {rows.length || '…'} components. Anything below is what this arm changes on top of that.</p>
+            <p class="text-sm text-muted-foreground">Stock dsh, {rows.length || '…'} components. Below: what this arm changes.</p>
             <div class="mt-3 flex flex-col gap-2">
               {(baselineDesign?.rows ?? []).map(r => <RowCard key={describeRow(r)} row={r} />)}
               {(baselineDesign?.rows ?? []).length === 0 && (
@@ -253,7 +252,7 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
                     <span class="text-muted-foreground"><b class="text-foreground">{st.name}</b> · {st.detail}</span>
                   </div>
                 ))}
-                {check.rows.map(r => (
+                {check.rows.filter(r => !r.present || !r.enabled || r.inBaseline).map(r => (
                   <div key={r.id} class="text-xs text-muted-foreground pl-1">
                     row <code>{r.id}</code>: {r.present ? (r.enabled ? 'mounted and enabled' : 'present but disabled') : 'MISSING from the composed tree'}
                     {r.inBaseline && <span class="text-destructive"> · also active in the baseline, so it is in both arms</span>}
@@ -293,7 +292,6 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
                   {p.bundlePatch !== undefined
                     ? <span class="uk-badge uk-badge-destructive badge-xs" title={(p.replaces ?? []).length > 0 ? `applies its own patch: turns off ${(p.replaces ?? []).join(', ')} and inserts ${(p.inserts ?? []).join(', ')}` : 'applies its own patch'}>{(p.replaces ?? []).length > 0 ? `replaces ${(p.replaces ?? []).length}` : 'own patch'}</span>
                     : <span class="uk-badge badge-xs" title="adds one row beside the stock components">add-on</span>}
-                  <span class="uk-badge uk-badge badge-xs">{p.source}</span>
                 </div>
               </article>
             ))}
@@ -306,7 +304,6 @@ export function ArmDesigner({ meta, arms, baseline, candidate, onBaseline, onCan
         {variables === 1 && <span><b>One variable.</b> Arm B differs from arm A in exactly one thing, so a difference in the result can be attributed to it.</span>}
         {variables === 0 && <span><b>No difference yet.</b> Arm B composes the same as arm A; this would be an A/A run, which measures the noise floor.</span>}
         {variables > 1 && <span><b>{variables} variables.</b> A result cannot be attributed to one change. Split them into separate candidates, or accept a multi-variable comparison in the next step.</span>}
-        {composedVariables === null && <span class="text-muted-foreground"> · counting from the arm files; the composed trees decide</span>}
         {dirty && <span class="text-muted-foreground"> · unsaved changes to <code>{design?.name}</code>, save to recount</span>}
       </div>
     </div>

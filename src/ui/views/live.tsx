@@ -109,7 +109,7 @@ export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
                 {bothPassed.length > 0 && (
                   <span class="text-muted-foreground">
                     Running difference <b class="text-foreground">{fmt.pct(provisionalPct)}</b> on cost, candidate cheaper on {cheaper} of {bothPassed.length}.
-                    {' '}This is not a result: intervals, the noise floor and the regression gate are applied when the run finishes.
+                    {' '}Provisional — the verdict is computed when the run finishes.
                   </span>
                 )}
               </div>
@@ -133,21 +133,6 @@ export function LiveRun({ plan, progress, ledgers, events, onCancel }: {
           </div>
         </section>
       </div>
-
-      {/* active trials */}
-      <section class="uk-card">
-        <div class="uk-card-header py-3"><h2 class="uk-card-title text-sm">Running now</h2></div>
-        <div class="uk-card-body py-3 flex flex-wrap gap-2">
-          {progress.active.length === 0 && <span class="text-sm text-muted-foreground">nothing in flight</span>}
-          {progress.active.map(a => (
-            <span key={`${a.scenario}-${a.arm}-${a.rep}`} class="rounded-md border border-border px-2 py-1 text-xs flex items-center gap-2">
-              <span class="pip live" aria-hidden="true" />
-              <code>{a.scenario}</code>
-              <span class="text-muted-foreground">{a.arm} #{a.rep} · turn {a.turn}/{a.turns} · {fmt.secs(Date.now() - new Date(a.startedAt).getTime())}</span>
-            </span>
-          ))}
-        </div>
-      </section>
 
       {/* the grid filling in */}
       <section class="uk-card">

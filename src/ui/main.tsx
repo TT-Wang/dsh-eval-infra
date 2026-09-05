@@ -4,7 +4,6 @@ import { RunsView } from './views/runs.js'
 import { NewRunView } from './views/new-run.js'
 import { RunView } from './views/run.js'
 import { TraceView } from './views/trace.js'
-import { HistoryView } from './views/history.js'
 import { STATIC } from './api.js'
 
 function useHash(): string {
@@ -28,7 +27,6 @@ function App() {
   const preset = Object.fromEntries(new URLSearchParams(query).entries())
   let view
   if (parts[0] === 'new') view = <NewRunView preset={preset} />
-  else if (parts[0] === 'history') view = <HistoryView />
   else if (parts[0] === 'run' && parts[1] !== undefined && parts[2] === 'trace' && parts[3] !== undefined && parts[4] !== undefined && parts[5] !== undefined) {
     view = <TraceView runId={parts[1]} scenario={parts[3]} arm={parts[4]} rep={Number(parts[5])} />
   } else if (parts[0] === 'run' && parts[1] !== undefined) view = <RunView id={parts[1]} />
@@ -49,7 +47,6 @@ function App() {
         <nav class="flex items-center gap-1">
           {tab('#/', 'Runs', parts.length === 0)}
           {tab('#/new', 'New run', parts[0] === 'new')}
-          {tab('#/history', 'Scenarios', parts[0] === 'history')}
         </nav>
         <div class="flex-1" />
       </header>
@@ -58,5 +55,6 @@ function App() {
   )
 }
 
+if (location.hash === '#/history') location.hash = '#/'   // the scenario table moved onto the runs page
 if (STATIC !== undefined && location.hash === '') location.hash = `#/run/${STATIC.run.plan.id}`
 render(<App />, document.getElementById('app')!)

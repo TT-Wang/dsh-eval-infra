@@ -111,6 +111,7 @@ export function RunView({ id }: { id: string }) {
         </div>
       )}
 
+      {!report && (
       <div class="card">
         <h2>Trials <span class="muted small">● pass ● fail ● error ○ queued · click a pip for its trace</span></h2>
         <div class="scroll-x">
@@ -137,6 +138,7 @@ export function RunView({ id }: { id: string }) {
           </table>
         </div>
       </div>
+      )}
 
       {report && report.candidates.map(c => (
         <div class="card" key={c.arm}>
@@ -158,7 +160,7 @@ export function RunView({ id }: { id: string }) {
           </div>
           <div class="scroll-x">
             <table class="data paired">
-              <thead><tr><th>scenario</th><th>class</th><th>{report.baseline}</th><th>{c.arm}</th><th class="num">pairs</th><th class="num">Δ cost</th><th class="num">Δ %</th><th class="num">Δ steps</th><th class="num">spread</th><th>why it fails</th></tr></thead>
+              <thead><tr><th>scenario</th><th>class</th><th>{report.baseline}</th><th>{c.arm}</th><th class="num">Δ cost</th><th class="num">Δ steps</th><th>why it fails</th></tr></thead>
               <tbody>
                 <VirtualRows items={sortRows(c.scenarios.filter(p => filter === 'all' || (filter === 'flaky' ? p.flaky : p.class === filter)))} rowHeight={34} height={640} threshold={150} render={p => (
                   <>
@@ -167,14 +169,11 @@ export function RunView({ id }: { id: string }) {
                       <td><span class={`cls ${p.class}`}>{LABEL[p.class]}</span></td>
                       <td><Pips id={id} scenario={p.scenario} arm={report.baseline} stats={p.baseline} /></td>
                       <td><Pips id={id} scenario={p.scenario} arm={c.arm} stats={p.candidate} /></td>
-                      <td class="num">{p.costPairs}</td>
-                      <td class="num">{fmt.usd(p.costDiffUsd)}</td>
-                      <td class={`num ${p.costDiffPct !== null && p.costDiffPct < 0 ? 'good' : p.costDiffPct !== null && p.costDiffPct > 0 ? 'bad' : ''}`}>{fmt.pct(p.costDiffPct)}</td>
+                      <td class={`num ${p.costDiffPct !== null && p.costDiffPct < 0 ? 'good' : p.costDiffPct !== null && p.costDiffPct > 0 ? 'bad' : ''}`} title={`${fmt.usd(p.costDiffUsd)} over ${p.costPairs} pair${p.costPairs === 1 ? '' : 's'}`}>{fmt.pct(p.costDiffPct)}</td>
                       <td class="num">{p.stepsDiff === null ? '—' : (p.stepsDiff >= 0 ? '+' : '') + p.stepsDiff.toFixed(1)}</td>
-                      <td class="num" title="baseline: (max − min) / mean cost across its repeats">{p.baselineSpreadPct === null ? '—' : `${p.baselineSpreadPct.toFixed(0)}%`}</td>
                       <td class="small muted reason">{p.failures.candidate[0] ? `${c.arm}: ${p.failures.candidate[0].reason}` : p.failures.baseline[0] ? `${report.baseline}: ${p.failures.baseline[0].reason}` : ''}</td>
                     </tr>
-                    {expanded === `${c.arm}|${p.scenario}` && <tr class="expand"><td colSpan={10}><Expanded p={p} id={id} baseline={report.baseline} candidate={c.arm} /></td></tr>}
+                    {expanded === `${c.arm}|${p.scenario}` && <tr class="expand"><td colSpan={7}><Expanded p={p} id={id} baseline={report.baseline} candidate={c.arm} /></td></tr>}
                   </>
                 )} />
               </tbody>
@@ -190,8 +189,8 @@ export function RunView({ id }: { id: string }) {
         </div>
       )}
 
-      <div class="card">
-        <h2>Environment</h2>
+      <details class="card fold">
+        <summary>Environment and evidence{detail.integrity?.sealedAt ? <span class={`cls ${detail.integrity.status === 'PASS' ? 'same' : detail.integrity.status === 'INCONCLUSIVE' ? 'incomplete' : 'regression'}`} title={detail.integrity.statusReason}>sealed · {detail.integrity.status}</span> : <span class="muted small"> · not sealed</span>}</summary>
         <dl class="facts">
           <dt>dsh</dt><dd>{env?.dshVersion ?? '?'}{env?.dshRevision ? <span class="muted small"> @ {env.dshRevision}</span> : null} <span class="muted small">{env?.dshSource ?? ''}</span></dd>
           <dt>dsh-eval</dt><dd>{env?.evalInfraVersion ?? '?'} · node {env?.node ?? '?'} · {env?.platform ?? '?'}</dd>
@@ -204,7 +203,7 @@ export function RunView({ id }: { id: string }) {
           {plan.perturb && <><dt>prompts</dt><dd>perturbation on: repeats above 1 ran seeded paraphrase variants, identical across arms</dd></>}
           <dt>arms</dt><dd>{env?.diffs?.map(d => <div><b>{d.candidate}</b>: {d.variables} variable(s){env.multiVariable ? <span class="warn-text"> · multi-variable comparison</span> : null}</div>)}{Object.entries(env?.composedTreeSha ?? {}).map(([a, sha]) => <div class="muted small">{a}: tree {sha.slice(0, 12)}</div>)}</dd>
         </dl>
-      </div>
+      </details>
 
       <div class="card">
         <h2 class="row between"><span>Log</span><button class="btn small" onClick={() => setShowLogs(!showLogs)}>{showLogs ? 'hide' : 'show'} ({logs.length})</button></h2>
@@ -288,17 +287,14 @@ function Verdict({ c, baseline, runId }: { c: CandidateReport; baseline: string;
       <div class="verdict-head"><span class={`grade ${c.grade}`}>{c.grade}</span> <b>{c.arm}</b> vs {baseline}</div>
       <p class="verdict-text">{plainVerdict(c)}</p>
       <p class="muted small" style="margin:-6px 0 10px">{c.verdict}</p>
-      {(
-        <>
-          <div class="cards simple">
-            <Stat label="scenarios passed" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
-            <Stat label="cost per solved task" a={fmt.usd(s.baseline.usdPerSolved)} b={fmt.usd(s.candidate.usdPerSolved)} />
-            <Stat label="cost difference" a={fmt.pct(c.costPctCI.mean)} b={c.costReading === 'inconclusive' || c.costReading === 'none' ? 'not conclusive' : c.costReading} />
-          </div>
-          <p class="next-step"><b>Next:</b> {step.text}{step.cmd ? <><br /><code>{step.cmd}</code></> : null}</p>
-        </>
-      )}
-      {(
+      <div class="cards simple">
+        <Stat label="scenarios passed" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
+        <Stat label="cost per solved task" a={fmt.usd(s.baseline.usdPerSolved)} b={fmt.usd(s.candidate.usdPerSolved)} />
+        <Stat label="cost difference" a={fmt.pct(c.costPctCI.mean)} b={c.costReading === 'inconclusive' || c.costReading === 'none' ? 'not conclusive' : c.costReading} />
+      </div>
+      <p class="next-step"><b>Next:</b> {step.text}{step.cmd ? <><br /><code>{step.cmd}</code></> : null}</p>
+      <details class="fold">
+      <summary>All the statistics <span class="muted small">intervals, paired tests, design effect, the forest plot</span></summary>
       <div class="verdict-grid">
         <div class="cards">
           <Stat label="pass" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
@@ -322,7 +318,7 @@ function Verdict({ c, baseline, runId }: { c: CandidateReport; baseline: string;
         </div>
         <div class="forest-wrap"><Forest c={c} /><div class="muted small">grey band ±10% (smallest effect of interest) · dashed lines: minimum detectable effect for this design</div></div>
       </div>
-      )}
+      </details>
     </div>
   )
 }
