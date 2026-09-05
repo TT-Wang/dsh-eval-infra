@@ -444,6 +444,15 @@ describe('pattern discovery', () => {
     const { discoverPatterns, failureSignature } = await import('../src/core/patterns.js')
     expect(failureSignature("answers.json missing/unreadable: [Errno 2] No such file or directory: '/tmp/x/answers.json'"))
       .toBe(failureSignature("answers.json missing/unreadable: [Errno 2] No such file or directory: '/tmp/other/answers.json'"))
+    // Signatures are displayed, so an unquoted path or a file:// URL must not survive
+    // into one: it is someone's home directory, and it splits one failure into two.
+    for (const raw of [
+      'json-rpc input closed, stderr tail: file:///Users/someone/code/dsh/packages/cli/index.js:42',
+      'verifier crashed reading /Users/someone/work/out.json',
+      'verifier crashed reading /home/ci/work/out.json',
+    ]) expect(failureSignature(raw), raw).not.toMatch(/someone|\/home\/ci/)
+    expect(failureSignature('verifier crashed reading /Users/a/out.json'))
+      .toBe(failureSignature('verifier crashed reading /home/b/out.json'))
     const mk = (scenario: string, arm: string, rep: number, ok: boolean, detail: string, toolErrors = 0) => ({
       schema: 'dsh-eval-ledger/1' as const, runId: `r${rep}`, scenario, arm, rep, order: 0, startedAt: `2026-09-0${rep}T00:00:00Z`, endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
       turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 5, turns: 1, usd: 1, usdPeak: 1, usdOffpeak: 1, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail }, behaviour: { toolErrors, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',

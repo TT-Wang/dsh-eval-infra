@@ -30,11 +30,18 @@ export function failureSignature(reason: string): string {
     .toLowerCase()
     .replace(/\[errno \d+\]/g, '[errno N]')
     .replace(/'[^']*'|"[^"]*"|`[^`]*`/g, 'X')
+    // Paths and URLs are where the machine shows through: they differ between two
+    // developers hitting the identical failure, which splits one pattern into many,
+    // and they put someone's home directory on a screen that gets shared.
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/g, 'URL')
+    .replace(/(^|[\s(=:])(~|\.{1,2})?\/[^\s)'"`,;]+/g, '$1PATH')
     .replace(/\b[\w./-]+\.(json|csv|md|txt|py|log|yml|yaml|html)\b/g, 'FILE')
     .replace(/\b\d+(\.\d+)?\b/g, 'N')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 120)
+    // Cut at a word boundary: a signature is read by a person, and a message
+    // sliced mid-word reads as corruption rather than as a truncation.
+    .replace(/^(.{0,119}\S)(\s.*)?$/s, '$1')
 }
 
 function quantile(xs: number[], q: number): number {
@@ -100,6 +107,6 @@ export function discoverPatterns(ledgers: RunLedger[], minCount = 3): Pattern[] 
     add('behaviour', name, rows, `${rows.length} trials across ${new Set(rows.map(r => r.scenario)).size} scenarios`, ledgers.length)
   }
 
-  // Most frequent first, then the most arm-skewed (those are the ones a change caused)
+  // Most arm-skewed first — those are the ones an arm caused rather than the scenario — and the more frequent of two equally skewed.
   return out.sort((a, b) => (b.armSkew - a.armSkew) || (b.count - a.count)).slice(0, 20)
 }

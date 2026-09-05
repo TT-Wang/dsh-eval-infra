@@ -394,14 +394,15 @@ describe('paths in api responses', () => {
       try {
         for (const path of ['/api/meta', '/api/runs', '/api/scenarios', '/api/arms']) {
           const text = await (await fetch(started.url.replace(/\/$/, '') + path)).text()
-          expect.soft(text, `${path} leaked an absolute home path`).not.toContain(home)
+          // Lowercased too: failure text is normalised to lower case on its way to the UI.
+          expect.soft(text.toLowerCase(), `${path} leaked an absolute home path`).not.toContain(home.toLowerCase())
         }
         // /api/plugins is the exception: `path` and `bundlePatch` are written into the
         // arm file and have to be real, so the display fields are what must be folded.
         const plugins = await (await fetch(started.url.replace(/\/$/, '') + '/api/plugins')).json() as { plugins: Array<{ displayPath?: string; duplicates?: string[] }> }
         for (const plugin of plugins.plugins) {
-          expect.soft(plugin.displayPath ?? '').not.toContain(home)
-          for (const dup of plugin.duplicates ?? []) expect.soft(dup).not.toContain(home)
+          expect.soft((plugin.displayPath ?? '').toLowerCase()).not.toContain(home.toLowerCase())
+          for (const dup of plugin.duplicates ?? []) expect.soft(dup.toLowerCase()).not.toContain(home.toLowerCase())
         }
       } finally { started.server.close() }
     } finally { rmSync(projectRoot, { recursive: true, force: true }) }

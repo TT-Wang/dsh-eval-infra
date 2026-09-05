@@ -49,7 +49,7 @@ function App() {
         <nav class="flex items-center gap-1">
           {tab('#/', 'Runs', parts.length === 0)}
           {tab('#/new', 'New run', parts[0] === 'new')}
-          {tab('#/history', 'History', parts[0] === 'history')}
+          {tab('#/history', 'Scenarios', parts[0] === 'history')}
         </nav>
         <div class="flex-1" />
       </header>
