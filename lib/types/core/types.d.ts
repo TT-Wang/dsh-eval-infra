@@ -264,6 +264,8 @@ export interface RunLedger {
     error?: string;
     /** `runtime` (default): the agent's process crashed or timed out — a failure of that arm. `infrastructure`: the trial could not be graded (the benchmark verifier never reached its tests) — excluded from every comparison, never a failure. */
     errorKind?: 'runtime' | 'infrastructure';
+    /** The model had no entry in the price table: usd figures are 0 and the report withholds cost readings. */
+    unpriced?: boolean;
     /** Present when a human override replaced the machine verdict (the original is kept here). */
     machineVerdict?: Verdict | null;
     overridden?: boolean;
@@ -325,6 +327,8 @@ export interface RunPlan {
     sandbox?: 'host' | 'docker';
     /** Prompt perturbation on: repeats above 1 use a seeded paraphrase variant, identical across arms. */
     perturb?: boolean;
+    /** Sequential mode: anytime-valid sequences decide and the run may stop early; fixed-sample intervals in the report are then descriptive only. */
+    sequential?: boolean;
     /** Replay of a recorded run (keyless); forkAt = number of recorded responses to serve before going live. */
     replay?: {
         runId: string;

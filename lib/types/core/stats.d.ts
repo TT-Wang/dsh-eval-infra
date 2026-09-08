@@ -48,7 +48,16 @@ export declare function wilson(passes: number, n: number, z?: number): {
 };
 export declare function stddev(xs: number[]): number;
 /** Two-sided 97.5% Student t quantile for small degrees of freedom (table up to 30, then normal). */
-export declare function tCritical(df: number): number;
+/** Two-sided Student-t critical value t_{1-alpha/2, df}, exact (inverse CDF), not a table scaled by a normal ratio. */
+export declare function tCritical(df: number, alpha?: number): number;
+/** log Γ(x) (Lanczos approximation, |error| < 1e-10 for x > 0). */
+export declare function lgamma(x: number): number;
+/** Regularized incomplete beta I_x(a, b) by Lentz's continued fraction (Numerical Recipes betacf). */
+export declare function betainc(x: number, a: number, b: number): number;
+/** CDF of Student's t with df degrees of freedom. */
+export declare function tCdf(t: number, df: number): number;
+/** Inverse CDF of Student's t (bisection on tCdf; 1e-10 in t for the p values a report reads at). */
+export declare function tQuantile(p: number, df: number): number;
 /**
  * Intraclass correlation of repeat values within scenarios (one-way ANOVA
  * estimator) and the design effect 1 + (k − 1)ρ that inflates the variance of
@@ -87,7 +96,7 @@ export declare function mcnemar(b: number, c: number, ropeHalfWidth?: number): {
  * estimator). pass^1 is the pass rate; pass^n is 1 only when every repeat passed.
  */
 export declare function passPow(passes: number, n: number, j: number): number;
-export declare function resolution(values: number[]): {
+export declare function resolution(values: number[], alpha?: number): {
     nStar: number | null;
     q: number | null;
 };
@@ -116,4 +125,5 @@ export declare function bettingCS(xs: number[], alpha?: number): {
     lo: number;
     hi: number;
     t: number;
+    empty?: boolean;
 };

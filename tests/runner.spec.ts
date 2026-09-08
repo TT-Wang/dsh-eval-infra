@@ -199,10 +199,11 @@ describe('runner + ledger + report', () => {
     writeJsonAtomic(paths.plan, plan)
     const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
     const decisions: number[] = []
+    const reliabilitySeqs: Array<{ lo: number; hi: number } | null> = []
     const progress = await executeRun(plan, pool, arms, {
       driverFactory: scriptedDriverFactory({ costScale: { cand: 0.6 } }),
       evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work'),
-      sequential: { seed: 1, onDecision: d => decisions.push(d.scenarios) },
+      sequential: { seed: 1, alpha: 0.05 / 3, onDecision: d => { decisions.push(d.scenarios); reliabilitySeqs.push(d.reliability) } },
     })
     expect(progress.status).toBe('done')
     expect(progress.stoppedEarly).toBeDefined()
@@ -211,6 +212,10 @@ describe('runner + ledger + report', () => {
     const report = buildReport(plan, readLedgers(paths))
     expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(16 - progress.stoppedEarly!.after)
     expect(report.candidates[0]!.gate).toBe('pass')
+    // the reliability sequence is part of every decision (both arms always pass here, so it sits on 1/2)
+    expect(reliabilitySeqs.at(-1)).not.toBeNull()
+    expect(reliabilitySeqs.at(-1)!.lo).toBeLessThanOrEqual(0.5)
+    expect(reliabilitySeqs.at(-1)!.hi).toBeGreaterThanOrEqual(0.5)
   })
 
   it('stops scheduling trials once the budget is reached and keeps finished ones', async () => {
@@ -281,7 +286,8 @@ describe('usage provenance', () => {
     expect(plain.status).toBe('done')
     const plainLedgers = readLedgers(paths)
     expect(plainLedgers.every(l => l.usageProvenance?.source === 'self-reported')).toBe(true)
-    const plainReport = buildReport(plan, plainLedgers)
+    const floor = { noiseFloors: { base: { runId: 'aa', scenarios: 5, meanAbsPct: 1, lo: -2, hi: 2 } } }
+    const plainReport = buildReport(plan, plainLedgers, floor)
     expect(plainReport.notes.some(n => n.startsWith('Usage provenance: self-reported'))).toBe(true)
     expect(plainReport.candidates[0]!.costReading).toBe('cheaper')
 
@@ -295,9 +301,11 @@ describe('usage provenance', () => {
     const ledgers = readLedgers(paths2)
     expect(ledgers.every(l => l.usageProvenance?.source === 'meter' && l.usageProvenance.reconciled === false)).toBe(true)
     expect(ledgers[0]!.usageProvenance!.meterFile).toMatch(/^meter\//)
-    const report = buildReport(plan2, ledgers)
+    const report = buildReport(plan2, ledgers, floor)
     expect(report.candidates[0]!.costReading).toBe('inconclusive')
     expect(report.candidates[0]!.verdict).toContain('withheld')
+    // and the provenance failure outranks a missing floor: the figures are withheld, not merely unfloored
+    expect(buildReport(plan2, ledgers).candidates[0]!.verdict).toContain('withheld')
     expect(report.notes.some(n => n.includes('NOT reconciled'))).toBe(true)
   })
 })

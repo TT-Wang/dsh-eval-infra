@@ -315,3 +315,12 @@ describe('preflight', () => {
     expect(explainRuntimeFailure('just one line')).toBe('just one line')
   })
 })
+
+describe('sequential mode guards', () => {
+  it('refuses more than one candidate or a non-cost north star (H18)', async () => {
+    const p = project()
+    writeFileSync(join(p.armsDir, 'other.yml'), 'name: other\npatches:\n  - id: system-prompt\n    config:\n      persona: terse\n')
+    await expect(launchRun(p, { baseline: 'baseline', candidates: ['persona', 'other'], scenarios: ['t1*'], sequential: true, allowMulti: true }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })).rejects.toMatchObject({ code: 'arms' })
+    await expect(launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], sequential: true, northStar: 'efficiency' }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })).rejects.toMatchObject({ code: 'arms' })
+  })
+})

@@ -166,6 +166,8 @@ export interface SequentialDecision {
   ratio: { mean: number; lo: number; hi: number } | null
   /** Pass-difference confidence sequence over per-scenario x = (Δpass + 1) / 2; 0.5 is "no difference". */
   pass: { lo: number; hi: number } | null
+  /** Reliability confidence sequence over per-scenario x = (Δreliable + 1) / 2, reliable = every repeat passed; 0.5 is "no difference". */
+  reliability: { lo: number; hi: number } | null
   decided: boolean
   reason: string
 }
@@ -250,6 +252,7 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
     const costDiffs: number[] = []
     const ratios: number[] = []
     const passX: number[] = []
+    const relX: number[] = []
     const RATIO_CAP = 2
     for (const s of done) {
       const rows = finished.get(s.name) ?? []
@@ -261,6 +264,9 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
       const pb = b.length ? b.filter(r => r.verdict?.ok && r.error === undefined).length / b.length : 0
       const pc = c.length ? c.filter(r => r.verdict?.ok && r.error === undefined).length / c.length : 0
       passX.push(((pc - pb) + 1) / 2)
+      const relB = b.length >= plan.repeats && b.every(r => r.verdict?.ok && r.error === undefined) ? 1 : 0
+      const relC = c.length >= plan.repeats && c.every(r => r.verdict?.ok && r.error === undefined) ? 1 : 0
+      relX.push(((relC - relB) + 1) / 2)
     }
     const alpha = deps.sequential.alpha ?? 0.05
     const minS = deps.sequential.minScenarios ?? 3
@@ -270,17 +276,19 @@ export async function executeRun(plan: RunPlan, scenarios: Scenario[], arms: Res
     const bet = ratios.length >= 2 ? bettingCS(ratios, alpha) : null
     const ratio = bet ? { mean: mean(ratios) * RATIO_CAP, lo: bet.lo * RATIO_CAP, hi: bet.hi * RATIO_CAP } : null
     const pass = passX.length >= 2 ? bettingCS(passX, alpha) : null
+    const rel = relX.length >= 2 ? bettingCS(relX, alpha) : null
     let decided = false
     let reason = 'undecided'
     if (done.length >= minS && ratio !== null) {
-      const passDecided = pass !== null && (pass.lo > 0.5 || pass.hi < 0.5)
-      const passNull = pass !== null && pass.lo <= 0.5 && pass.hi >= 0.5
+      // An empty confidence set decides nothing (see bettingCS); it is neither a direction nor a null.
+      const passDecided = pass !== null && pass.empty !== true && (pass.lo > 0.5 || pass.hi < 0.5)
+      const passNull = pass !== null && pass.empty !== true && pass.lo <= 0.5 && pass.hi >= 0.5
       const band = sesoi / 100
       if (passDecided) { decided = true; reason = pass.lo > 0.5 ? 'candidate passes more scenarios (pass-difference sequence excludes 0)' : 'candidate passes fewer scenarios (pass-difference sequence excludes 0)' }
       else if (passNull && (ratio.lo > 1 || ratio.hi < 1)) { decided = true; reason = `${ratio.hi < 1 ? 'cheaper' : 'more expensive'}: finite-sample cost-ratio sequence excludes 1 (${ratio.lo.toFixed(2)} to ${ratio.hi.toFixed(2)})` }
       else if (passNull && ratio.lo > 1 - band && ratio.hi < 1 + band) { decided = true; reason = `equivalent within ±${sesoi}%: cost-ratio sequence inside the band (${ratio.lo.toFixed(2)} to ${ratio.hi.toFixed(2)})` }
     }
-    const decision: SequentialDecision = { scenarios: done.length, cost: cost ? { mean: cost.mean, lo: cost.lo, hi: cost.hi } : null, ratio, pass: pass ? { lo: pass.lo, hi: pass.hi } : null, decided, reason }
+    const decision: SequentialDecision = { scenarios: done.length, cost: cost ? { mean: cost.mean, lo: cost.lo, hi: cost.hi } : null, ratio, pass: pass ? { lo: pass.lo, hi: pass.hi } : null, reliability: rel && rel.empty !== true ? { lo: rel.lo, hi: rel.hi } : null, decided, reason }
     deps.sequential.onDecision?.(decision)
     if (decided) decidedEarly = decision
   }

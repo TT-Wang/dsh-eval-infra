@@ -176,6 +176,10 @@ export declare function sequencesOf(paths: ReturnType<typeof runPaths>): {
             lo: number;
             hi: number;
         } | null;
+        reliability?: {
+            lo: number;
+            hi: number;
+        } | null;
         scenarios: number;
     }>;
 };

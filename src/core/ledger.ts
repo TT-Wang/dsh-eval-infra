@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 import type { RunLedger, StepRow, Totals, TurnRow, Usage, Verdict } from './types.js'
-import { bandAt, priceUsage, type PriceTable, DEEPSEEK_PRICES } from './pricing.js'
+import { bandAt, knownModel, priceUsage, type PriceTable, DEEPSEEK_PRICES } from './pricing.js'
 import { addUsage, normalizeUsage, ZERO_USAGE } from './usage.js'
 
 /** The subset of a dsh session event we read. */
@@ -218,8 +218,10 @@ export function buildLedger(input: LedgerInput): { ledger: RunLedger; trace: Tra
     peakPrompt,
   }
   const system = header?.system
+  const unpriced = !knownModel(input.model, prices)
   const ledger: RunLedger = {
     schema: 'dsh-eval-ledger/1',
+    ...(unpriced ? { unpriced: true } : {}),
     runId: input.runId,
     scenario: input.scenario,
     arm: input.arm,

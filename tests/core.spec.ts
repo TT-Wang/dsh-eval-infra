@@ -120,10 +120,31 @@ describe('report claims', () => {
     expect(three.candidates[0]!.verdict).toMatch(/Only 3 comparable scenarios/)
     const names5 = ['s1', 's2', 's3', 's4', 's5']
     const plan5 = { ...plan, scenarios: names5 }
-    const five = buildReport(plan5, names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1.15 + i * 0.02)]))
+    const ledgers5 = names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1.15 + i * 0.02)])
+    // no A/A floor on file: the interval excludes zero, but no direction is read until "no change" has been measured on this baseline
+    const unfloored = buildReport(plan5, ledgers5)
+    expect(unfloored.candidates[0]!.costPctCI.significant).toBe(true)
+    expect(unfloored.candidates[0]!.costReading).toBe('inconclusive')
+    expect(unfloored.candidates[0]!.floor).toBe('missing')
+    expect(unfloored.candidates[0]!.verdict).toMatch(/no A\/A floor has been measured/)
+    expect(unfloored.notes.join(' ')).toMatch(/directions .* are not read without one/)
+    const tightFloor = { runId: 'aa', scenarios: 5, meanAbsPct: 2, lo: -3, hi: 3 }
+    const five = buildReport(plan5, ledgers5, { noiseFloors: { a: tightFloor } })
     expect(five.candidates[0]!.costReading).toBe('more-expensive')
+    expect(five.candidates[0]!.floor).toBe('ok')
     expect(five.candidates[0]!.grade).toBe('regression')
     expect(five.candidates[0]!.mdePct).toBeGreaterThan(0)
+    // a floor with too few scenarios does not count as a floor
+    expect(buildReport(plan5, ledgers5, { noiseFloors: { a: { ...tightFloor, scenarios: 4 } } }).candidates[0]!.floor).toBe('thin')
+    // the veto band is the A/A interval: a wide mean|Δ%| with a narrow interval does not veto, a narrow mean|Δ%| with a wide interval does
+    expect(buildReport(plan5, ledgers5, { noiseFloors: { a: { ...tightFloor, meanAbsPct: 30 } } }).candidates[0]!.costReading).toBe('more-expensive')
+    expect(buildReport(plan5, ledgers5, { noiseFloors: { a: { ...tightFloor, meanAbsPct: 1, lo: -2, hi: 16 } } }).candidates[0]!.costReading).toBe('inconclusive')
+    // drift since the floor was measured makes it stale: no direction, and CUPED is not applied either
+    const stale = buildReport(plan5, ledgers5, { noiseFloors: { a: tightFloor }, priorBaselineUsd: Object.fromEntries(names5.map((n, i) => [n, 1 + i * 0.1])), drift: { scenarios: 5, current: 5, archive: 20, distance: 0.9, p: 0.001, verdict: 'drift' } })
+    expect(stale.candidates[0]!.floor).toBe('stale')
+    expect(stale.candidates[0]!.costReading).toBe('inconclusive')
+    expect(stale.candidates[0]!.cuped).toBeNull()
+    // equivalence is not a direction: it needs no floor
     const flat = buildReport(plan5, names5.flatMap((n, i) => [mk(n, 'a', 1), mk(n, 'b', 1 + (i % 2 ? 0.01 : -0.01))]))
     expect(flat.candidates[0]!.costReading).toBe('equivalent')
     expect(flat.candidates[0]!.grade).toBe('tie')
@@ -140,7 +161,7 @@ describe('report claims', () => {
       turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail }, behaviour: { toolErrors: ok ? 0 : 2, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
     })
     const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: ['s1'], repeats: 2, concurrency: 1, scenarioRoot: '' }
-    const rep = buildReport(plan, [mk('s1', 'a', 1, true, 1), mk('s1', 'a', 2, false, 1), mk('s1', 'b', 1, true, 1), mk('s1', 'b', 2, true, 1)], { noiseFloors: { a: { runId: 'aa1', scenarios: 4, meanAbsPct: 12, lo: -15, hi: 14 } } })
+    const rep = buildReport(plan, [mk('s1', 'a', 1, true, 1), mk('s1', 'a', 2, false, 1), mk('s1', 'b', 1, true, 1), mk('s1', 'b', 2, true, 1)], { noiseFloors: { a: { runId: 'aa1', scenarios: 5, meanAbsPct: 12, lo: -15, hi: 14 } } })
     const c = rep.candidates[0]!
     expect(c.flaky).toEqual(['s1'])
     expect(c.scenarios[0]!.failures.baseline[0]).toEqual({ reason: 'answer.txt missing', n: 1 })
@@ -151,6 +172,7 @@ describe('report claims', () => {
     const floor = noiseFloorOf(aaPlan, [mk('s1', 'a', 1, true, 1), mk('s1', 'a-aa', 1, true, 1.1)])
     expect(floor).toMatchObject({ runId: 'r', scenarios: 1 })
     expect(floor!.meanAbsPct).toBeCloseTo(10, 5)
+    expect(floor!.steps).toBeDefined()                                    // the floor carries a band on steps too
   })
   it('parses boolean flags without swallowing the next positional', async () => {
     const { parseArgs } = await import('../src/cli.js')
@@ -171,7 +193,7 @@ describe('paired statistics', () => {
     const m = mcnemar(8, 1)
     expect(m.midP).toBeLessThan(0.05)
     expect(m.pWin).toBeGreaterThan(0.95)
-    expect(mcnemar(0, 0)).toMatchObject({ exactP: 1, midP: 1, pWin: 0.5 })
+    expect(mcnemar(0, 0)).toMatchObject({ exactP: 1, midP: 1, pWin: 0.5, inRope: 0.2 })   // flat prior: 20% inside ±0.1, not certainty of equivalence
     const even = mcnemar(3, 3)
     expect(even.pWin).toBeCloseTo(0.5, 2)
     expect(even.inRope).toBeGreaterThan(0.3)
@@ -180,6 +202,7 @@ describe('paired statistics', () => {
     expect(r.q).toBeGreaterThanOrEqual(1)
     const weak = resolution([-1, 12, -8, 3])
     expect(weak.q).toBeLessThan(1)
+    expect(resolution([-1, 12, -8, 3], 0.025).nStar!).toBeGreaterThan(weak.nStar!)   // N* grows with a stricter alpha
     expect(sequenceSimilarity(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(1)
     expect(sequenceSimilarity(['a', 'b', 'c'], ['a', 'x', 'c'])).toBeCloseTo(2 / 3, 6)
     expect(sequenceSimilarity([], [])).toBe(1)
@@ -430,9 +453,10 @@ describe('served-model probes', () => {
       turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: '' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
     })
     const ledgers5 = names5.flatMap((n, i) => [ledger(n, 'a', 1), ledger(n, 'b', 1.15 + i * 0.02)])
-    const clean = buildReport(plan5, ledgers5)
+    const floor = { noiseFloors: { a: { runId: 'aa', scenarios: 5, meanAbsPct: 2, lo: -3, hi: 3 } } }
+    const clean = buildReport(plan5, ledgers5, floor)
     expect(clean.candidates[0]!.costReading).not.toBe('inconclusive')
-    const gated = buildReport(plan5, ledgers5, { probe: { model: 'deepseek-v4-flash', distance: 0.62, p: 0.001, probes: 8, samplesPerSide: 8, verdict: 'differs', comparedAt: '2026-09-04T00:00:00Z', usd: 0.01 } })
+    const gated = buildReport(plan5, ledgers5, { ...floor, probe: { model: 'deepseek-v4-flash', distance: 0.62, p: 0.001, probes: 8, samplesPerSide: 8, verdict: 'differs', comparedAt: '2026-09-04T00:00:00Z', usd: 0.01 } })
     expect(gated.candidates[0]!.costReading).toBe('inconclusive')
     expect(gated.candidates[0]!.verdict).toContain('Provider conditions not held constant')
     expect(gated.notes.some(n => n.startsWith('Served-model probe'))).toBe(true)
@@ -570,9 +594,14 @@ describe('reliability first, then the north star', () => {
     expect(cost.northStar.metric).toBe('cost')
     expect(cost.northStar.reading).toBe('same')          // identical cost reads equivalent
     expect(cost.grade).toBe('tie')
-    const eff = buildReport({ ...base, northStar: 'efficiency' as const }, ledgers).candidates[0]!
+    const noFloor = buildReport({ ...base, northStar: 'efficiency' as const }, ledgers).candidates[0]!
+    expect(noFloor.northStar.reading).toBe('inconclusive')   // a direction on steps needs the A/A band on steps as much as cost does
+    expect(noFloor.northStar.text).toMatch(/no A\/A floor/)
+    const stepFloor = { noiseFloors: { base: { runId: 'aa', scenarios: 6, meanAbsPct: 1, lo: -2, hi: 2, steps: { lo: -4, hi: 4, scenarios: 6 } } } }
+    const eff = buildReport({ ...base, northStar: 'efficiency' as const }, ledgers, stepFloor).candidates[0]!
     expect(eff.northStar.metric).toBe('efficiency')
     expect(eff.northStar.reading).toBe('better')
+    expect(buildReport({ ...base, northStar: 'efficiency' as const }, ledgers, { noiseFloors: { base: { ...stepFloor.noiseFloors.base, steps: { lo: -50, hi: 5, scenarios: 6 } } } }).candidates[0]!.northStar.reading).toBe('inconclusive')
     expect(eff.northStar.ci!.mean).toBeLessThan(-30)
     expect(eff.grade).toBe('improvement')
     expect(eff.verdict).toMatch(/^Fewer steps by/)
@@ -581,5 +610,143 @@ describe('reliability first, then the north star', () => {
     const q = buildReport({ ...base, northStar: 'quality' as const }, ledgers).candidates[0]!
     expect(q.northStar).toMatchObject({ metric: 'quality', reading: 'none' })
     expect(q.grade).toBe('inconclusive')
+  })
+})
+
+describe('statistics review (H14–H19 and the medium findings)', () => {
+  const led = (scenario: string, arm: string, rep: number, usd: number, ok = true, extra: Record<string, unknown> = {}) => ({
+    schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+    turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 10, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail: ok ? 'ok' : 'answer.txt missing' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    ...extra,
+  })
+  const names = ['s1', 's2', 's3', 's4', 's5', 's6']
+  const floor = { noiseFloors: { a: { runId: 'aa', scenarios: 6, meanAbsPct: 2, lo: -3, hi: 3 } } }
+  const plan = (repeats: number, extra: Record<string, unknown> = {}) => ({ id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: names, repeats, concurrency: 1, scenarioRoot: '', ...extra })
+
+  it('uses exact Student-t quantiles at the reading alpha (H3) and the planned-claim alpha per mode', async () => {
+    const { tQuantile, tCritical, smallSampleCI } = await import('../src/core/stats.js')
+    const { readingAlpha } = await import('../src/core/report.js')
+    expect(tQuantile(0.9875, 4)).toBeCloseTo(3.4954, 3)     // n = 5 at alpha 0.025: the old table-times-normal-ratio gave 3.175
+    expect(tQuantile(0.975, 1)).toBeCloseTo(12.706, 2)
+    expect(tQuantile(0.975, 29)).toBeCloseTo(2.045, 3)
+    expect(tCritical(4, 0.025)).toBeCloseTo(3.4954, 3)
+    const ci = smallSampleCI([10, 12, 8, 11, 9], 2000, 42, 0.025)
+    const s = Math.sqrt([10, 12, 8, 11, 9].map(v => (v - 10) ** 2).reduce((x, y) => x + y, 0) / 4)
+    expect(ci.hi - ci.mean).toBeCloseTo(3.4954 * s / Math.sqrt(5), 3)
+    expect(readingAlpha({ candidates: [{ name: 'b' }] })).toBeCloseTo(0.025, 10)
+    expect(readingAlpha({ candidates: [{ name: 'b' }, { name: 'c' }] })).toBeCloseTo(0.0125, 10)
+    expect(readingAlpha({ candidates: [{ name: 'b' }], sequential: true })).toBeCloseTo(0.05 / 3, 10)
+  })
+
+  it('calls a regression only when it is consistent, holds a majority-fail as suspected, and states the gate\'s chance level (H16)', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const p3 = plan(3)
+    const rows = (candPasses: Record<string, number>, basePasses: Record<string, number> = {}) => names.flatMap(n => [1, 2, 3].flatMap(rep => [led(n, 'a', rep, 1, rep <= (basePasses[n] ?? 3)), led(n, 'b', rep, 1, rep <= (candPasses[n] ?? 3))]))
+    // 3/3 vs 0/3: consistent, called
+    const consistent = buildReport(p3, rows({ s1: 0 }), floor).candidates[0]!
+    expect(consistent.gate).toBe('regressions')
+    expect(consistent.regressions).toEqual(['s1'])
+    expect(consistent.suspected).toEqual([])
+    expect(consistent.regressionChance).toBeCloseTo(0.5 ** 6, 6)   // pooled p̂ = 1/2 on s1, 1 elsewhere
+    expect(consistent.grade).toBe('regression')
+    // 3/3 vs 1/3: majority-fail but not consistent — suspected, blocks the readings, is not called
+    const susReport = buildReport(p3, rows({ s1: 1 }), floor)
+    const sus = susReport.candidates[0]!
+    expect(sus.gate).toBe('suspect')
+    expect(sus.regressions).toEqual([])
+    expect(sus.suspected).toEqual(['s1'])
+    expect(sus.grade).toBe('inconclusive')
+    expect(sus.verdict).toMatch(/^Suspected regression on 1 scenario \(s1: baseline 3\/3, b 1\/3\)/)
+    expect(susReport.notes.join(' ')).toMatch(/screening rule/)
+    // 2/3 vs 0/3: the baseline is flaky too — still suspected, never a call
+    expect(buildReport(p3, rows({ s1: 0 }, { s1: 2 }), floor).candidates[0]!.gate).toBe('suspect')
+    // 3/3 vs 2/3 is one discordant pair: same, flagged flaky
+    const one = buildReport(p3, rows({ s1: 2 }), floor).candidates[0]!
+    expect(one.gate).toBe('pass')
+    expect(one.scenarios.find(s => s.scenario === 's1')!.class).toBe('same')
+    expect(one.flaky).toEqual(['s1'])
+    // improvements are held to the same bar: 0/3 → 3/3 is one, 1/3 → 3/3 is not
+    expect(buildReport(p3, rows({}, { s1: 0 }), floor).candidates[0]!.improvements).toEqual(['s1'])
+    expect(buildReport(p3, rows({}, { s1: 1 }), floor).candidates[0]!.improvements).toEqual([])
+    // a flaky pool makes a consistent regression cheap to get by chance, and the verdict says so
+    const flakyPool = names.flatMap(n => [1, 2, 3].flatMap(rep => [led(n, 'a', rep, 1, n === 's1' ? true : rep !== 2), led(n, 'b', rep, 1, n === 's1' ? false : rep !== 3)]))
+    const noisy = buildReport(p3, flakyPool, floor).candidates[0]!
+    expect(noisy.gate).toBe('regressions')
+    expect(noisy.regressionChance!).toBeGreaterThan(0.05)
+    expect(noisy.verdict).toMatch(/arises by chance with probability \d+%/)
+  })
+
+  it('withholds cost on unreconciled replayed trials too (H19)', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const ledgers = names.flatMap((n, i) => [led(n, 'a', 1, 1), led(n, 'b', 1, 0.8 + i * 0.01, true, { usageProvenance: { source: 'replay', reconciled: i === 0 ? false : true, replay: { runId: 'old', replayed: 3, live: 0 } } })])
+    const c = buildReport(plan(1), ledgers, floor).candidates[0]!
+    expect(c.costReading).toBe('inconclusive')
+    expect(c.verdict).toMatch(/withheld/)
+  })
+
+  it('does not treat one metered arm as a shared served model', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const meter = (model: string) => ({ usageProvenance: { source: 'meter', reconciled: true, meter: { requests: 1, forwarded: 1, faults: 0, hit: 0, miss: 0, output: 0, reasoning: 0, servedModels: [model] } } })
+    const ok = buildReport(plan(1), names.flatMap((n, i) => [led(n, 'a', 1, 1, true, meter('m')), led(n, 'b', 1, 0.8 + i * 0.01, true, meter('m'))]), floor).candidates[0]!
+    expect(ok.costReading).toBe('cheaper')
+    const oneSided = buildReport(plan(1), names.flatMap((n, i) => [led(n, 'a', 1, 1), led(n, 'b', 1, 0.8 + i * 0.01, true, meter('m'))]), floor).candidates[0]!
+    expect(oneSided.costReading).toBe('inconclusive')
+    expect(oneSided.verdict).toMatch(/no served-model record on a's comparable trials/)
+  })
+
+  it('reads pass^k over scenarios with every repeat, and every cost estimand over the same pairs', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    // s6 has only one of three repeats on each arm: it is neither reliable nor unreliable, it is incomplete
+    const ledgers = names.flatMap(n => (n === 's6' ? [1] : [1, 2, 3]).flatMap(rep => [led(n, 'a', rep, 1), led(n, 'b', rep, 0.9)]))
+    const c = buildReport(plan(3), ledgers, floor).candidates[0]!
+    expect(c.summary.candidate.passAllK).toBe(1)
+    expect(c.reliability.scenarios).toBe(5)
+    expect(c.incomplete).toEqual(['s6'])
+    // a pair whose baseline cost is 0 contributes to no cost estimand (Δ$ included), so Δ$ and Δ% describe the same pairs
+    const zero = names.flatMap((n, i) => [led(n, 'a', 1, i === 0 ? 0 : 1), led(n, 'b', 1, 0.5)])
+    const z = buildReport(plan(1), zero, floor).candidates[0]!
+    expect(z.costCI.n).toBe(5)
+    expect(z.costPctCI.n).toBe(5)
+    expect(z.scenarios.find(s => s.scenario === 's1')!.costDiffUsd).toBeNull()
+  })
+
+  it('withholds cost for an unpriced model instead of reading 0 as equivalent', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const ledgers = names.flatMap(n => [led(n, 'a', 1, 0, true, { unpriced: true, model: 'other/unknown' }), led(n, 'b', 1, 0, true, { unpriced: true, model: 'other/unknown' })])
+    const c = buildReport(plan(1), ledgers, floor).candidates[0]!
+    expect(c.unpriced).toBe(12)
+    expect(c.costReading).toBe('none')
+    expect(c.verdict).toMatch(/^Cost not priced: 12 trials ran a model with no entry in the price table \(other\/unknown\)/)
+    expect(c.grade).toBe('inconclusive')
+  })
+
+  it('declines a dev-pool direction only when the sealed pool reverses it, not when it is flat', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const dev = ['s1', 's2', 's3', 's4', 's5', 's6']
+    const held = ['h1', 'h2', 'h3']
+    const p = plan(3, { scenarios: [...dev, ...held] })
+    // dev pool: the candidate turns 0/3 into 3/3 everywhere (+100 pp); sealed pool: the baseline passes 1/3, the candidate 1/3 (flat) or 0/3 (reversal, both-fail so no gate)
+    const rows = (holdoutCandPasses: number) => [...dev.flatMap(n => [1, 2, 3].flatMap(rep => [led(n, 'a', rep, 1, false), led(n, 'b', rep, 0.9, true)])), ...held.flatMap(h => [1, 2, 3].flatMap(rep => [led(h, 'a', rep, 1, rep === 1), led(h, 'b', rep, 0.9, rep <= holdoutCandPasses)]))]
+    const flat = buildReport(p, rows(1), { ...floor, holdout: new Set(held) }).candidates[0]!
+    expect(flat.gate).toBe('pass')
+    expect(flat.holdoutGap!.holdout).toBe(0)
+    expect(flat.verdict).not.toMatch(/^Declined/)
+    const reversed = buildReport(p, rows(0), { ...floor, holdout: new Set(held) }).candidates[0]!
+    expect(reversed.gate).toBe('pass')
+    expect(reversed.holdoutGap!.holdout).toBeLessThan(0)
+    expect(reversed.verdict).toMatch(/^Declined/)
+  })
+
+  it('keeps degenerate sequences undecided: an empty betting set and a constant asymptotic sequence', async () => {
+    const { bettingCS, asympCS } = await import('../src/core/stats.js')
+    const constant = asympCS([1, 1, 1, 1], 0.05, 10)
+    expect(constant.lo).toBe(-Infinity)
+    expect(constant.hi).toBe(Infinity)
+    // a near-constant sequence collapses the betting set below the coarse grid; the fine scan still finds it around the mean
+    const tight = bettingCS(Array.from({ length: 60 }, (_, i) => 0.4567 + (i % 2 ? 1e-6 : -1e-6)))
+    expect(tight.empty).not.toBe(true)
+    expect(tight.lo).toBeLessThanOrEqual(0.4567)
+    expect(tight.hi).toBeGreaterThanOrEqual(0.4567)
+    expect(tight.hi - tight.lo).toBeLessThan(0.3)
   })
 })

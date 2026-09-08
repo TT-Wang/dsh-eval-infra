@@ -9,7 +9,7 @@ import { loadArmFile, type ArmError, applyRoute, type RunRoute, DEFAULT_PROVIDER
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project, benchPools } from './project.js'
-import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
+import { buildReport, noiseFloorOf, readingAlpha, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
 import { fileSha, readReceipt, receiptSignatureValid, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
 import { driftTest } from './drift.js'
@@ -17,7 +17,7 @@ import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './
 import { deepseekChat } from './judge.js'
 
 const PROBE_COUNT = PROBE_LIST.length
-import { executeRun, type DriverInput, type RunDeps } from './runner.js'
+import { executeRun, type DriverInput, type RunDeps, type SequentialDecision } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
@@ -193,6 +193,9 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       sources[spec.name] = p
       return spec
     })
+    // Sequential mode monitors one paired comparison on cost; more candidates or another north star would run without any stopping rule or valid sequence.
+    if (request.sequential && candidateSpecs.length > 1) throw new LaunchError(`sequential mode compares one candidate against the baseline (${candidateSpecs.length} given); run one candidate at a time or drop --sequential`, 'arms')
+    if (request.sequential && (request.northStar ?? 'cost') !== 'cost') throw new LaunchError(`sequential mode decides on cost; the ${request.northStar} north star has no confidence sequence — drop --sequential or use --north-star cost`, 'arms')
     id = newRunId()
     plan = {
       id,
@@ -200,6 +203,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       baseline: baselineSpec,
       candidates: candidateSpecs,
       ...(request.northStar !== undefined ? { northStar: request.northStar } : {}),
+      ...(request.sequential ? { sequential: true } : {}),
       scenarios: [],
       repeats: request.repeats ?? project.config.repeats,
       concurrency: request.concurrency ?? project.config.concurrency,
@@ -326,9 +330,10 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (request.resume !== undefined) deps.resume = true
   if (request.maxUsd !== undefined) deps.maxUsd = request.maxUsd
   if (baseOverlayRows.length > 0) deps.baseOverlayRows = baseOverlayRows
-  const decisions: Array<{ scenarios: number; cost: { mean: number; lo: number; hi: number } | null; ratio: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; decided: boolean; reason: string }> = []
+  const decisions: SequentialDecision[] = []
   if (request.sequential) {
-    deps.sequential = { seed: request.seed ?? 42, ...(request.order === 'signal' ? { order: archiveSignalOrder(project.runsRoot, plan.id) } : {}), onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost ratio betting CS ${d.ratio ? `${d.ratio.mean.toFixed(2)} [${d.ratio.lo.toFixed(2)}, ${d.ratio.hi.toFixed(2)}]` : '—'} · Δ% asymptotic ${d.cost ? `[${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
+    // The sequences run at the contract's alpha (three planned sequences share 5%), the same figure the receipt states.
+    deps.sequential = { seed: request.seed ?? 42, alpha: readingAlpha(plan), ...(request.order === 'signal' ? { order: archiveSignalOrder(project.runsRoot, plan.id) } : {}), onDecision: (d) => { decisions.push(d); log(`sequential: after ${d.scenarios} scenarios · cost ratio betting CS ${d.ratio ? `${d.ratio.mean.toFixed(2)} [${d.ratio.lo.toFixed(2)}, ${d.ratio.hi.toFixed(2)}]` : '—'} · Δ% asymptotic ${d.cost ? `[${d.cost.lo.toFixed(1)}, ${d.cost.hi.toFixed(1)}]` : '—'} · pass seq ${d.pass ? `[${d.pass.lo.toFixed(2)}, ${d.pass.hi.toFixed(2)}]` : '—'} · ${d.decided ? 'DECIDED: ' + d.reason : 'continue'}`) } }
     log('sequential mode: scenarios in seeded random order; the run stops once the anytime-valid sequences decide the comparison')
   }
 
@@ -532,14 +537,14 @@ export function analysisContract(plan: RunPlan): AnalysisContract {
   return {
     estimand: 'per-scenario paired difference in USD cost on repeat-pairs where both arms passed, and the paired difference in pass rate',
     pairing: 'scenario x repeat, arms interleaved A B on odd repeats and B A on even ones, one process per trial',
-    estimator: 'mean over scenarios with a Student-t interval below 10 scenarios and a percentile bootstrap from 10; sequential mode replaces it with a hedged betting confidence sequence on the winsorized cost ratio',
-    alpha: 0.05 / (2 * Math.max(1, plan.candidates.length)),
+    estimator: 'mean over scenarios with a Student-t interval (exact quantile) below 10 scenarios and a percentile bootstrap from 10; sequential mode replaces it with a hedged betting confidence sequence on the winsorized cost ratio, a pass-difference sequence and a reliability sequence, all at the same alpha; other intervals on optionally-stopped data are descriptive',
+    alpha: readingAlpha(plan),
     sesoiPct: 10,
     minScenarios: 5,
     bootstrapDraws: 2000,
     seed: 42,
-    gateOrder: 'gates first: any safety-gate violation, then any regression, blocks every reading',
-    costRule: 'cost compared only on repeat-pairs where both arms passed; a direction also needs >= 5 comparable scenarios, an interval excluding zero, and no overlap with a measured A/A floor',
+    gateOrder: 'gates first: any safety-gate violation, then any consistent regression (baseline all repeats pass, candidate all fail), then any suspected regression (majority-fail without consistency), blocks every reading; the gate is a screening rule and states its chance level',
+    costRule: 'cost compared only on repeat-pairs where both arms passed and the baseline had a priced cost; a direction also needs >= 5 comparable scenarios, an interval excluding zero at alpha, and an A/A floor on file for this baseline (>= 5 scenarios, measured before no drift) whose interval the reading does not overlap; the same rule reads steps',
     northStar: plan.northStar ?? 'cost',
     k: plan.repeats,
     reliabilityRule: 'pass^k per arm = share of scenarios where every repeat passed; the arms are compared on the scenarios where exactly one arm is reliable (McNemar mid-p at alpha, Beta posterior); a direction needs >= 5 scenarios with complete repeats',
@@ -620,7 +625,7 @@ export function probeOf(paths: ReturnType<typeof runPaths>): { probe?: ProbeVerd
   try { return { probe: JSON.parse(readFileSync(file, 'utf8')) as ProbeVerdict } } catch { return {} }
 }
 
-export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; scenarios: number }> } {
+export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: Record<string, { cost: { mean: number; lo: number; hi: number } | null; pass: { lo: number; hi: number } | null; reliability?: { lo: number; hi: number } | null; scenarios: number }> } {
   const file = join(paths.dir, 'sequential.json')
   if (!existsSync(file)) return {}
   try {
@@ -629,7 +634,7 @@ export function sequencesOf(paths: ReturnType<typeof runPaths>): { sequences?: R
     if (!last || !seqFile.candidate) return {}
     // The finite-sample ratio sequence decides; it is expressed as Δ% for the report. Older files without it fall back to the asymptotic one.
     const cost = last.ratio ? { mean: (last.ratio.mean - 1) * 100, lo: (last.ratio.lo - 1) * 100, hi: (last.ratio.hi - 1) * 100 } : last.cost
-    return { sequences: { [seqFile.candidate]: { cost, pass: last.pass, scenarios: last.scenarios } } }
+    return { sequences: { [seqFile.candidate]: { cost, pass: last.pass, reliability: (last as { reliability?: { lo: number; hi: number } | null }).reliability ?? null, scenarios: last.scenarios } } }
   } catch { return {} }
 }
 

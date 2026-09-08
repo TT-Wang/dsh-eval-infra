@@ -6,9 +6,9 @@ import { LiveRun, type StreamEvent } from './live.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
-type Filter = 'all' | 'unsafe' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'flaky'
-const ORDER: Record<PairClass, number> = { unsafe: 0, regression: 1, improvement: 2, 'both-fail': 3, incomplete: 4, same: 5, unrun: 6 }
-const LABEL: Record<PairClass, string> = { unsafe: 'unsafe', regression: 'regression', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }
+type Filter = 'all' | 'unsafe' | 'regression' | 'suspected' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'flaky'
+const ORDER: Record<PairClass, number> = { unsafe: 0, regression: 1, suspected: 2, improvement: 3, 'both-fail': 4, incomplete: 5, same: 6, unrun: 7 }
+const LABEL: Record<PairClass, string> = { unsafe: 'unsafe', regression: 'regression', suspected: 'suspected', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }
 const GRADE_TONE: Record<Grade, string> = { improvement: 'good', regression: 'bad', tradeoff: 'warn', tie: 'neutral', inconclusive: 'neutral' }
 
 export function RunView({ id }: { id: string }) {
@@ -148,7 +148,7 @@ export function RunView({ id }: { id: string }) {
             <h2>{c.arm} vs {report.baseline}</h2>
             <div class="row">
               <div class="chips">
-                {(['all', 'unsafe', 'regression', 'improvement', 'flaky', 'same', 'both-fail', 'incomplete'] as Filter[]).map(f => {
+                {(['all', 'unsafe', 'regression', 'suspected', 'improvement', 'flaky', 'same', 'both-fail', 'incomplete'] as Filter[]).map(f => {
                   const n = f === 'all' ? c.scenarios.length : f === 'flaky' ? c.scenarios.filter(p => p.flaky).length : c.scenarios.filter(p => p.class === f).length
                   return <button class={`chip ${filter === f ? 'on' : ''} ${f}`} onClick={() => setFilter(f)}>{f === 'all' ? 'all' : f === 'flaky' ? 'flaky' : LABEL[f]} {n}</button>
                 })}
@@ -268,8 +268,10 @@ function plainVerdict(c: CandidateReport): string {
   const bothUnsafe = c.bothUnsafe.length > 0 ? `Both arms did something they were not asked to on ${c.bothUnsafe.join(', ')} (${c.scenarios.find(p => p.violations.candidate > 0)?.violations.evidence ?? 'see the trial'}), so neither is acceptable there. ` : ''
   const ns: CandidateReport['northStar'] = c.northStar ?? { metric: 'cost', reading: c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading, ci: c.costPctCI, unit: '%', text: c.verdict }
   const noun = ns.metric === 'cost' ? 'cost' : ns.metric === 'efficiency' ? 'steps' : 'quality'
-  if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. ${noun[0]!.toUpperCase()}${noun.slice(1)} is not compared until that is fixed.`
+  if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes every time${c.regressionChance !== null && c.regressionChance >= 0.05 ? ` (given how flaky this pool is, that happens by chance about ${Math.round(c.regressionChance * 100)}% of the time, so confirm it)` : ''}. ${noun[0]!.toUpperCase()}${noun.slice(1)} is not compared until that is fixed.`
+  if (c.gate === 'suspect') { const sus = c.scenarios.filter(p => p.class === 'suspected'); return `${c.arm} may break ${sus.length === 1 ? sus[0]!.scenario : `${sus.length} scenarios`}: the repeats disagree (baseline ${sus[0]!.baseline.passes}/${sus[0]!.baseline.n}, ${c.arm} ${sus[0]!.candidate.passes}/${sus[0]!.candidate.n}), so this is neither called a regression nor cleared. Rerun it before reading ${noun}.` }
   if (c.gate === 'incomplete') return `${bothUnsafe}Some trials did not finish, so there is nothing to compare yet.`
+  if ((c.unpriced ?? 0) > 0) return `${bothUnsafe}The model has no price in the table, so cost was recorded as 0 and is not read; add its prices to the project config.`
   const rel = c.reliability === undefined ? '' : c.reliability.reading === 'more-reliable' ? ` It is also more reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : c.reliability.reading === 'less-reliable' ? ` But it is less reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : ''
   if (ns.metric === 'quality') {
     if (ns.reading === 'better') return `The blinded judge prefers ${c.arm}, and it breaks nothing.${rel}`
@@ -283,6 +285,7 @@ function plainVerdict(c: CandidateReport): string {
   if (ns.reading === 'worse') return `${c.arm} ${ns.metric === 'cost' ? 'costs' : 'takes'} about ${pct(v)} more ${noun} and breaks nothing.${rel}`
   if (ns.reading === 'same') return `No real difference: ${noun} within ±10% and nothing broke.${rel}`
   if (ns.reading === 'none') return `${bothUnsafe}No scenario where both arms passed, so there is nothing to compare on ${noun}.${rel}`
+  if (c.floor !== undefined && c.floor !== 'ok' && ns.ci?.significant) return `The measured difference in ${noun} is ${v < 0 ? '−' : '+'}${pct(v)} and its interval excludes zero, but ${c.floor === 'missing' ? 'nothing says yet what "no change" looks like on this baseline' : c.floor === 'thin' ? 'the A/A floor on file has too few scenarios' : 'the baseline has drifted since its A/A floor was measured'}, so no direction is read until an A/A run measures it.${rel}`
   return `Not enough evidence yet. The measured difference in ${noun} is ${v < 0 ? '−' : '+'}${pct(v)}, but it could as easily be noise.${rel}`
 }
 
@@ -306,11 +309,14 @@ function nextStep(c: CandidateReport, runId: string, baseline: string): { text: 
   if (unsafe) return { text: `Open the trace of ${unsafe.scenario} and find the step behind "${unsafe.violations.evidence ?? 'the violation'}"; the trial's ledger lists every violation and every path the container wrote.`, cmd: `dsh-eval report ${runId} --json | jq '.candidates[0].scenarios[] | select(.scenario=="${unsafe.scenario}") | .violations'` }
   const regression = c.scenarios.find(p => p.class === 'regression')
   if (regression) return { text: `Look at where the two arms diverge on ${regression.scenario}, then confirm the failure is real and not luck.`, cmd: `dsh-eval rerun ${runId} ${regression.scenario} --fork` }
+  const suspected = c.scenarios.find(p => p.class === 'suspected')
+  if (suspected) return { text: `Rerun ${suspected.scenario} with more repeats: the arms' repeats disagree there, and only a consistent result settles whether ${c.arm} breaks it.`, cmd: `dsh-eval rerun ${runId} ${suspected.scenario} --repeats 5` }
+  if ((c.unpriced ?? 0) > 0) return { text: 'Add the model\'s prices to the project config, then re-read this run; cost cannot be read while the model is unpriced.', cmd: `dsh-eval report ${runId}` }
   const nsReading = c.northStar?.reading ?? (c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading)
   if (c.northStar?.metric === 'quality' && nsReading === 'none') return { text: 'Quality is read from the blinded judge. Run it on this run.', cmd: `dsh-eval judge ${runId}` }
   if (nsReading === 'better' || nsReading === 'worse' || nsReading === 'same') return { text: 'This result is usable. Bundle it if someone else needs to check it.', cmd: `dsh-eval publish ${runId}` }
   if (comparable > 0 && comparable < 5) return { text: `Only ${comparable} scenario${comparable === 1 ? '' : 's'} could be compared; five is the minimum before any direction is stated. Run more of the library.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' 'x*' --repeats 3` }
-  if (c.noiseFloor === null) return { text: 'Measure what "no change" looks like on your setup first; every direction is judged against that floor.', cmd: `dsh-eval run --baseline ${baseline} --aa 'f*' --repeats 3` }
+  if (c.noiseFloor === null) return { text: c.floor === 'stale' ? 'The baseline has drifted since its A/A floor was measured; measure the floor again before any direction is read.' : c.floor === 'thin' ? 'The A/A floor on file covers too few scenarios; measure it on at least five.' : 'Measure what "no change" looks like on your setup first; no direction is read without that floor.', cmd: `dsh-eval run --baseline ${baseline} --aa 'f*' 'p*' --repeats 3` }
   return { text: `This design can only detect a difference of about ±${c.mdePct === null ? '?' : c.mdePct.toFixed(0)}%. Add repeats or scenarios to see smaller ones.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' --repeats 5` }
 }
 
@@ -357,7 +363,7 @@ function Verdict({ c, baseline, runId }: { c: CandidateReport; baseline: string;
           <Stat label="tokens / solved" a={s.baseline.tokensPerSolved === null ? '—' : fmt.k(s.baseline.tokensPerSolved)} b={s.candidate.tokensPerSolved === null ? '—' : fmt.k(s.candidate.tokensPerSolved)} />
           <Stat label="cache-hit share" a={`${(s.baseline.cacheHitShare * 100).toFixed(0)}%`} b={`${(s.candidate.cacheHitShare * 100).toFixed(0)}%`} />
           <Stat label="discordant pairs" a={`${c.wins} won`} b={`${c.losses} lost · p=${c.signTestP.toFixed(2)}`} />
-          <Stat label="detectable effect" a={c.mdePct === null ? '—' : `±${c.mdePct.toFixed(0)}%`} b={c.noiseFloor ? `A/A floor ${c.noiseFloor.meanAbsPct.toFixed(0)}%` : 'no A/A run yet'} />
+          <Stat label="detectable effect" a={c.mdePct === null ? '—' : `±${c.mdePct.toFixed(0)}%`} b={c.noiseFloor ? `A/A band ${c.noiseFloor.lo.toFixed(0)}% to +${c.noiseFloor.hi.toFixed(0)}%`.replace('to +-', 'to −').replace(/^A\/A band -/, 'A/A band −') : c.floor === 'stale' ? 'A/A floor stale (drift)' : c.floor === 'thin' ? 'A/A floor too thin' : 'no A/A run yet'} />
           <Stat label="flaky scenarios" a={String(c.flaky.length)} b={c.flaky.slice(0, 2).join(', ') || '—'} />
           <Stat label="paired pass/fail" a={`${c.paired.b} won · ${c.paired.c} lost`} b={`mid-p ${c.paired.midP.toFixed(2)} · P(win) ${(c.paired.pWin * 100).toFixed(0)}%`} />
           <Stat label="design" a={`ICC ${c.icc.rho.toFixed(2)} · DE ${c.icc.designEffect.toFixed(2)}`} b={c.resolution.q === null ? 'q —' : `q = ${c.resolution.q.toFixed(2)} (N* ${c.resolution.nStar})`} />

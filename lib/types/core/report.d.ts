@@ -46,7 +46,8 @@ export interface ArmScenarioStats {
         overridden?: boolean;
     }>;
 }
-export type PairClass = 'unsafe' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun';
+/** suspected: the baseline passes at least half its repeats and the candidate fails at least half, but neither arm is consistent — screened, not called. */
+export type PairClass = 'unsafe' | 'regression' | 'suspected' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun';
 export interface PairedScenario {
     scenario: string;
     baseline: ArmScenarioStats;
@@ -174,7 +175,16 @@ export interface CandidateReport {
         candidate: ArmSummary;
     };
     scenarios: PairedScenario[];
+    /** Consistent regressions: the baseline passed every repeat and the candidate failed every repeat. */
     regressions: string[];
+    /** Suspected regressions: baseline majority-pass, candidate majority-fail, but at least one arm inconsistent across repeats; blocks the readings, is not called a regression until a rerun confirms it. */
+    suspected: string[];
+    /** Screening calibration of the gate: probability that at least one consistent regression would arise by chance given the pass rates observed on this run (pooled per scenario), null without complete pairs. */
+    regressionChance: number | null;
+    /** Trials of the two arms whose model has no price-table entry (usd recorded as 0): cost readings are withheld while any exist. */
+    unpriced: number;
+    /** Why the A/A floor did or did not apply: ok = applied; missing = none on file for this baseline; thin = fewer scenarios than the minimum; stale = the baseline drifted since it was measured. A direction is read only when it is ok. */
+    floor: 'ok' | 'missing' | 'thin' | 'stale';
     /** Scenarios where the candidate failed the safety gate and the baseline did not. */
     unsafe: string[];
     /** Scenarios where both arms failed the safety gate: not a regression, but said. */
@@ -199,7 +209,7 @@ export interface CandidateReport {
     /** Sum of cost over comparable pairs, both arms. */
     comparableUsdBaseline: number;
     comparableUsdCandidate: number;
-    gate: 'pass' | 'unsafe' | 'regressions' | 'incomplete';
+    gate: 'pass' | 'unsafe' | 'regressions' | 'suspect' | 'incomplete';
     /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
     costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none';
     /** Rerun validation of a failure (dsh-eval rerun), when one was made. */
@@ -222,17 +232,17 @@ export interface CandidateReport {
             step: number;
         };
     };
-    /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) bootstrapped over scenarios. */
+    /** Per-scenario pass-rate difference (candidate − baseline, in percentage points) over scenarios: descriptive, not a planned claim (the reliability comparison is); in sequential mode the pass-difference confidence sequence. */
     passDiffCI: BootstrapCI;
     /** One-word grade combining correctness and cost: improvement / regression / tradeoff / tie / inconclusive. */
     grade: Grade;
     /** Scenarios whose repeats disagree within an arm. */
     flaky: string[];
-    /** Minimum detectable cost effect (percent of baseline) for this design at 95% confidence and 80% power, from the observed per-scenario spread; null with fewer than 3 comparable scenarios. */
+    /** Minimum detectable cost effect (percent of baseline) for this design at the reading's alpha and 80% power, from the observed per-scenario spread; null with fewer than 3 comparable scenarios. */
     mdePct: number | null;
     /** Noise floor from the most recent A/A run on the same baseline, when one exists in the archive. */
     noiseFloor: NoiseFloor | null;
-    /** Significance level used for the intervals after Bonferroni adjustment across candidates (0.05 / candidates). */
+    /** Significance level of the planned claims: 0.05 / (2 × candidates) for the north-star and reliability directions; 0.05 / 3 in sequential mode (cost ratio, pass difference, reliability sequences). */
     alpha: number;
     /** Intraclass correlation of repeat cost differences within scenarios and the design effect 1 + (k−1)ρ. */
     icc: {
@@ -353,11 +363,17 @@ export interface NoiseFloor {
     /** rerun: the same prompts re-run; perturbation: paraphrased prompts on repeats above 1 (wider by construction). */
     kind?: 'rerun' | 'perturbation';
     scenarios: number;
-    /** Mean of |Δ%| across scenarios in the A/A run. */
+    /** Mean of |Δ%| across scenarios in the A/A run (descriptive; ≈0.8σ under pure noise, so never the veto band). */
     meanAbsPct: number;
-    /** 95% bootstrap interval of Δ% in the A/A run. */
+    /** Interval of the A/A run's mean Δ% at the same alpha and estimator as a candidate's: the noise band a directional interval must stay clear of. */
     lo: number;
     hi: number;
+    /** The same band on steps per solved task, for the efficiency north star. */
+    steps?: {
+        lo: number;
+        hi: number;
+        scenarios: number;
+    };
 }
 export interface ReportOptions {
     /** Smallest cost effect of interest in percent; a CI inside ±sesoi reads "equivalent" (default 10). */
@@ -385,6 +401,10 @@ export interface ReportOptions {
             lo: number;
             hi: number;
         } | null;
+        reliability?: {
+            lo: number;
+            hi: number;
+        } | null;
         scenarios: number;
     }>;
 }
@@ -397,7 +417,22 @@ export declare function gradeOf(gate: CandidateReport['gate'], improvements: num
  */
 export declare function qualityReading(c: CandidateReport, wins: number, losses: number, ties: number, minScenarios?: number): NorthStarReading;
 /** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
-export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | null;
+export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[], alpha?: number): NoiseFloor | null;
+/** The alpha every planned claim is read at: two claims per candidate (north-star direction, reliability direction) share 5%; sequential mode runs three sequences. */
+export declare function readingAlpha(plan: {
+    candidates: Array<{
+        name: string;
+    }>;
+    sequential?: boolean;
+}): number;
+/** Does the interval [lo, hi] reach into the band [bandLo, bandHi]? Two intervals of the same estimator; overlap means the difference is not distinguishable from the baseline's own noise. */
+export declare function withinNoise(ci: {
+    lo: number;
+    hi: number;
+}, band: {
+    lo: number;
+    hi: number;
+}): boolean;
 export interface Report {
     schema: 'dsh-eval-report/1';
     runId: string;

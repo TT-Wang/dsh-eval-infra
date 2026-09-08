@@ -150,6 +150,11 @@ export interface SequentialDecision {
         lo: number;
         hi: number;
     } | null;
+    /** Reliability confidence sequence over per-scenario x = (Δreliable + 1) / 2, reliable = every repeat passed; 0.5 is "no difference". */
+    reliability: {
+        lo: number;
+        hi: number;
+    } | null;
     decided: boolean;
     reason: string;
 }

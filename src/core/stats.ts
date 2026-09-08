@@ -109,11 +109,8 @@ export function smallSampleCI(values: number[], b = 2000, seed = 42, alpha = 0.0
   if (n >= 10) return bootstrapMean(values, b, seed, alpha)
   const m = mean(values)
   const s = stddev(values)
-  // t quantile for the requested alpha: table for 0.05; Bonferroni-adjusted alphas use a normal-ratio scaling of the 0.05 quantile.
-  const t05 = tCritical(n - 1)
-  const z05 = 1.96
-  const zAlpha = alpha >= 0.05 ? z05 : normalQuantile(1 - alpha / 2)
-  const t = t05 * (zAlpha / z05)
+  // Exact t quantile at the requested (possibly Bonferroni-adjusted) alpha.
+  const t = tCritical(n - 1, alpha)
   const half = t * s / Math.sqrt(n)
   return { mean: m, lo: m - half, hi: m + half, n, significant: m - half > 0 || m + half < 0 }
 }
@@ -168,13 +165,77 @@ export function stddev(xs: number[]): number {
 }
 
 /** Two-sided 97.5% Student t quantile for small degrees of freedom (table up to 30, then normal). */
-export function tCritical(df: number): number {
-  const table: Record<number, number> = { 1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 25: 2.060, 30: 2.042 }
-  if (df <= 0) return 12.706
-  if (table[df] !== undefined) return table[df]!
-  if (df < 25) return table[20]!
-  if (df < 30) return table[25]!
-  return 1.96
+/** Two-sided Student-t critical value t_{1-alpha/2, df}, exact (inverse CDF), not a table scaled by a normal ratio. */
+export function tCritical(df: number, alpha = 0.05): number {
+  if (df <= 0) return tQuantile(1 - alpha / 2, 1)
+  return tQuantile(1 - alpha / 2, df)
+}
+
+/** log Γ(x) (Lanczos approximation, |error| < 1e-10 for x > 0). */
+export function lgamma(x: number): number {
+  const g = 7
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7]
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x)
+  x -= 1
+  let a = c[0]!
+  const t = x + g + 0.5
+  for (let i = 1; i < g + 2; i += 1) a += c[i]! / (x + i)
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a)
+}
+
+/** Regularized incomplete beta I_x(a, b) by Lentz's continued fraction (Numerical Recipes betacf). */
+export function betainc(x: number, a: number, b: number): number {
+  if (x <= 0) return 0
+  if (x >= 1) return 1
+  const front = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x))
+  const cf = (x: number, a: number, b: number): number => {
+    const tiny = 1e-300
+    let c = 1
+    let d = 1 - (a + b) * x / (a + 1)
+    if (Math.abs(d) < tiny) d = tiny
+    d = 1 / d
+    let h = d
+    for (let m = 1; m <= 300; m += 1) {
+      const m2 = 2 * m
+      let aa = m * (b - m) * x / ((a + m2 - 1) * (a + m2))
+      d = 1 + aa * d; if (Math.abs(d) < tiny) d = tiny
+      c = 1 + aa / c; if (Math.abs(c) < tiny) c = tiny
+      d = 1 / d; h *= d * c
+      aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1))
+      d = 1 + aa * d; if (Math.abs(d) < tiny) d = tiny
+      c = 1 + aa / c; if (Math.abs(c) < tiny) c = tiny
+      d = 1 / d
+      const del = d * c
+      h *= del
+      if (Math.abs(del - 1) < 1e-14) break
+    }
+    return h
+  }
+  // Use the symmetry that converges fastest.
+  if (x < (a + 1) / (a + b + 2)) return front * cf(x, a, b) / a
+  return 1 - front * cf(1 - x, b, a) / b
+}
+
+/** CDF of Student's t with df degrees of freedom. */
+export function tCdf(t: number, df: number): number {
+  const x = df / (df + t * t)
+  const tail = 0.5 * betainc(x, df / 2, 0.5)
+  return t >= 0 ? 1 - tail : tail
+}
+
+/** Inverse CDF of Student's t (bisection on tCdf; 1e-10 in t for the p values a report reads at). */
+export function tQuantile(p: number, df: number): number {
+  if (p <= 0) return -Infinity
+  if (p >= 1) return Infinity
+  if (p < 0.5) return -tQuantile(1 - p, df)
+  let lo = 0
+  let hi = 1
+  while (tCdf(hi, df) < p) hi *= 2
+  for (let i = 0; i < 200 && hi - lo > 1e-10; i += 1) {
+    const mid = (lo + hi) / 2
+    if (tCdf(mid, df) < p) lo = mid; else hi = mid
+  }
+  return (lo + hi) / 2
 }
 
 /**
@@ -204,7 +265,8 @@ export function icc(groups: number[][]): { rho: number; designEffect: number; k:
  */
 export function mcnemar(b: number, c: number, ropeHalfWidth = 0.1): { b: number; c: number; exactP: number; midP: number; pWin: number; inRope: number } {
   const n = b + c
-  if (n === 0) return { b, c, exactP: 1, midP: 1, pWin: 0.5, inRope: 1 }
+  // No discordant pairs: the posterior is the flat prior, whose mass inside the ROPE is its width — no evidence of equivalence.
+  if (n === 0) return { b, c, exactP: 1, midP: 1, pWin: 0.5, inRope: 2 * ropeHalfWidth }
   const pmf = (i: number): number => binom(n, i) / 2 ** n
   const kmin = Math.min(b, c)
   let tail = 0
@@ -247,13 +309,14 @@ export function passPow(passes: number, n: number, j: number): number {
   return choose(passes, j) / choose(n, j)
 }
 
-export function resolution(values: number[]): { nStar: number | null; q: number | null } {
+export function resolution(values: number[], alpha = 0.05): { nStar: number | null; q: number | null } {
   const n = values.length
   if (n < 2) return { nStar: null, q: null }
   const d = Math.abs(mean(values))
   const s = stddev(values)
   if (d === 0 || s === 0) return { nStar: null, q: null }
-  const nStar = Math.ceil(((1.96 + 0.84) * s / d) ** 2)
+  // N* for 80% power at the two-sided alpha the reading uses (z_{1-alpha/2} + z_{0.8}).
+  const nStar = Math.ceil(((normalQuantile(1 - alpha / 2) + normalQuantile(0.8)) * s / d) ** 2)
   return { nStar, q: n / nStar }
 }
 
@@ -284,7 +347,9 @@ export function asympCS(values: number[], alpha = 0.05, plannedN = 10): { mean: 
   const t = values.length
   const mu = mean(values)
   if (t < 2) return { mean: mu, lo: -Infinity, hi: Infinity, t }
-  const sd = Math.max(stddev(values), 1e-9)
+  const sd = stddev(values)
+  // The asymptotic sequence rests on a variance estimate; a constant sequence has none, so it stays undecided rather than collapsing to a point.
+  if (!(sd > 0)) return { mean: mu, lo: -Infinity, hi: Infinity, t }
   const m = Math.max(2, plannedN)
   const rho = Math.sqrt((-2 * Math.log(alpha) + Math.log(-2 * Math.log(alpha)) + 1) / (m * Math.log(Math.max(m, Math.E))))
   const width = sd * Math.sqrt((2 * (t * rho * rho + 1) / (t * t * rho * rho)) * Math.log(Math.sqrt(t * rho * rho + 1) / alpha))
@@ -297,7 +362,7 @@ export function asympCS(values: number[], alpha = 0.05, plannedN = 10): { mean: 
  * the per-scenario pass-rate difference in [−1, 1]; the null "no difference"
  * is the point 1/2. Returns the set of means not rejected, on a grid.
  */
-export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number; t: number } {
+export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number; t: number; empty?: boolean } {
   // Hedged capital process (Waudby-Smith & Ramdas 2020, "betting" CS): for each
   // candidate mean m, two capital processes bet that the truth is above (K+) and
   // below (K−) m with a predictable plug-in bet from the running variance,
@@ -307,10 +372,7 @@ export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number;
   if (t === 0) return { lo: 0, hi: 1, t }
   const grid = 400
   const c = 0.9
-  let lo = 1
-  let hi = 0
-  for (let g = 0; g <= grid; g += 1) {
-    const m = g / grid
+  const survives = (m: number): boolean => {
     let plus = 1
     let minus = 1
     let sumX = 0
@@ -330,8 +392,26 @@ export function bettingCS(xs: number[], alpha = 0.05): { lo: number; hi: number;
       sumSq += x * x
       if (Math.max(plus, minus) >= 1 / alpha) { rejected = true; break }
     }
-    if (!rejected) { lo = Math.min(lo, m); hi = Math.max(hi, m) }
+    return !rejected
   }
-  if (lo > hi) return { lo: 0.5, hi: 0.5, t }
+  const scan = (from: number, to: number, points: number): { lo: number; hi: number } => {
+    let lo = 1
+    let hi = 0
+    for (let g = 0; g <= points; g += 1) {
+      const m = from + (to - from) * g / points
+      if (survives(m)) { lo = Math.min(lo, m); hi = Math.max(hi, m) }
+    }
+    return { lo, hi }
+  }
+  let { lo, hi } = scan(0, 1, grid)
+  if (lo > hi) {
+    // Nothing on the coarse grid survived: either the set is narrower than one grid cell (a near-constant
+    // sequence collapses it onto the sample mean) or it is genuinely empty. Look finely around the mean first.
+    const mu = mean(xs)
+    const fine = scan(Math.max(0, mu - 1 / grid), Math.min(1, mu + 1 / grid), grid)
+    if (fine.lo <= fine.hi) return { lo: fine.lo, hi: fine.hi, t }
+    // An empty confidence set rejects every mean; it decides nothing and is reported as such, not as a point.
+    return { lo: 0, hi: 1, t, empty: true }
+  }
   return { lo, hi, t }
 }
