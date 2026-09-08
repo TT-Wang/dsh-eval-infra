@@ -25,6 +25,10 @@ export type ImagePlatform = 'amd64' | 'arm64'
 export interface ExecResult { code: number; stdout: string; stderr: string }
 
 export interface TaskEnvironment {
+  /** Container id, image and platform: what a host-side verifier needs to reach the environment or start a sibling from the same image. */
+  id?: string
+  image?: string
+  platform?: ImagePlatform
   /** Working directory inside the environment (the image's WORKDIR, /app by convention). */
   workdir: string
   exec(command: string, options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> }): Promise<ExecResult>
@@ -131,7 +135,7 @@ export function taskRuntimeExecArgs(containerId: string, input: DriverInput, opt
 }
 
 class ContainerEnvironment implements TaskEnvironment {
-  constructor(readonly id: string, readonly workdir: string, private readonly log?: (line: string) => void) {}
+  constructor(readonly id: string, readonly workdir: string, readonly image: string, readonly platform: ImagePlatform, private readonly log?: (line: string) => void) {}
 
   async exec(command: string, options: { cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {}): Promise<ExecResult> {
     const args = ['exec', '-w', options.cwd ?? this.workdir]
@@ -175,7 +179,7 @@ export async function openContainerTask(input: DriverInput, options: ContainerTa
   const started = await run('docker', taskContainerArgs(input, options), 300_000)
   if (started.code !== 0) throw new Error(`docker run ${options.image} failed: ${started.stderr.trim().split('\n').at(-1) ?? started.code}`)
   const id = started.stdout.trim()
-  const environment = new ContainerEnvironment(id, options.workdir ?? '/app', options.log)
+  const environment = new ContainerEnvironment(id, options.workdir ?? '/app', options.image, options.platform, options.log)
   const driverFactory: DriverFactory = (): Driver => new RpcDriver({
     command: 'docker',
     args: taskRuntimeExecArgs(id, input, options),
@@ -239,6 +243,24 @@ async function verifyOnce(environment: TaskEnvironment, testsDir: string, timeou
   if (reward === null || !Number.isFinite(reward)) return { ok: false, detail: `verifier wrote no reward${r.code === 124 ? ' (timed out)' : ''}: ${tail || r.stderr.trim().slice(-400)}`, reward: null, testsRan }
   return { ok: reward >= 1, detail: reward >= 1 ? 'reward 1' : `reward ${reward}: ${tail}`, reward, testsRan: reward >= 1 || testsRan }
 }
+
+/** Environment variables a host-side verifier of a container scenario receives. */
+export function hostVerifierEnv(environment: TaskEnvironment): Record<string, string> {
+  return {
+    ...(environment.id !== undefined ? { DSH_EVAL_CONTAINER: environment.id } : {}),
+    ...(environment.image !== undefined ? { DSH_EVAL_IMAGE: environment.image } : {}),
+    ...(environment.platform !== undefined ? { DSH_EVAL_PLATFORM: environment.platform } : {}),
+    DSH_EVAL_WORKDIR: environment.workdir,
+  }
+}
+
+/** The same, plus the verifier's own time budget. */
+export function hostVerifierEnvWithTimeout(environment: TaskEnvironment, timeoutS: number): Record<string, string> {
+  return { ...hostVerifierEnv(environment), DSH_EVAL_VERIFIER_TIMEOUT_S: String(timeoutS) }
+}
+
+/** A host-side verifier says a grade could not be made (its own container or tooling failed) by starting its reason with this. */
+export const INFRA_PREFIX = 'INFRA:'
 
 /** Apply the benchmark's reference solution inside the environment (the oracle). */
 export async function solveInEnvironment(environment: TaskEnvironment, solutionDir: string, timeoutMs: number): Promise<ExecResult> {

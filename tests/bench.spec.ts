@@ -74,13 +74,14 @@ describe('terminal-bench adapter', () => {
   it('materialises a task into a container scenario the loader accepts, in its own pool, with provenance', async () => {
     const p = project()
     const pulled: string[][] = []
-    const r = await terminalBench.materialize(p, 'alpha-task', { fetcher: fakeFetcher(), docker: async (args) => { pulled.push(args); return args[0] === 'inspect' ? { code: 0, stderr: '', stdout: '/app/repo\n' } : { code: 0, stderr: '' } } })
+    const r = await terminalBench.materialize(p, 'alpha-task', { fetcher: fakeFetcher(), docker: async (args) => { pulled.push(args); return args[0] === 'image' ? { code: 1, stderr: 'no such image' } : args[0] === 'inspect' ? { code: 0, stderr: '', stdout: '/app/repo\n' } : { code: 0, stderr: '' } } })
     // the same task materialises when GitHub's listing is unavailable (anonymous limit): names come from the mirror, files from the pinned commit
     const gh = fakeFetcher()
     const noApi = async (url: string): Promise<string> => { if (url.startsWith('https://api.github.com/')) throw new Error(`${url}: HTTP 403`); return gh(url) }
     const viaMirror = await terminalBench.materialize(project(), 'alpha-task', { fetcher: noApi, pull: false })
     expect(viaMirror.taskHash).toBe(r.taskHash)
-    expect(pulled[0]).toEqual(['pull', '--platform', 'linux/amd64', 'alexgshaw/alpha-task:20251031'])
+    expect(pulled[0]).toEqual(['image', 'inspect', 'alexgshaw/alpha-task:20251031'])   // present? no → pull
+    expect(pulled[1]).toEqual(['pull', '--platform', 'linux/amd64', 'alexgshaw/alpha-task:20251031'])
     expect(pulled.some(a => a[0] === 'inspect')).toBe(true)   // the working directory is read from the pulled image
     expect(r.dir).toBe(join(p.benchRoot, 'terminal-bench-2.0', 'alpha-task'))
     const meta = JSON.parse(readFileSync(join(r.dir, 'meta.json'), 'utf8')) as Record<string, unknown>
@@ -237,5 +238,92 @@ describe('proxy forwarding into task containers', () => {
     ])
     expect(proxyEnvForContainer({ HTTPS_PROXY: 'http://proxy.corp:3128' })).toEqual([['HTTPS_PROXY', 'http://proxy.corp:3128']])
     expect(proxyEnvForContainer({})).toEqual([])
+  })
+})
+
+describe('swebench-verified adapter', () => {
+  const ROW = {
+    instance_id: 'psf__requests-2317', repo: 'psf/requests', base_commit: '091991be0da19de9108dbe5e3752917fea3d7fdc', patch: 'diff --git a/requests/sessions.py b/requests/sessions.py\n--- a/requests/sessions.py\n+++ b/requests/sessions.py\n@@ -1 +1 @@\n-x\n+y\n', test_patch: 'diff --git a/test_requests.py b/test_requests.py\n', problem_statement: 'method = builtin_str(method) problem\n\nIn requests/sessions.py …', hints_text: '', created_at: '2014-11-01T00:00:00Z', version: '2.4', FAIL_TO_PASS: '["test_requests.py::RequestsTestCase::test_nonzero"]', PASS_TO_PASS: '["test_requests.py::RequestsTestCase::test_a", "test_requests.py::RequestsTestCase::test_b"]', environment_setup_commit: '091991be', difficulty: '<15 min fix',
+    image: 'swebench/sweb.eval.x86_64.psf_1776_requests-2317:latest', eval_script: '#!/bin/bash\nset -uxo pipefail\ncd /testbed\ngit apply -v - <<\'EOF_1\'\ndiff\nEOF_1\npytest -rA test_requests.py\n', log_parser: 'parse_log_requests', eval_type: 'pass_and_fail',
+  }
+  const page = (rows: unknown[], total: number): string => JSON.stringify({ num_rows_total: total, features: [], rows: rows.map(row => ({ row })) })
+  const fetcher = async (url: string): Promise<string> => {
+    const u = new URL(url)
+    if (!u.hostname.startsWith('datasets-server')) throw new Error(`unexpected ${url}`)
+    const offset = Number(u.searchParams.get('offset')); const length = Number(u.searchParams.get('length'))
+    const all = [{ ...ROW, instance_id: 'astropy__astropy-1', repo: 'astropy/astropy', image: 'swebench/sweb.eval.x86_64.astropy_1776_astropy-1:latest' }, ROW]
+    return page(all.slice(offset, offset + length), all.length)
+  }
+
+  it('indexes the dataset by rows and materialises a task graded by the official harness in a fresh container', async () => {
+    const { swebenchVerified } = await import('../src/core/bench/swebench.js')
+    const p = project()
+    const index = await swebenchVerified.index(p, { fetcher })
+    expect(index.tasks.map(t => t.id)).toEqual(['astropy__astropy-1', 'psf__requests-2317'])
+    expect(index.tasks[1]).toMatchObject({ category: 'psf/requests', difficulty: '<15 min fix', image: ROW.image, platforms: ['amd64'], cpus: 2, memoryMb: 4096 })
+    const docker: string[][] = []
+    const r = await swebenchVerified.materialize(p, 'psf__requests-2317', { fetcher, verifierPython: 'python3', docker: async (args) => { docker.push(args); return args[0] === 'image' ? { code: 1, stderr: 'no such image' } : { code: 0, stderr: '' } } })
+    expect(docker[1]).toEqual(['pull', '--platform', 'linux/amd64', ROW.image])
+    expect(r.dir).toBe(join(p.benchRoot, 'swebench-verified', 'psf__requests-2317'))
+    const meta = JSON.parse(readFileSync(join(r.dir, 'meta.json'), 'utf8')) as Record<string, unknown>
+    expect(meta).toMatchObject({ runtime: 'container', image: ROW.image, platform: 'amd64', workdir: '/testbed', verifier_python: 'python3', turn_timeout_s: 1800, verifier_timeout_s: 1800, category: 'public' })
+    expect(meta['origin']).toMatchObject({ benchmark: 'swebench-verified', id: 'psf__requests-2317', commit: ROW.base_commit, license: 'MIT', taskHash: r.taskHash })
+    expect(existsSync(join(r.dir, 'verify.py'))).toBe(true)
+    expect(existsSync(join(r.dir, 'tests', 'test.sh'))).toBe(false)              // host-side grading, no in-container test.sh
+    expect(readFileSync(join(r.dir, 'solution', 'patch.diff'), 'utf8')).toBe(ROW.patch)
+    expect(JSON.parse(readFileSync(join(r.dir, 'prompts.json'), 'utf8'))[0]).toMatch(/\/testbed.*psf\/requests[\s\S]*<issue>[\s\S]*builtin_str/)
+    expect(JSON.parse(readFileSync(join(r.dir, 'prompts.json'), 'utf8'))[0]).not.toMatch(/hints/)
+    const s = loadScenario(r.dir)
+    expect(s.meta.runtime).toBe('container'); expect(s.hasOracle).toBe(true)
+    // the grader is the benchmark's own protocol, written in full
+    const verify = readFileSync(join(r.dir, 'verify.py'), 'utf8')
+    expect(verify).toMatch(/get_eval_report/); expect(verify).toMatch(/make_test_spec/); expect(verify).toMatch(/GIT_APPLY_CMDS/); expect(verify).toMatch(/DSH_EVAL_CONTAINER/)
+    rmSync(p.root, { recursive: true, force: true })
+  })
+})
+
+describe('host-side verifiers for container scenarios', () => {
+  /** A container scenario graded by a verify.py on the host that is handed the container through the environment. */
+  function hostGradedScenario(root: string, body: string): string {
+    const dir = join(root, 'bench', 'public', 'x', 'host-graded')
+    mkdirSync(join(dir, 'solution'), { recursive: true })
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ name: 'host-graded', turns: 1, runtime: 'container', image: 'example/image:1', workdir: '/testbed', verifier_timeout_s: 30 }))
+    writeFileSync(join(dir, 'prompts.json'), JSON.stringify(['do it']))
+    writeFileSync(join(dir, 'solution', 'solve.sh'), '#!/bin/bash\ntrue\n')
+    writeFileSync(join(dir, 'verify.py'), body)
+    return dir
+  }
+
+  it('hands the container to verify.py and reads INFRA: as an infrastructure error', async () => {
+    const p = project()
+    ensureEvalProfile(p.home, 'eval')
+    const dir = hostGradedScenario(p.root, 'import os\ndef verify(workdir):\n    if os.environ.get("DSH_EVAL_CONTAINER") == "cid-infra": return False, "INFRA: grading container would not start"\n    return True, f"cid={os.environ.get(\'DSH_EVAL_CONTAINER\')} wd={os.environ.get(\'DSH_EVAL_WORKDIR\')} t={os.environ.get(\'DSH_EVAL_VERIFIER_TIMEOUT_S\')}"\n')
+    const scenario = loadScenario(dir)
+    const plan: RunPlan = { id: 'h1', createdAt: new Date().toISOString(), baseline: { name: 'baseline' }, candidates: [{ name: 'cand' }], scenarios: [scenario.name], repeats: 1, concurrency: 1, scenarioRoot: dir }
+    const paths = runPaths(p.runsRoot, plan.id)
+    const arms = [resolveArm(plan.baseline, paths.arms), resolveArm(plan.candidates[0]!, paths.arms)]
+    const scripted = scriptedDriverFactory()
+    await executeRun(plan, [scenario], arms, {
+      driverFactory: scripted, evalHome: p.home, paths, env: {}, workRoot: join(p.root, 'work'),
+      taskRuntimeFactory: async (input) => { const env = fakeEnvironment(() => '1'); env.id = input.arm.name === 'cand' ? 'cid-infra' : 'cid-base'; env.workdir = '/testbed'; return { environment: env, driverFactory: scripted } },
+    })
+    const ledgers = readLedgers(paths)
+    expect(ledgers.find(l => l.arm === 'baseline')!.verdict).toMatchObject({ ok: true, detail: 'cid=cid-base wd=/testbed t=30' })
+    expect(ledgers.find(l => l.arm === 'cand')).toMatchObject({ errorKind: 'infrastructure' })
+    expect(ledgers.find(l => l.arm === 'cand')!.error).toMatch(/could not grade/)
+    rmSync(p.root, { recursive: true, force: true })
+  })
+
+  it('selfchecks a host-graded container scenario: the oracle must pass, the untouched environment must not', async () => {
+    const p = project()
+    // verify.py sees the world through the fake environment: solve.sh leaves a marker the grader reads
+    const dir = hostGradedScenario(p.root, 'import os\ndef verify(workdir):\n    here = os.path.dirname(os.path.abspath(__file__))\n    return os.path.exists(os.path.join(here, ".solved")), "marker"\n')
+    const scenario = loadScenario(dir)
+    const env = fakeEnvironment(() => '1'); env.id = 'cid'
+    env.exec = async (command: string) => { env.commands.push(command); if (command.includes('solve.sh')) writeFileSync(join(dir, '.solved'), ''); return { code: 0, stdout: '', stderr: '' } }
+    const r = await selfcheckScenario(scenario, tmpdir(), { taskEnvironment: async () => env })
+    expect(r).toMatchObject({ ok: true, blankPasses: false, oraclePasses: true })
+    expect(env.stopped).toBe(true)
+    rmSync(p.root, { recursive: true, force: true })
   })
 })

@@ -47,6 +47,7 @@ export function PublicBench({ onChanged }: { onChanged: () => void }) {
                 <b class="text-sm">{d.title} {d.version}</b>
                 <span class="text-xs text-muted-foreground">{tasks.length} tasks · {d.license} · {present.size} in this project</span>
               </button>
+              {d.note && <p class="px-3 pb-2 -mt-1 text-xs text-muted-foreground">{d.note}</p>}
               {isOpen && (
                 <div class="border-t border-border">
                   {err && <p class="p-3 text-sm text-destructive">index unavailable: {err}</p>}

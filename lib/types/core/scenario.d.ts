@@ -22,6 +22,8 @@ export declare function listScenarios(root: string, filter?: ScenarioFilter): {
 export interface PythonRunOptions {
     timeoutMs?: number;
     python?: string;
+    /** Extra environment for the verifier process (a container scenario's host-side verifier gets the container's id this way). */
+    env?: Record<string, string>;
 }
 /** Run a python snippet with the scenario directory on sys.path; returns stdout. */
 export declare function runScenarioPython(scenario: Scenario, code: string, options?: PythonRunOptions): Promise<string>;

@@ -244,7 +244,7 @@ export class EvalApp {
         const present = existsSync(pool) ? readdirSync(pool).filter(t => existsSync(join(pool, t, 'meta.json'))) : []
         let index = null
         try { index = await a.index(project, { refresh: url.searchParams.get('refresh') === '1' }) } catch (e) { index = { error: e instanceof Error ? e.message : String(e) } }
-        out.push({ id: a.id, title: a.title, version: a.version, license: a.license, pool: tilde(pool), present, index })
+        out.push({ id: a.id, title: a.title, version: a.version, license: a.license, note: a.note, pool: tilde(pool), present, index })
       }
       json(res, 200, { datasets: out })
       return

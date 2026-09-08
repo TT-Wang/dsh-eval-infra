@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { scenarioOracle, scenarioSetup, scenarioVerify, workspaceBytes } from './scenario.js'
-import { solveInEnvironment, verifyInEnvironment, type TaskEnvironment } from './environment.js'
+import { hostVerifierEnvWithTimeout, INFRA_PREFIX, solveInEnvironment, verifyInEnvironment, type TaskEnvironment } from './environment.js'
 import type { Scenario } from './types.js'
 
 export interface SelfcheckResult {
@@ -61,15 +61,24 @@ async function selfcheckContainer(scenario: Scenario, options: SelfcheckOptions)
   const result: SelfcheckResult = { name: scenario.name, ok: false, blankPasses: null, oraclePasses: null, bytes: 0, turns: scenario.prompts.length, detail: '' }
   if (options.taskEnvironment === undefined) { result.error = `${scenario.name} is a container scenario (image ${scenario.meta.image ?? '?'}) and needs Docker to be checked`; return result }
   const timeoutMs = (scenario.meta.verifier_timeout_s ?? 900) * 1000
+  const hostSide = existsSync(join(scenario.dir, 'verify.py'))
   let env: TaskEnvironment | undefined
+  // The grade, made the way the run makes it: the benchmark's tests inside the container, or the host-side verifier handed the container.
+  const grade = async (e: TaskEnvironment): Promise<{ ok: boolean; detail: string }> => {
+    if (!hostSide) return verifyInEnvironment(e, join(scenario.dir, 'tests'), timeoutMs)
+    const scratch = mkdtempSync(join(tmpdir(), `dsh-eval-selfcheck-${scenario.name}-`))
+    const v = await scenarioVerify(scenario, scratch, { env: hostVerifierEnvWithTimeout(e, scenario.meta.verifier_timeout_s ?? 900), timeoutMs: timeoutMs + 120_000, ...(scenario.meta.verifier_python !== undefined ? { python: scenario.meta.verifier_python } : {}) })
+    if (!v.ok && v.detail.startsWith(INFRA_PREFIX)) throw new Error(v.detail)
+    return v
+  }
   try {
     env = await options.taskEnvironment(scenario)
-    const blank = await verifyInEnvironment(env, join(scenario.dir, 'tests'), timeoutMs)
+    const blank = await grade(env)
     result.blankPasses = blank.ok
     if (scenario.hasOracle) {
       const solved = await solveInEnvironment(env, join(scenario.dir, 'solution'), timeoutMs)
       const solveDetail = solved.code === 0 ? '' : `solve.sh exited ${solved.code}${solved.code === 124 ? ' (timed out)' : ''}: ${(solved.stderr.trim() || solved.stdout.trim()).split('\n').slice(-3).join(' | ').slice(0, 300)}`
-      const graded = await verifyInEnvironment(env, join(scenario.dir, 'tests'), timeoutMs)
+      const graded = await grade(env)
       result.oraclePasses = graded.ok
       // A reference solution that could not even run is the reason, not the tests it then fails.
       if (!graded.ok) result.detail = [solveDetail, graded.detail.slice(0, 300)].filter(Boolean).join(' · ')

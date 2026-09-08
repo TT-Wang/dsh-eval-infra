@@ -42,6 +42,8 @@ export interface MaterializeOptions {
   pull?: boolean
   /** Docker command runner, replaceable in tests; `stdout` carries `docker inspect` answers. */
   docker?: (args: string[]) => Promise<{ code: number; stderr: string; stdout?: string }>
+  /** Interpreter for a host-side verifier that needs its own environment (tests pass one so no venv is built). */
+  verifierPython?: string
 }
 
 export interface BenchAdapter {
@@ -50,6 +52,8 @@ export interface BenchAdapter {
   title: string
   version: string
   license: string
+  /** One line the shelf shows under the title: what a task costs to get, what it needs. */
+  note: string
   /** The task index: fetched once and cached in the project; `refresh` refetches. */
   index(project: Project, options?: { fetcher?: Fetcher; refresh?: boolean; log?: (line: string) => void }): Promise<BenchIndex>
   /** Facts about the task's image from its registry (size, platforms); null when the registry does not answer. */
@@ -61,6 +65,30 @@ export interface BenchAdapter {
   poolDir(project: Project): string
 }
 
+
+/** What Docker Hub knows about an image tag: the platforms it is built for and its compressed size. Null when it does not answer. */
+export async function dockerHubImage(image: string, fetcher: Fetcher = defaultFetch): Promise<{ platforms: Array<'amd64' | 'arm64'>; sizeMb: number } | null> {
+  const m = /^([^:]+):(.+)$/.exec(image)
+  if (!m) return null
+  const repo = m[1]!.includes('/') ? m[1]! : `library/${m[1]!}`
+  try {
+    const d = JSON.parse(await fetcher(`https://hub.docker.com/v2/repositories/${repo}/tags/${m[2]!}`)) as { images?: Array<{ architecture: string; size: number }> }
+    const images = (d.images ?? []).filter(i => i.size > 0)
+    if (images.length === 0) return null
+    const platforms = [...new Set(images.map(i => i.architecture))].filter((a): a is 'amd64' | 'arm64' => a === 'amd64' || a === 'arm64')
+    return { platforms, sizeMb: Math.round(Math.max(...images.map(i => i.size)) / 1e6) }
+  } catch { return null }
+}
+
+/** Pull an image unless it is already present: a registry that will not answer must not block a task whose image is on the machine. */
+export async function ensureImage(image: string, docker: (args: string[]) => Promise<{ code: number; stderr: string; stdout?: string }>, log: (line: string) => void, sizeNote = ''): Promise<void> {
+  const present = await docker(['image', 'inspect', image])
+  if (present.code === 0) { log(`${image} is already on this machine`); return }
+  log(`pulling ${image} (linux/amd64${sizeNote})…`)
+  let pulled = await docker(['pull', '--platform', 'linux/amd64', image])
+  if (pulled.code !== 0) { await new Promise(r => setTimeout(r, 3000)); pulled = await docker(['pull', '--platform', 'linux/amd64', image]) }
+  if (pulled.code !== 0) throw new Error(`docker pull ${image} failed: ${pulled.stderr.trim().split('\n').at(-1) ?? pulled.code}`)
+}
 
 /** Plain GET with three attempts: an index is dozens of small files, and one dropped connection must not fail it. */
 export async function defaultFetch(url: string): Promise<string> {

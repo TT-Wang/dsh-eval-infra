@@ -67,7 +67,7 @@ export interface Preflight {
 /** The run's model and effort, shared by every arm. */
 export interface Route { model?: string; effort?: string }
 export interface BenchTask { id: string; title: string; category?: string; difficulty?: string; tags: string[]; image: string; platforms?: Array<'amd64' | 'arm64'>; imageMb?: number; cpus?: number; memoryMb?: number; agentTimeoutS?: number; verifierTimeoutS?: number; expertMinutes?: number; source: { gitUrl: string; commit: string; path: string } }
-export interface BenchDataset { id: string; title: string; version: string; license: string; pool: string; present: string[]; index: { dataset: string; version: string; license: string; fetchedAt: string; tasks: BenchTask[] } | { error: string } | null }
+export interface BenchDataset { id: string; title: string; version: string; license: string; note?: string; pool: string; present: string[]; index: { dataset: string; version: string; license: string; fetchedAt: string; tasks: BenchTask[] } | { error: string } | null }
 export interface RowInfo { id: string; name?: string; disabled: boolean; configKeys: string[]; config?: Record<string, unknown> }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
 export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }

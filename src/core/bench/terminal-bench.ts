@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Project } from '../project.js'
-import { defaultFetch, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions } from './types.js'
+import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions } from './types.js'
 
 const REGISTRY = 'https://raw.githubusercontent.com/harbor-framework/harbor/main/registry.json'
 const DATASET = 'terminal-bench'
@@ -145,6 +145,7 @@ export const terminalBench: BenchAdapter = {
   title: 'Terminal-Bench',
   version: VERSION,
   license: LICENSE,
+  note: '89 command-line tasks in their own images (30–500 MB each); graded by each task\'s tests inside the same container.',
 
   poolDir(project) { return join(project.benchRoot, `${DATASET}-${VERSION}`) },
 
@@ -168,18 +169,7 @@ export const terminalBench: BenchAdapter = {
     return index
   },
 
-  async describeImage(image, fetcher = defaultFetch) {
-    const m = /^([^:]+):(.+)$/.exec(image)
-    if (!m) return null
-    const repo = m[1]!.includes('/') ? m[1]! : `library/${m[1]!}`
-    try {
-      const d = JSON.parse(await fetcher(`https://hub.docker.com/v2/repositories/${repo}/tags/${m[2]!}`)) as { images?: Array<{ architecture: string; size: number }> }
-      const images = d.images ?? []
-      if (images.length === 0) return null
-      const platforms = [...new Set(images.map(i => i.architecture))].filter((a): a is 'amd64' | 'arm64' => a === 'amd64' || a === 'arm64')
-      return { platforms, sizeMb: Math.round(Math.max(...images.map(i => i.size)) / 1e6) }
-    } catch { return null }
-  },
+  describeImage(image, fetcher = defaultFetch) { return dockerHubImage(image, fetcher) },
 
   async materialize(project, id, options = {}) {
     const fetcher = options.fetcher ?? defaultFetch
@@ -203,13 +193,7 @@ export const terminalBench: BenchAdapter = {
     const hash = createHash('sha256')
     for (const name of [...files.keys()].sort()) hash.update(name).update('\0').update(files.get(name)!).update('\0')
     const taskHash = hash.digest('hex')
-    if (options.pull !== false) {
-      log(`pulling ${task.image} (linux/amd64${task.imageMb ? `, ${task.imageMb} MB compressed` : ''})…`)
-      // Registries drop connections; one retry covers the usual EOF without hiding a real failure.
-      let pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image])
-      if (pulled.code !== 0) { await new Promise(r => setTimeout(r, 2000)); pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image]) }
-      if (pulled.code !== 0) throw new Error(`docker pull ${task.image} failed: ${pulled.stderr.trim().split('\n').at(-1) ?? pulled.code}`)
-    }
+    if (options.pull !== false) await ensureImage(task.image, options.docker ?? dockerRun, log, task.imageMb ? `, ${task.imageMb} MB compressed` : '')
     // The working directory the task expects: task.toml's, else the image's (read after the pull), else /app.
     const cfg = parseToml(files.get('task.toml')!)
     let workdir = typeof cfg['environment']?.['workdir'] === 'string' ? cfg['environment']['workdir'] as string : undefined

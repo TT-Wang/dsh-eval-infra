@@ -48,6 +48,8 @@ export interface MaterializeOptions {
         stderr: string;
         stdout?: string;
     }>;
+    /** Interpreter for a host-side verifier that needs its own environment (tests pass one so no venv is built). */
+    verifierPython?: string;
 }
 export interface BenchAdapter {
     /** Dataset id used on the command line and as the pool directory name. */
@@ -55,6 +57,8 @@ export interface BenchAdapter {
     title: string;
     version: string;
     license: string;
+    /** One line the shelf shows under the title: what a task costs to get, what it needs. */
+    note: string;
     /** The task index: fetched once and cached in the project; `refresh` refetches. */
     index(project: Project, options?: {
         fetcher?: Fetcher;
@@ -76,5 +80,16 @@ export interface BenchAdapter {
     /** Directory of this dataset's pool inside the project. */
     poolDir(project: Project): string;
 }
+/** What Docker Hub knows about an image tag: the platforms it is built for and its compressed size. Null when it does not answer. */
+export declare function dockerHubImage(image: string, fetcher?: Fetcher): Promise<{
+    platforms: Array<'amd64' | 'arm64'>;
+    sizeMb: number;
+} | null>;
+/** Pull an image unless it is already present: a registry that will not answer must not block a task whose image is on the machine. */
+export declare function ensureImage(image: string, docker: (args: string[]) => Promise<{
+    code: number;
+    stderr: string;
+    stdout?: string;
+}>, log: (line: string) => void, sizeNote?: string): Promise<void>;
 /** Plain GET with three attempts: an index is dozens of small files, and one dropped connection must not fail it. */
 export declare function defaultFetch(url: string): Promise<string>;

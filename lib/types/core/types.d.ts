@@ -41,6 +41,8 @@ export interface ScenarioMeta {
     verifier_timeout_s?: number;
     /** Working directory inside the image (default /app). */
     workdir?: string;
+    /** Interpreter for a host-side verify.py that needs its own environment (a benchmark's grading package in a managed venv). */
+    verifier_python?: string;
     /** Where a public-benchmark task came from, recorded into every ledger and receipt. */
     origin?: {
         benchmark: string;

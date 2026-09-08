@@ -15,7 +15,7 @@ import { bandAt, priceUsage } from './pricing.js'
 import type { ResolvedArm, RunLedger, RunPlan, Scenario, Verdict } from './types.js'
 import { armOverlays } from './arms.js'
 import { buildLedger, type EventLike } from './ledger.js'
-import { verifyInEnvironment, type TaskRuntime } from './environment.js'
+import { hostVerifierEnvWithTimeout, INFRA_PREFIX, verifyInEnvironment, type TaskRuntime } from './environment.js'
 import type { PriceTable } from './pricing.js'
 import { scenarioSetup, scenarioVerify } from './scenario.js'
 import { ledgerPath, writeJsonAtomic, writeLedger, type Progress, type RunPaths } from './store.js'
@@ -430,6 +430,12 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   try {
     restoreTruth?.()
     if (capped) verdict = { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` }
+    else if (taskRuntime !== undefined && existsSync(join(scenario.dir, 'verify.py'))) {
+      // A host-side verifier (a benchmark's own grading package) is handed the container; it says INFRA: when the grade could not be made.
+      const graded = await scenarioVerify(scenario, workdir, { env: hostVerifierEnvWithTimeout(taskRuntime.environment, scenario.meta.verifier_timeout_s ?? 900), timeoutMs: (scenario.meta.verifier_timeout_s ?? 900) * 1000 + 120_000, ...(scenario.meta.verifier_python !== undefined ? { python: scenario.meta.verifier_python } : {}) })
+      if (!graded.ok && graded.detail.startsWith(INFRA_PREFIX)) { error = `verifier could not grade: ${graded.detail.slice(INFRA_PREFIX.length).trim().slice(0, 400)}`; infrastructure = true; verdict = null }
+      else verdict = graded
+    }
     else if (taskRuntime !== undefined) {
       const graded = await verifyInEnvironment(taskRuntime.environment, join(scenario.dir, 'tests'), (scenario.meta.verifier_timeout_s ?? 900) * 1000)
       // A verifier that never reached its tests says nothing about the agent: the trial is an infrastructure

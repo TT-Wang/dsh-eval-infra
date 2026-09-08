@@ -10,6 +10,10 @@ export interface ExecResult {
     stderr: string;
 }
 export interface TaskEnvironment {
+    /** Container id, image and platform: what a host-side verifier needs to reach the environment or start a sibling from the same image. */
+    id?: string;
+    image?: string;
+    platform?: ImagePlatform;
     /** Working directory inside the environment (the image's WORKDIR, /app by convention). */
     workdir: string;
     exec(command: string, options?: {
@@ -77,5 +81,11 @@ export interface EnvironmentVerdict {
     testsRan: boolean;
 }
 export declare function verifyInEnvironment(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<EnvironmentVerdict>;
+/** Environment variables a host-side verifier of a container scenario receives. */
+export declare function hostVerifierEnv(environment: TaskEnvironment): Record<string, string>;
+/** The same, plus the verifier's own time budget. */
+export declare function hostVerifierEnvWithTimeout(environment: TaskEnvironment, timeoutS: number): Record<string, string>;
+/** A host-side verifier says a grade could not be made (its own container or tooling failed) by starting its reason with this. */
+export declare const INFRA_PREFIX = "INFRA:";
 /** Apply the benchmark's reference solution inside the environment (the oracle). */
 export declare function solveInEnvironment(environment: TaskEnvironment, solutionDir: string, timeoutMs: number): Promise<ExecResult>;

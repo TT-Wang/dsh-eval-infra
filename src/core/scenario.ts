@@ -24,7 +24,8 @@ export function loadScenario(dir: string): Scenario {
   const container = meta.runtime === 'container'
   if (container) {
     if (typeof meta.image !== 'string' || meta.image === '') throw new ScenarioError(`${abs}: a container scenario needs meta.image`)
-    if (!existsSync(join(abs, 'tests', 'test.sh'))) throw new ScenarioError(`${abs}: missing tests/test.sh (a container scenario is graded by the benchmark's own tests)`)
+    // Graded either inside the container by the benchmark's own tests/test.sh, or by a host-side verify.py that is handed the container.
+    if (!existsSync(join(abs, 'tests', 'test.sh')) && !existsSync(join(abs, 'verify.py'))) throw new ScenarioError(`${abs}: missing tests/test.sh or verify.py (a container scenario is graded by the benchmark's own tests)`)
   } else if (!existsSync(join(abs, 'verify.py'))) throw new ScenarioError(`${abs}: missing verify.py`)
   const prompts = JSON.parse(readFileSync(promptsPath, 'utf8')) as unknown
   if (!Array.isArray(prompts) || prompts.some(p => typeof p !== 'string' || p.length === 0)) {
@@ -94,6 +95,8 @@ export function listScenarios(root: string, filter: ScenarioFilter = {}): { scen
 export interface PythonRunOptions {
   timeoutMs?: number
   python?: string
+  /** Extra environment for the verifier process (a container scenario's host-side verifier gets the container's id this way). */
+  env?: Record<string, string>
 }
 
 /** Run a python snippet with the scenario directory on sys.path; returns stdout. */
@@ -104,7 +107,7 @@ export async function runScenarioPython(scenario: Scenario, code: string, option
       timeout: options.timeoutMs ?? 120_000,
       maxBuffer: 64 * 1024 * 1024,
       cwd: scenario.dir,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', ...(options.env ?? {}) },
     })
     return stdout
   } catch (error) {
