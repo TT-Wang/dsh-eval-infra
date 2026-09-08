@@ -28,6 +28,14 @@ export declare function linkedPluginPaths(evalHome: string, profile: string): st
  * macOS build. Returns the mount pairs, or [] when the checkout has no Koffi.
  */
 export declare function prepareNativeShims(evalHome: string, dshSource: string, arch?: 'arm64' | 'x64', log?: (line: string) => void): Array<[string, string]>;
+/**
+ * Everything the dsh runtime needs from the host, bind-mounted at the same path
+ * inside a container: the checkout (and the directory holding its `current`
+ * link, which linked plugins resolve their peers through), the eval home, the
+ * plugins linked into the profile, and any extra paths. `runDir`, when given,
+ * carries the overlays; a task container gets them through its own mounts.
+ */
+export declare function dshRuntimeMounts(input: DriverInput, options: Pick<DockerOptions, 'dshSource' | 'mounts'>, runDir?: string): Array<[string, 'ro' | 'rw']>;
 export declare function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[];
 /** Docker-backed driver: one container per trial. */
 export declare function dockerDriverFactory(options: DockerOptions, runDir: string): DriverFactory;

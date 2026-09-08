@@ -66,6 +66,8 @@ export interface Preflight {
 }
 /** The run's model and effort, shared by every arm. */
 export interface Route { model?: string; effort?: string }
+export interface BenchTask { id: string; title: string; category?: string; difficulty?: string; tags: string[]; image: string; platforms?: Array<'amd64' | 'arm64'>; imageMb?: number; cpus?: number; memoryMb?: number; agentTimeoutS?: number; verifierTimeoutS?: number; expertMinutes?: number; source: { gitUrl: string; commit: string; path: string } }
+export interface BenchDataset { id: string; title: string; version: string; license: string; pool: string; present: string[]; index: { dataset: string; version: string; license: string; fetchedAt: string; tasks: BenchTask[] } | { error: string } | null }
 export interface RowInfo { id: string; name?: string; disabled: boolean; configKeys: string[]; config?: Record<string, unknown> }
 export interface HistorySignal { snr: number | null; withinCv: number | null; passSpread: number | null; trials: number }
 export interface History { arms: string[]; scenarios: Array<{ name: string; cells: Record<string, HistoryCell>; runIds: string[]; points: Record<string, HistoryPoint[]>; signal?: HistorySignal }>; runs: Array<{ id: string; createdAt: string; label?: string; arms: string[] }>; chronic?: { flaky: string[]; failing: string[]; saturated: string[] } }
@@ -89,6 +91,9 @@ export const api = {
   ledger: (id: string, scenario: string, arm: string, rep: number) => req<RunLedger>(`/runs/${id}/ledgers/${scenario}/${arm}/rep${rep}/ledger`),
   trace: (id: string, scenario: string, arm: string, rep: number) => req<TraceRow[]>(`/runs/${id}/ledgers/${scenario}/${arm}/rep${rep}/trace`),
   scenarios: () => req<{ scenarios: ScenarioInfo[]; invalid: Array<{ dir: string; error: string }> }>('/scenarios'),
+  bench: (refresh = false) => req<{ datasets: BenchDataset[] }>(`/bench${refresh ? '?refresh=1' : ''}`),
+  benchGet: (dataset: string, task: string) => req<{ dir: string; task: BenchTask; taskHash: string; log: string[] }>('/bench/get', { method: 'POST', body: JSON.stringify({ dataset, task }) }),
+  benchRm: (dataset: string, task: string) => req<{ removed: boolean }>('/bench/rm', { method: 'POST', body: JSON.stringify({ dataset, task }) }),
   arms: () => req<{ dir: string; arms: ArmInfo[] }>('/arms'),
   diff: (baseline: string, candidates: string[], route: Route = {}) => req<{ diffs: Array<{ candidate: string; variables: number; lines: string[] }> }>('/arms/diff', { method: 'POST', body: JSON.stringify({ baseline, candidates, ...route }) }),
   start: (body: unknown) => req<{ id: string }>('/runs', { method: 'POST', body: JSON.stringify(body) }),

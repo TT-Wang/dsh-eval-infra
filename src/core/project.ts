@@ -4,7 +4,7 @@
  * profile, the run archive, and a small config — while arms and scenarios
  * live in version control under `bench/`.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -41,6 +41,8 @@ export interface Project {
   config: ProjectConfig
   configPath: string
   armsDir: string
+  /** Root of the public-benchmark pools (`bench/public/<dataset>/<task>`), each a scenario root of its own. */
+  benchRoot: string
   scenarioRoot: string
   bundledScenarioRoot: string
   /** Where a scenario the user adds is written: always the project's own library. */
@@ -88,6 +90,8 @@ export function loadProject(root = process.cwd()): Project {
   const config: ProjectConfig = existsSync(configPath) ? { ...DEFAULT_CONFIG, ...(JSON.parse(readFileSync(configPath, 'utf8')) as Partial<ProjectConfig>) } : { ...DEFAULT_CONFIG }
   const armsDir = config.armsDir !== undefined ? resolve(abs, config.armsDir) : join(abs, 'bench', 'arms')
   const ownScenarios = config.scenarioRoot !== undefined ? resolve(abs, config.scenarioRoot) : join(abs, 'bench', 'scenarios')
+  // Public benchmarks are pools of their own, one directory per dataset, never mixed into the default bench.
+  const benchRoot = join(abs, 'bench', 'public')
   const bundled = bundledScenarioRoot()
   return {
     root: abs,
@@ -97,6 +101,7 @@ export function loadProject(root = process.cwd()): Project {
     config,
     configPath,
     armsDir,
+    benchRoot,
     scenarioRoot: existsSync(ownScenarios) ? ownScenarios : bundled,
     ownScenarioRoot: config.scenarioRoot !== undefined ? resolve(abs, config.scenarioRoot) : join(abs, 'bench', 'scenarios'),
     bundledScenarioRoot: bundled,
@@ -169,4 +174,10 @@ export async function withPreviewArms<T>(project: Project, use: (armsDir: string
   mkdirSync(project.evalDir, { recursive: true })
   const dir = mkdtempSync(join(project.evalDir, 'tmp-arms-'))
   try { return await use(dir) } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
+/** Public-benchmark pools present in a project: every dataset directory under bench/public that holds at least one task. */
+export function benchPools(project: Project): string[] {
+  if (!existsSync(project.benchRoot)) return []
+  return readdirSync(project.benchRoot).sort().map(d => join(project.benchRoot, d)).filter(d => existsSync(d) && readdirSync(d).some(t => existsSync(join(d, t, 'meta.json'))))
 }

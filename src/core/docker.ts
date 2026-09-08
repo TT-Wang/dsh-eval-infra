@@ -96,26 +96,35 @@ export function prepareNativeShims(evalHome: string, dshSource: string, arch: 'a
   return mounts
 }
 
-export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[] {
-  const image = options.image ?? DEFAULT_IMAGE
-  // The image must match this machine, or every trial runs under emulation, or not at all.
-  const args = ['run', '-i', '--rm', '--init', '--platform', `linux/${options.platform ?? (process.arch === 'x64' ? 'amd64' : 'arm64')}`]
+/**
+ * Everything the dsh runtime needs from the host, bind-mounted at the same path
+ * inside a container: the checkout (and the directory holding its `current`
+ * link, which linked plugins resolve their peers through), the eval home, the
+ * plugins linked into the profile, and any extra paths. `runDir`, when given,
+ * carries the overlays; a task container gets them through its own mounts.
+ */
+export function dshRuntimeMounts(input: DriverInput, options: Pick<DockerOptions, 'dshSource' | 'mounts'>, runDir?: string): Array<[string, 'ro' | 'rw']> {
   const mounts = new Map<string, 'ro' | 'rw'>()
   mounts.set(realpathSync(options.dshSource), 'ro')
-  // Plugins linked into the profile resolve their dsh peers through the install's symlink path (e.g. ~/.dsh/source/current), so
-  // that path must exist inside the container too: mount the directory holding the `current` link, read-only.
   const given = resolve(options.dshSource)
   if (realpathSync(given) !== given) {
     const linkParent = dirname(given)
     if (existsSync(linkParent)) mounts.set(realpathSync(linkParent), 'ro')
   }
   mounts.set(realpathSync(input.evalHome), 'rw')
-  mounts.set(realpathSync(input.workdir), 'rw')
-  mounts.set(realpathSync(runDir), 'ro')
+  if (existsSync(input.workdir)) mounts.set(realpathSync(input.workdir), 'rw')
+  if (runDir !== undefined) mounts.set(realpathSync(runDir), 'ro')
   for (const p of linkedPluginPaths(input.evalHome, input.arm.profile)) if (existsSync(p)) mounts.set(p, 'ro')
   for (const p of options.mounts ?? []) if (existsSync(p)) mounts.set(realpathSync(p), 'ro')
+  return [...mounts.entries()]
+}
+
+export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[] {
+  const image = options.image ?? DEFAULT_IMAGE
+  // The image must match this machine, or every trial runs under emulation, or not at all.
+  const args = ['run', '-i', '--rm', '--init', '--platform', `linux/${options.platform ?? (process.arch === 'x64' ? 'amd64' : 'arm64')}`]
   // `--mount` rather than `-v`: Docker's -v parser mangles a same-path spec that ends in ":ro" (observed: target "…rc1o").
-  for (const [path, mode] of mounts) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
+  for (const [path, mode] of dshRuntimeMounts(input, options, runDir)) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
   for (const [source, target] of options.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
   args.push('-w', realpathSync(input.workdir))
   args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`)

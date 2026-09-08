@@ -1,3 +1,4 @@
+import { type TaskEnvironment } from './environment.js';
 import type { Scenario } from './types.js';
 export interface SelfcheckResult {
     name: string;
@@ -20,6 +21,8 @@ export interface SelfcheckOptions {
     strict?: boolean;
     /** Cap on files mutated per scenario in strict mode (default 40). */
     maxMutations?: number;
+    /** Container scenarios: opens the task's environment (started, untouched) for the null check and the oracle. */
+    taskEnvironment?: (scenario: Scenario) => Promise<TaskEnvironment>;
 }
 export declare function selfcheckScenario(scenario: Scenario, workRoot?: string, options?: SelfcheckOptions): Promise<SelfcheckResult>;
 export declare function selfcheckAll(scenarios: Scenario[], concurrency?: number, options?: SelfcheckOptions): Promise<SelfcheckResult[]>;

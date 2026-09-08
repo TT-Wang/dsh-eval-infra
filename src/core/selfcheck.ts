@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { scenarioOracle, scenarioSetup, scenarioVerify, workspaceBytes } from './scenario.js'
+import { solveInEnvironment, verifyInEnvironment, type TaskEnvironment } from './environment.js'
 import type { Scenario } from './types.js'
 
 export interface SelfcheckResult {
@@ -46,9 +47,44 @@ export interface SelfcheckOptions {
   strict?: boolean
   /** Cap on files mutated per scenario in strict mode (default 40). */
   maxMutations?: number
+  /** Container scenarios: opens the task's environment (started, untouched) for the null check and the oracle. */
+  taskEnvironment?: (scenario: Scenario) => Promise<TaskEnvironment>
+}
+
+/**
+ * The same two checks for a container scenario, in its own environment: the
+ * benchmark's tests must fail on the untouched image (nop) and pass after the
+ * reference solution (oracle). Strict mutation sweeps do not apply: the
+ * artefacts live inside the container and the tests are not ours.
+ */
+async function selfcheckContainer(scenario: Scenario, options: SelfcheckOptions): Promise<SelfcheckResult> {
+  const result: SelfcheckResult = { name: scenario.name, ok: false, blankPasses: null, oraclePasses: null, bytes: 0, turns: scenario.prompts.length, detail: '' }
+  if (options.taskEnvironment === undefined) { result.error = `${scenario.name} is a container scenario (image ${scenario.meta.image ?? '?'}) and needs Docker to be checked`; return result }
+  const timeoutMs = (scenario.meta.verifier_timeout_s ?? 900) * 1000
+  let env: TaskEnvironment | undefined
+  try {
+    env = await options.taskEnvironment(scenario)
+    const blank = await verifyInEnvironment(env, join(scenario.dir, 'tests'), timeoutMs)
+    result.blankPasses = blank.ok
+    if (scenario.hasOracle) {
+      const solved = await solveInEnvironment(env, join(scenario.dir, 'solution'), timeoutMs)
+      if (solved.code !== 0) result.detail = `solve.sh exited ${solved.code}: ${solved.stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`
+      const graded = await verifyInEnvironment(env, join(scenario.dir, 'tests'), timeoutMs)
+      result.oraclePasses = graded.ok
+      if (!graded.ok) result.detail = graded.detail.slice(0, 300)
+    }
+    result.ok = result.blankPasses === false && (result.oraclePasses ?? true)
+    if (result.blankPasses) result.detail = 'the benchmark tests pass on the untouched image' + (result.detail ? '; ' + result.detail : '')
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (env !== undefined) { try { await env.stop() } catch { /* best effort */ } }
+  }
+  return result
 }
 
 export async function selfcheckScenario(scenario: Scenario, workRoot = tmpdir(), options: SelfcheckOptions = {}): Promise<SelfcheckResult> {
+  if (scenario.meta.runtime === 'container') return selfcheckContainer(scenario, options)
   const workdir = mkdtempSync(join(workRoot, `dsh-eval-selfcheck-${scenario.name}-`))
   const result: SelfcheckResult = { name: scenario.name, ok: false, blankPasses: null, oraclePasses: null, bytes: 0, turns: scenario.prompts.length, detail: '' }
   try {

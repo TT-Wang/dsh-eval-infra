@@ -28,6 +28,31 @@ export interface ScenarioMeta {
     /** Who wrote it — surfaced in reports so author-provided scenarios are visible. */
     author?: string;
     /**
+     * `host` (default): setup.py / verify.py on a host workspace. `container`: the
+     * scenario ships an image; the runtime runs inside it and the benchmark's own
+     * tests/test.sh grades it there (public benchmarks).
+     */
+    runtime?: 'host' | 'container';
+    /** Container scenarios: the image and its platform, resources, and the verifier's own timeout. */
+    image?: string;
+    platform?: 'amd64' | 'arm64';
+    cpus?: number;
+    memory_mb?: number;
+    verifier_timeout_s?: number;
+    /** Working directory inside the image (default /app). */
+    workdir?: string;
+    /** Where a public-benchmark task came from, recorded into every ledger and receipt. */
+    origin?: {
+        benchmark: string;
+        version: string;
+        id: string;
+        gitUrl?: string;
+        commit?: string;
+        path?: string;
+        license?: string;
+        taskHash?: string;
+    };
+    /**
      * Sealed holdout: excluded from runs unless `--include-holdout` is given, and
      * reported separately so tuning a change against the dev pool shows up as a
      * dev–holdout gap. Authors should not run these while iterating.

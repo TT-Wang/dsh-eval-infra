@@ -5,10 +5,10 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { loadArmFile, type ArmError, applyRoute, type RunRoute } from './arms.js'
+import { loadArmFile, type ArmError, applyRoute, type RunRoute, DEFAULT_PROVIDER, DEFAULT_MODEL } from './arms.js'
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
-import { projectPrices, type Project } from './project.js'
+import { projectPrices, type Project, benchPools } from './project.js'
 import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
 import { fileSha, readReceipt, receiptSignatureValid, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
@@ -17,7 +17,7 @@ import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './
 import { deepseekChat } from './judge.js'
 
 const PROBE_COUNT = PROBE_LIST.length
-import { executeRun, type RunDeps } from './runner.js'
+import { executeRun, type DriverInput, type RunDeps } from './runner.js'
 import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
@@ -129,7 +129,7 @@ export function collectScenarios(project: Project, request: Pick<RunRequest, 'sc
   // A configured `scenarioRoot` means exactly that root. Otherwise the project's own
   // scenarios add to the shipped library rather than replacing it: writing one scenario
   // should not hide thirty. Own scenarios come first, so they win a name clash.
-  const pools = (project.config.pools ?? []).map(p => resolve(project.root, p))
+  const pools = [...(project.config.pools ?? []).map(p => resolve(project.root, p)), ...benchPools(project)]
   const roots = project.config.scenarioRoot !== undefined
     ? [...new Set([project.scenarioRoot, ...pools])]
     : [...new Set([project.ownScenarioRoot, project.bundledScenarioRoot, ...pools])]
@@ -223,7 +223,8 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   let selfcheck: SelfcheckResult[] = []
   if (!request.skipSelfcheck) {
     log(`selfcheck: ${scenarios.length} scenario(s)…`)
-    selfcheck = await selfcheckAll(scenarios)
+    const containerSelfcheck = scenarios.some(s => s.meta.runtime === 'container') && hooks.driverFactory === undefined ? { taskEnvironment: await containerSelfcheckEnvironment(project, log) } : {}
+    selfcheck = await selfcheckAll(scenarios, 4, containerSelfcheck)
     const broken = selfcheck.filter(r => !r.ok)
     for (const r of selfcheck) log(`  ${r.ok ? 'OK ' : 'BAD'} ${r.name.padEnd(28)} blank→${r.blankPasses === null ? '?' : r.blankPasses ? 'PASS?!' : 'fail'} oracle→${r.oraclePasses === null ? 'n/a' : r.oraclePasses ? 'pass' : 'FAIL'} ${r.error ?? r.detail}`)
     if (broken.length > 0) throw new LaunchError(`${broken.length} scenario(s) failed selfcheck: ${broken.map(b => b.name).join(', ')} (fix them or pass --skip-selfcheck)`, 'selfcheck')
@@ -279,6 +280,13 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     log,
     workRoot: join(project.evalDir, 'work'),
   }
+  // Public-benchmark scenarios ship their own image: each trial opens that image as a task container, the runtime runs
+  // inside it and the benchmark's tests grade it there. Needs Docker and the dsh checkout, like the container sandbox.
+  const containerScenarios = scenarios.filter(s => s.meta.runtime === 'container')
+  if (containerScenarios.length > 0 && hooks.driverFactory === undefined) {
+    deps.taskRuntimeFactory = await containerTaskRuntimeFactory(project, log)
+    log(`${containerScenarios.length} container scenario(s): ${[...new Set(containerScenarios.map(s => s.meta.image))].join(', ')}`)
+  }
   if (hooks.signal !== undefined) deps.signal = hooks.signal
   if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
   if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
@@ -303,7 +311,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (meterOn) {
     deps.meter = {
       upstream: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
-      ...(sandbox === 'docker' ? { exposed: true, hostFromContainer: 'host.docker.internal' } : {}),
+      ...(sandbox === 'docker' || containerScenarios.length > 0 ? { exposed: true, hostFromContainer: 'host.docker.internal' } : {}),
       ...(request.faultRate !== undefined && request.faultRate > 0 ? { faults: { rate: request.faultRate, seed: request.faultSeed ?? 7 } } : {}),
     }
   if (request.replay) {
@@ -918,4 +926,54 @@ export async function regradeRun(project: Project, id: string, options: { log?: 
   sealRun(paths, plan.id, { at, changed: result.changed.length, regradable: result.regradable, verifiers: result.verifiers }, analysisContract(plan))
   sealAndIssue(project, paths, plan, rebuilt)
   return result
+}
+
+
+/** What a task container needs from this machine: Docker, the dsh checkout, native shims and Node for the image's platform. */
+async function containerTaskSetup(project: Project, platform: 'amd64' | 'arm64', log: (line: string) => void): Promise<{ dshSource: string; nativeShims: Array<[string, string]>; nodeDir: string }> {
+  const { dockerAvailable, prepareNativeShims } = await import('./docker.js')
+  const { ensureNodeRuntime, platformIsEmulated } = await import('./environment.js')
+  const { dshSourceRoot } = await import('./env.js')
+  const avail = await dockerAvailable()
+  if (!avail.ok) throw new LaunchError(`container scenarios need Docker: ${avail.detail}`, 'env')
+  const source = dshSourceRoot({ realpath: false })
+  if (source === null) throw new LaunchError('container scenarios need a dsh source checkout (DSH_SOURCE or ~/.dsh/source/current)', 'env')
+  const nativeShims = prepareNativeShims(project.home, source, platform === 'amd64' ? 'x64' : 'arm64', log)
+  const nodeDir = await ensureNodeRuntime(project.home, platform, log)
+  if (platformIsEmulated(platform)) log(`note: linux/${platform} images run under emulation on this ${process.arch} machine; every trial is slower than on a native host`)
+  return { dshSource: source, nativeShims, nodeDir }
+}
+
+/** A task-runtime factory for the run: one container per trial, from the scenario's own image. */
+export async function containerTaskRuntimeFactory(project: Project, log: (line: string) => void): Promise<NonNullable<RunDeps['taskRuntimeFactory']>> {
+  const { openContainerTask } = await import('./environment.js')
+  const setups = new Map<string, Promise<Awaited<ReturnType<typeof containerTaskSetup>>>>()
+  const setupFor = (platform: 'amd64' | 'arm64'): Promise<Awaited<ReturnType<typeof containerTaskSetup>>> => {
+    let p = setups.get(platform)
+    if (p === undefined) { p = containerTaskSetup(project, platform, log); setups.set(platform, p) }
+    return p
+  }
+  return async (input, scenario) => {
+    const platform = scenario.meta.platform ?? 'amd64'
+    const { dshSource, nativeShims, nodeDir } = await setupFor(platform)
+    return openContainerTask(input, {
+      image: scenario.meta.image!,
+      platform,
+      nodeDir,
+      dsh: { dshSource, nativeShims, onStderr: (line) => log(`  [${scenario.name}/${input.arm.name}] ${line}`) },
+      ...(scenario.meta.cpus !== undefined ? { cpus: scenario.meta.cpus } : {}),
+      ...(scenario.meta.memory_mb !== undefined ? { memoryMb: scenario.meta.memory_mb } : {}),
+      ...(scenario.meta.workdir !== undefined ? { workdir: scenario.meta.workdir } : {}),
+      log,
+    })
+  }
+}
+
+/** The selfcheck's environment for a container scenario: the untouched image, started, with nothing of ours inside but Node. */
+export async function containerSelfcheckEnvironment(project: Project, log: (line: string) => void): Promise<(scenario: Scenario) => Promise<import('./environment.js').TaskEnvironment>> {
+  const factory = await containerTaskRuntimeFactory(project, log)
+  return async (scenario) => {
+    const input: DriverInput = { arm: { name: 'selfcheck', profile: project.config.profile, provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, overlayPath: '', patchFilePaths: [] }, scenario, workdir: project.evalDir, evalHome: project.home, overlays: [], env: {} }
+    return (await factory(input, scenario)).environment
+  }
 }

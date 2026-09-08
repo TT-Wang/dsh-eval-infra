@@ -15,6 +15,7 @@ import { bandAt, priceUsage } from './pricing.js'
 import type { ResolvedArm, RunLedger, RunPlan, Scenario, Verdict } from './types.js'
 import { armOverlays } from './arms.js'
 import { buildLedger, type EventLike } from './ledger.js'
+import { verifyInEnvironment, type TaskRuntime } from './environment.js'
 import type { PriceTable } from './pricing.js'
 import { scenarioSetup, scenarioVerify } from './scenario.js'
 import { ledgerPath, writeJsonAtomic, writeLedger, type Progress, type RunPaths } from './store.js'
@@ -105,6 +106,8 @@ export interface RunDeps {
   onLedger?: (ledger: RunLedger) => void
   /** Every runtime event of every trial, as it happens: what a live view of the run is made of. */
   onEvent?: (trial: { scenario: string; arm: string; rep: number }, event: EventLike) => void
+  /** Container scenarios (public benchmarks): opens the task's own environment for one trial; the runtime runs inside it and its tests grade it there. */
+  taskRuntimeFactory?: (input: DriverInput, scenario: Scenario) => Promise<TaskRuntime>
   log?: (line: string) => void
   /** Override the per-turn timeout for every scenario (ms). */
   turnTimeoutMs?: number
@@ -343,9 +346,13 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   let replaySource: string | undefined
   let meter: import('./meter.js').Meter | undefined
   let meterFile: string | undefined
+  const container = scenario.meta.runtime === 'container'
+  let taskRuntime: TaskRuntime | undefined
   try {
-    await scenarioSetup(scenario, workdir)
-    restoreTruth = stashTruth(workdir, join(workRoot, '.truth-stash'))
+    if (!container) {
+      await scenarioSetup(scenario, workdir)
+      restoreTruth = stashTruth(workdir, join(workRoot, '.truth-stash'))
+    }
     const overlays = [scenario.meta.network ? base.network : base.noNetwork, ...armOverlays(arm)]
     if (deps.meter) {
       const { startMeter } = await import('./meter.js')
@@ -368,7 +375,12 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
       overlays.push(overlay)
     }
     const breaks = new Set(scenario.meta.new_session_before_turns ?? [])
-    const makeDriver = (): Driver => deps.driverFactory({ arm, scenario, workdir, evalHome: deps.evalHome, overlays, env: { ...deps.env, ...(arm.env ?? {}) } })
+    const driverInput: DriverInput = { arm, scenario, workdir, evalHome: deps.evalHome, overlays, env: { ...deps.env, ...(arm.env ?? {}) } }
+    if (container) {
+      if (deps.taskRuntimeFactory === undefined) throw new Error(`${scenario.name} is a container scenario (image ${scenario.meta.image ?? '?'}); it needs Docker, and this run has no task runtime`)
+      taskRuntime = await deps.taskRuntimeFactory(driverInput, scenario)
+    }
+    const makeDriver = (): Driver => (taskRuntime !== undefined ? taskRuntime.driverFactory : deps.driverFactory)(driverInput)
     let driver = makeDriver()
     // A fresh session numbers its turns from 1 again; the ledger keeps one global turn axis.
     let turnOffset = 0
@@ -416,7 +428,9 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   try {
     restoreTruth?.()
-    verdict = capped ? { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` } : await scenarioVerify(scenario, workdir)
+    verdict = capped ? { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` }
+      : taskRuntime !== undefined ? await verifyInEnvironment(taskRuntime.environment, join(scenario.dir, 'tests'), (scenario.meta.verifier_timeout_s ?? 900) * 1000)
+      : await scenarioVerify(scenario, workdir)
     // Judge artifacts: copy the listed files out before the workspace is discarded.
     if (scenario.meta.judge && scenario.meta.judge.artifacts.length > 0) {
       const dest = join(deps.paths.dir, 'ledgers', scenario.name, arm.name, `rep${job.rep}.artifacts`)
@@ -429,6 +443,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   } catch (e) {
     verdict = { ok: false, detail: `verify failed: ${e instanceof Error ? e.message : String(e)}` }
   }
+  // The task container outlives the runtime process only until its tests have run.
+  if (taskRuntime !== undefined) { try { await taskRuntime.environment.stop() } catch { /* best effort */ } }
   const endedAt = new Date()
   const eventsFile = join('ledgers', scenario.name, arm.name, `rep${job.rep}.events.jsonl`)
   const traceFile = join('ledgers', scenario.name, arm.name, `rep${job.rep}.trace.jsonl`)

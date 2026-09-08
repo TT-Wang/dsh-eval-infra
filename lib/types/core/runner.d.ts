@@ -1,5 +1,6 @@
 import type { ResolvedArm, RunLedger, RunPlan, Scenario } from './types.js';
 import { type EventLike } from './ledger.js';
+import { type TaskRuntime } from './environment.js';
 import type { PriceTable } from './pricing.js';
 import { type Progress, type RunPaths } from './store.js';
 export interface DriverTurnResult {
@@ -64,6 +65,8 @@ export interface RunDeps {
         arm: string;
         rep: number;
     }, event: EventLike) => void;
+    /** Container scenarios (public benchmarks): opens the task's own environment for one trial; the runtime runs inside it and its tests grade it there. */
+    taskRuntimeFactory?: (input: DriverInput, scenario: Scenario) => Promise<TaskRuntime>;
     log?: (line: string) => void;
     /** Override the per-turn timeout for every scenario (ms). */
     turnTimeoutMs?: number;

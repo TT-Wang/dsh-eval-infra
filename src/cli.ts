@@ -44,7 +44,7 @@ function parseNorthStar(value: string): NorthStar {
   throw new LaunchError(`--north-star must be one of ${NORTH_STARS.join(', ')} (got ${value})`, 'usage')
 }
 
-const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
+const BOOLEAN_FLAGS = new Set(['refresh', 'no-pull', 'aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -184,7 +184,11 @@ async function cmdSelfcheck(project: Project, args: Args): Promise<number> {
   const { scenarios } = collectScenarios(project, scenarioFilter(args))
   if (scenarios.length === 0) { err('no scenarios matched'); return 3 }
   const strict = args.flags['strict'] === true
-  const results = await selfcheckAll(scenarios, 4, { strict })
+  // Container scenarios (public benchmarks) are checked inside their own image; that needs Docker, the checkout and Node for the image.
+
+  const containerEnv = scenarios.some(s => s.meta.runtime === 'container') ? { taskEnvironment: await (await import('./core/orchestrate.js')).containerSelfcheckEnvironment(project, err) } : {}
+
+  const results = await selfcheckAll(scenarios, 4, { strict, ...containerEnv })
   let ok = true
   for (const r of results) {
     ok &&= r.ok
@@ -493,6 +497,37 @@ function cmdRuns(project: Project): number {
   return 0
 }
 
+/** Public benchmarks: an index to browse, tasks to pull one at a time, and remove. */
+async function cmdBench(project: Project, args: Args): Promise<number> {
+  const [sub, dataset, ...rest] = args.positional
+  const { ADAPTERS, adapterFor } = await import('./core/bench/index.js')
+  if (sub === undefined || sub === 'help') { out('usage: dsh-eval bench list <dataset> [--refresh] | get <dataset> <task>... [--no-pull] | rm <dataset> <task>...\ndatasets: ' + Object.values(ADAPTERS).map(a => `${a.id} (${a.title} ${a.version}, ${a.license})`).join(', ')); return 3 }
+  if (dataset === undefined) { err('name a dataset: ' + Object.keys(ADAPTERS).join(', ')); return 3 }
+  const adapter = adapterFor(dataset)
+  if (sub === 'list') {
+    const index = await adapter.index(project, { refresh: args.flags['refresh'] === true, log: err })
+    const present = new Set(existsSync(adapter.poolDir(project)) ? readdirSync(adapter.poolDir(project)) : [])
+    out(`${adapter.title} ${index.version} · ${index.tasks.length} tasks · ${index.license} · index fetched ${index.fetchedAt.slice(0, 10)}`)
+    for (const t of index.tasks) out(`${present.has(t.id) ? '✓' : ' '} ${t.id.padEnd(36)} ${(t.category ?? '').padEnd(22)} ${(t.difficulty ?? '').padEnd(8)} ${t.image}`)
+    out(`\n✓ = in this project (bench/public/${adapter.id}-${index.version}). Get one: dsh-eval bench get ${adapter.id} <task>`)
+    return 0
+  }
+  if (sub === 'get') {
+    if (rest.length === 0) { err('name at least one task'); return 3 }
+    for (const id of rest) {
+      const r = await adapter.materialize(project, id, { log: err, pull: args.flags['no-pull'] !== true })
+      out(`${id}: ${r.dir} (${r.task.image}, task hash ${r.taskHash.slice(0, 12)})`)
+    }
+    out(`selfcheck them before a run: dsh-eval selfcheck ${rest.join(' ')}`)
+    return 0
+  }
+  if (sub === 'rm') {
+    for (const id of rest) out(`${id}: ${adapter.remove(project, id) ? 'removed' : 'not present'}`)
+    return 0
+  }
+  err(`unknown bench command ${sub}`); return 3
+}
+
 async function cmdUi(project: Project, args: Args): Promise<number> {
   const { startServer } = await import('./server/index.js')
   const port = num(args.flags['port']) ?? 4177
@@ -634,6 +669,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'publish': return cmdPublish(project, args)
     case 'judge': return cmdJudge(project, args)
     case 'runs': return cmdRuns(project)
+    case 'bench': return cmdBench(project, args)
     case 'patterns': return cmdPatterns(project)
     case 'ui': return cmdUi(project, args)
     case 'export': return cmdExport(project, args)

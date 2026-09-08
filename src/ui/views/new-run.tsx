@@ -4,6 +4,7 @@ import { navigate } from '../main.js'
 import { pickCandidates } from '../select-arms.js'
 import { ArmDesigner } from './arm-designer.js'
 import { ScenarioIntake } from './scenario-intake.js'
+import { PublicBench } from './public-bench.js'
 import { CATEGORIES, categoryInfo } from '../../core/categories.js'
 
 export function NewRunView({ preset = {} }: { preset?: Record<string, string> }) {
@@ -51,6 +52,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   const [budgetTouched, setBudgetTouched] = useState(false)
   const [openBuckets, setOpenBuckets] = useState<Set<string>>(new Set())
   const [showAdd, setShowAdd] = useState(false)
+  const [showBench, setShowBench] = useState(false)
   const reloadArms = (): void => { void api.arms().then(r => setArms(r.arms)) }
   useEffect(() => { api.runs().then(rs => setRunsList(rs.map(r => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) })))).catch(() => { /* static */ }) }, [])
 
@@ -361,10 +363,12 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
               <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set(visible.map(s => s.name)))}>select all shown</button>
               <button class="uk-btn uk-btn-default uk-btn-sm" onClick={() => setSelected(new Set())}>clear</button>
               <button class={`uk-btn uk-btn-sm ${showAdd ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setShowAdd(!showAdd)}>Add your own</button>
+              <button class={`uk-btn uk-btn-sm ${showBench ? 'uk-btn-primary' : 'uk-btn-default'}`} onClick={() => setShowBench(!showBench)}>Public benchmarks</button>
             </div>
           </div>
 
           {showAdd && <ScenarioIntake root={meta?.ownScenarioRoot ?? meta?.scenarioRoot ?? ''} onAdded={() => { setShowAdd(false); void api.scenarios().then(r => { setScenarios(r.scenarios); setInvalid(r.invalid) }) }} />}
+          {showBench && <PublicBench onChanged={() => { void api.scenarios().then(r => { setScenarios(r.scenarios); setInvalid(r.invalid) }) }} />}
 
           {buckets.map(({ info, rows }) => {
             const chosen = rows.filter(r => selected.has(r.name)).length

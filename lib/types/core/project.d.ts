@@ -35,6 +35,8 @@ export interface Project {
     config: ProjectConfig;
     configPath: string;
     armsDir: string;
+    /** Root of the public-benchmark pools (`bench/public/<dataset>/<task>`), each a scenario root of its own. */
+    benchRoot: string;
     scenarioRoot: string;
     bundledScenarioRoot: string;
     /** Where a scenario the user adds is written: always the project's own library. */
@@ -67,3 +69,5 @@ export declare function starterCandidate(pluginName: string | undefined): string
  * unaffected — a run already composes into its own archived directory.
  */
 export declare function withPreviewArms<T>(project: Project, use: (armsDir: string) => Promise<T>): Promise<T>;
+/** Public-benchmark pools present in a project: every dataset directory under bench/public that holds at least one task. */
+export declare function benchPools(project: Project): string[];

@@ -283,3 +283,7 @@ export interface RegradeResult {
 export declare function regradeRun(project: Project, id: string, options?: {
     log?: (line: string) => void;
 }): Promise<RegradeResult>;
+/** A task-runtime factory for the run: one container per trial, from the scenario's own image. */
+export declare function containerTaskRuntimeFactory(project: Project, log: (line: string) => void): Promise<NonNullable<RunDeps['taskRuntimeFactory']>>;
+/** The selfcheck's environment for a container scenario: the untouched image, started, with nothing of ours inside but Node. */
+export declare function containerSelfcheckEnvironment(project: Project, log: (line: string) => void): Promise<(scenario: Scenario) => Promise<import('./environment.js').TaskEnvironment>>;
