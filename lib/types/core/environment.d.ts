@@ -57,6 +57,8 @@ export declare function taskRuntimeExecArgs(containerId: string, input: DriverIn
  * driver factory whose dsh runtime runs inside it. The caller stops the
  * environment after verification.
  */
+/** The image's own working directory — where the task's files are and where its tests expect to run. */
+export declare function imageWorkdir(image: string): Promise<string | null>;
 export declare function openContainerTask(input: DriverInput, options: ContainerTaskOptions): Promise<TaskRuntime>;
 /** Where the benchmark's own verifier writes; the same paths Harbor uses, so a task's test.sh works unchanged. */
 export declare const TESTS_DIR = "/tests";

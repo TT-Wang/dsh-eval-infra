@@ -42,10 +42,11 @@ export interface MaterializeOptions {
     log?: (line: string) => void;
     /** Pull the task image (default true); false writes the scenario only. */
     pull?: boolean;
-    /** Docker command runner, replaceable in tests. */
+    /** Docker command runner, replaceable in tests; `stdout` carries `docker inspect` answers. */
     docker?: (args: string[]) => Promise<{
         code: number;
         stderr: string;
+        stdout?: string;
     }>;
 }
 export interface BenchAdapter {

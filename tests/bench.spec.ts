@@ -80,10 +80,11 @@ describe('terminal-bench adapter', () => {
     const noApi = async (url: string): Promise<string> => { if (url.startsWith('https://api.github.com/')) throw new Error(`${url}: HTTP 403`); return gh(url) }
     const viaMirror = await terminalBench.materialize(project(), 'alpha-task', { fetcher: noApi, pull: false })
     expect(viaMirror.taskHash).toBe(r.taskHash)
-    expect(pulled).toEqual([['pull', '--platform', 'linux/amd64', 'alexgshaw/alpha-task:20251031']])
+    expect(pulled[0]).toEqual(['pull', '--platform', 'linux/amd64', 'alexgshaw/alpha-task:20251031'])
+    expect(pulled.some(a => a[0] === 'inspect')).toBe(true)   // the working directory is read from the pulled image
     expect(r.dir).toBe(join(p.benchRoot, 'terminal-bench-2.0', 'alpha-task'))
     const meta = JSON.parse(readFileSync(join(r.dir, 'meta.json'), 'utf8')) as Record<string, unknown>
-    expect(meta).toMatchObject({ name: 'alpha-task', runtime: 'container', image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', cpus: 2, memory_mb: 2048, turn_timeout_s: 1200, verifier_timeout_s: 900, category: 'public' })
+    expect(meta).toMatchObject({ name: 'alpha-task', runtime: 'container', image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', cpus: 2, memory_mb: 2048, turn_timeout_s: 1200, verifier_timeout_s: 900, category: 'public', workdir: '/app/repo' })
     expect((meta['origin'] as Record<string, unknown>)).toMatchObject({ benchmark: 'terminal-bench', version: '2.0', id: 'alpha-task', commit: 'abc123', license: 'Apache-2.0', taskHash: r.taskHash })
     // the canary line is stripped from the prompt, the task's own files are kept verbatim
     expect(JSON.parse(readFileSync(join(r.dir, 'prompts.json'), 'utf8'))).toEqual(['Write a sampler to /app/sampler.py.'])

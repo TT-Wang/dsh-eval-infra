@@ -131,11 +131,11 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out
 }
 
-function dockerRun(args: string[]): Promise<{ code: number; stderr: string }> {
+function dockerRun(args: string[]): Promise<{ code: number; stderr: string; stdout: string }> {
   return new Promise((resolve) => {
-    execFile('docker', args, { timeout: 1_800_000, maxBuffer: 16 * 1024 * 1024 }, (err, _stdout, stderr) => {
+    execFile('docker', args, { timeout: 1_800_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       const e = err as (Error & { code?: number | string }) | null
-      resolve({ code: e === null ? 0 : typeof e.code === 'number' ? e.code : 1, stderr: String(stderr ?? '') })
+      resolve({ code: e === null ? 0 : typeof e.code === 'number' ? e.code : 1, stderr: String(stderr ?? ''), stdout: String(stdout ?? '') })
     })
   })
 }
@@ -210,6 +210,14 @@ export const terminalBench: BenchAdapter = {
       if (pulled.code !== 0) { await new Promise(r => setTimeout(r, 2000)); pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image]) }
       if (pulled.code !== 0) throw new Error(`docker pull ${task.image} failed: ${pulled.stderr.trim().split('\n').at(-1) ?? pulled.code}`)
     }
+    // The working directory the task expects: task.toml's, else the image's (read after the pull), else /app.
+    const cfg = parseToml(files.get('task.toml')!)
+    let workdir = typeof cfg['environment']?.['workdir'] === 'string' ? cfg['environment']['workdir'] as string : undefined
+    if (workdir === undefined && options.pull !== false) {
+      const inspected = await (options.docker ?? dockerRun)(['inspect', '--format', '{{.Config.WorkingDir}}', task.image])
+      const wd = ('stdout' in inspected ? String((inspected as { stdout?: string }).stdout ?? '') : '').trim()
+      if (inspected.code === 0 && wd !== '') workdir = wd
+    }
     rmSync(dir, { recursive: true, force: true })
     mkdirSync(join(dir, 'tests'), { recursive: true })
     mkdirSync(join(dir, 'solution'), { recursive: true })
@@ -227,6 +235,7 @@ export const terminalBench: BenchAdapter = {
       platform: 'amd64',
       ...(task.cpus !== undefined ? { cpus: task.cpus } : {}),
       ...(task.memoryMb !== undefined ? { memory_mb: task.memoryMb } : {}),
+      ...(workdir !== undefined ? { workdir } : {}),
       turn_timeout_s: task.agentTimeoutS ?? 900,
       verifier_timeout_s: task.verifierTimeoutS ?? 900,
       network: true,

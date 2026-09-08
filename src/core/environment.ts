@@ -158,7 +158,16 @@ class ContainerEnvironment implements TaskEnvironment {
  * driver factory whose dsh runtime runs inside it. The caller stops the
  * environment after verification.
  */
+/** The image's own working directory — where the task's files are and where its tests expect to run. */
+export async function imageWorkdir(image: string): Promise<string | null> {
+  const r = await run('docker', ['inspect', '--format', '{{.Config.WorkingDir}}', image], 60_000)
+  const dir = r.stdout.trim()
+  return r.code === 0 && dir !== '' ? dir : null
+}
+
 export async function openContainerTask(input: DriverInput, options: ContainerTaskOptions): Promise<TaskRuntime> {
+  // The task's working directory is the image's unless the scenario says otherwise; /app is only the last resort.
+  if (options.workdir === undefined) { const wd = await imageWorkdir(options.image); options = { ...options, workdir: wd ?? '/app' } }
   const started = await run('docker', taskContainerArgs(input, options), 300_000)
   if (started.code !== 0) throw new Error(`docker run ${options.image} failed: ${started.stderr.trim().split('\n').at(-1) ?? started.code}`)
   const id = started.stdout.trim()
