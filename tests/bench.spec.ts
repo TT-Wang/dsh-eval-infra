@@ -180,3 +180,16 @@ describe('container scenarios', () => {
     rmSync(p.root, { recursive: true, force: true }); rmSync(src, { recursive: true, force: true }); rmSync(nodeDir, { recursive: true, force: true })
   })
 })
+
+describe('proxy forwarding into task containers', () => {
+  it('rewrites a loopback proxy to the host gateway and exempts the gateway from no_proxy', async () => {
+    const { proxyEnvForContainer } = await import('../src/core/environment.js')
+    expect(proxyEnvForContainer({ HTTPS_PROXY: 'http://127.0.0.1:7890', http_proxy: 'http://localhost:7890', NO_PROXY: 'localhost,127.0.0.1', OTHER: 'x' })).toEqual([
+      ['HTTPS_PROXY', 'http://host.docker.internal:7890'],
+      ['NO_PROXY', 'localhost,127.0.0.1,host.docker.internal'],
+      ['http_proxy', 'http://host.docker.internal:7890'],
+    ])
+    expect(proxyEnvForContainer({ HTTPS_PROXY: 'http://proxy.corp:3128' })).toEqual([['HTTPS_PROXY', 'http://proxy.corp:3128']])
+    expect(proxyEnvForContainer({})).toEqual([])
+  })
+})

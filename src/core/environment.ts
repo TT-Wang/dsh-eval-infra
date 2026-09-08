@@ -97,10 +97,25 @@ export function taskContainerArgs(input: DriverInput, options: ContainerTaskOpti
   for (const [source, target] of options.dsh.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
   args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`, '-e', 'DSH_TELEMETRY_DISABLED=1', '-e', 'NODE_OPTIONS=--max-old-space-size=2048')
   args.push('--add-host', 'host.docker.internal:host-gateway')
+  // A task's verifier or oracle often installs its own tooling (apt, uv, pip) from inside the container. Behind a
+  // proxy that traffic has to go the same way the host's does, so the host's proxy variables are forwarded with a
+  // loopback address rewritten to the host gateway — a proxy on 127.0.0.1 is unreachable from the container by that name.
+  for (const [k, v] of proxyEnvForContainer(process.env)) args.push('-e', `${k}=${v}`)
   for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) args.push('-e', `${k}=${input.env[k]}`)
   for (const [k, v] of Object.entries(input.arm.env ?? {})) args.push('-e', `${k}=${v}`)
   args.push(options.image, 'tail', '-f', '/dev/null')
   return args
+}
+
+/** The host's proxy settings as a container sees them: loopback rewritten to the host gateway, both spellings kept. */
+export function proxyEnvForContainer(env: Record<string, string | undefined>): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy']) {
+    const v = env[key]
+    if (v === undefined || v === '') continue
+    out.push([key, key.toLowerCase() === 'no_proxy' ? `${v},host.docker.internal` : v.replace(/\/\/(127\.0\.0\.1|localhost|\[::1\])(?=[:/]|$)/, '//host.docker.internal')])
+  }
+  return out
 }
 
 /** The runtime command inside a running task container: the mounted Node, dsh's CLI with the arm's overlays. */

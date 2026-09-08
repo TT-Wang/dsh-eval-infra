@@ -48,6 +48,8 @@ export declare function ensureNodeRuntime(evalHome: string, platform: ImagePlatf
 export declare function platformIsEmulated(platform: ImagePlatform): boolean;
 /** The `docker run -d` arguments for a task container: image, resources, the runtime mounts, kept alive until removed. */
 export declare function taskContainerArgs(input: DriverInput, options: ContainerTaskOptions): string[];
+/** The host's proxy settings as a container sees them: loopback rewritten to the host gateway, both spellings kept. */
+export declare function proxyEnvForContainer(env: Record<string, string | undefined>): Array<[string, string]>;
 /** The runtime command inside a running task container: the mounted Node, dsh's CLI with the arm's overlays. */
 export declare function taskRuntimeExecArgs(containerId: string, input: DriverInput, options: ContainerTaskOptions): string[];
 /**
