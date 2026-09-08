@@ -24,7 +24,9 @@ export interface SdkDriverOptions {
 }
 
 async function loadHarness(): Promise<HarnessCtor> {
-  const mod = await import('@deepseek-ai/dsh-sdk-client') as { DeepSeekHarness: HarnessCtor }
+  // Resolved at run time on a machine that has dsh; the non-literal specifier keeps tsc from demanding its types elsewhere.
+  const specifier = '@deepseek-ai/dsh-sdk-client'
+  const mod = await import(specifier) as { DeepSeekHarness: HarnessCtor }
   return mod.DeepSeekHarness
 }
 

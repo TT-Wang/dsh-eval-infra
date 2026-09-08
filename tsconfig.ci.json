@@ -1,0 +1,7 @@
+{
+  // Type-check everything that does not need the dsh packages: the plugin entry (src/index.ts) imports their
+  // types and is left to machines that have a dsh checkout. lib/ is committed, so CI runs it rather than rebuilding.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "exclude": ["src/ui/**", "src/index.ts"]
+}

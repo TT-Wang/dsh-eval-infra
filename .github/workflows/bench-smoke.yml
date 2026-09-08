@@ -22,7 +22,9 @@ jobs:
           cache: npm
       - uses: astral-sh/setup-uv@v5
       - run: npm ci
-      - run: npm run build
+      # lib/ is committed (the package works as a dsh plugin from it); the plugin entry needs the dsh packages'
+      # types, which only a machine with a dsh checkout has, so CI type-checks everything else and runs lib/.
+      - run: npx tsc -p tsconfig.ci.json
       - run: npx vitest run
       - name: platform
         run: |
