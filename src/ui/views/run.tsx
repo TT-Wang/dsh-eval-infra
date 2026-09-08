@@ -264,10 +264,12 @@ function plainVerdict(c: CandidateReport): string {
   const regressions = c.scenarios.filter(p => p.class === 'regression')
   const unsafe = c.scenarios.filter(p => p.class === 'unsafe')
   if (c.gate === 'unsafe') return `${c.arm} did something it was not asked to on ${unsafe.length} scenario${unsafe.length === 1 ? '' : 's'}: ${unsafe[0]?.violations.evidence ?? 'a safety-gate violation'}. Nothing else is compared until that is fixed.`
+  // Both arms tripped the gate somewhere: not a regression, but the reader should not have to find it in the notes.
+  const bothUnsafe = c.bothUnsafe.length > 0 ? `Both arms did something they were not asked to on ${c.bothUnsafe.join(', ')} (${c.scenarios.find(p => p.violations.candidate > 0)?.violations.evidence ?? 'see the trial'}), so neither is acceptable there. ` : ''
   const ns: CandidateReport['northStar'] = c.northStar ?? { metric: 'cost', reading: c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading, ci: c.costPctCI, unit: '%', text: c.verdict }
   const noun = ns.metric === 'cost' ? 'cost' : ns.metric === 'efficiency' ? 'steps' : 'quality'
   if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. ${noun[0]!.toUpperCase()}${noun.slice(1)} is not compared until that is fixed.`
-  if (c.gate === 'incomplete') return `Some trials did not finish, so there is nothing to compare yet.`
+  if (c.gate === 'incomplete') return `${bothUnsafe}Some trials did not finish, so there is nothing to compare yet.`
   const rel = c.reliability === undefined ? '' : c.reliability.reading === 'more-reliable' ? ` It is also more reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : c.reliability.reading === 'less-reliable' ? ` But it is less reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : ''
   if (ns.metric === 'quality') {
     if (ns.reading === 'better') return `The blinded judge prefers ${c.arm}, and it breaks nothing.${rel}`
@@ -280,7 +282,7 @@ function plainVerdict(c: CandidateReport): string {
   if (ns.reading === 'better') return `${c.arm} ${ns.metric === 'cost' ? 'is cheaper' : 'takes fewer steps'} by about ${pct(v)} and breaks nothing.${rel}`
   if (ns.reading === 'worse') return `${c.arm} ${ns.metric === 'cost' ? 'costs' : 'takes'} about ${pct(v)} more ${noun} and breaks nothing.${rel}`
   if (ns.reading === 'same') return `No real difference: ${noun} within ±10% and nothing broke.${rel}`
-  if (ns.reading === 'none') return `No scenario where both arms passed, so there is nothing to compare on ${noun}.${rel}`
+  if (ns.reading === 'none') return `${bothUnsafe}No scenario where both arms passed, so there is nothing to compare on ${noun}.${rel}`
   return `Not enough evidence yet. The measured difference in ${noun} is ${v < 0 ? '−' : '+'}${pct(v)}, but it could as easily be noise.${rel}`
 }
 
