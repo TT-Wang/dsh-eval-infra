@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -74,7 +74,7 @@ describe('terminal-bench adapter', () => {
   it('materialises a task into a container scenario the loader accepts, in its own pool, with provenance', async () => {
     const p = project()
     const pulled: string[][] = []
-    const r = await terminalBench.materialize(p, 'alpha-task', { fetcher: fakeFetcher(), docker: async (args) => { pulled.push(args); return { code: 0, stderr: '' } } })
+    const r = await terminalBench.materialize(p, 'alpha-task', { fetcher: fakeFetcher(), docker: async (args) => { pulled.push(args); return args[0] === 'inspect' ? { code: 0, stderr: '', stdout: '/app/repo\n' } : { code: 0, stderr: '' } } })
     // the same task materialises when GitHub's listing is unavailable (anonymous limit): names come from the mirror, files from the pinned commit
     const gh = fakeFetcher()
     const noApi = async (url: string): Promise<string> => { if (url.startsWith('https://api.github.com/')) throw new Error(`${url}: HTTP 403`); return gh(url) }
@@ -176,12 +176,15 @@ describe('container scenarios', () => {
     ensureEvalProfile(p.home, 'eval')
     const src = mkdtempSync(join(tmpdir(), 'dsh-src-'))
     const nodeDir = mkdtempSync(join(tmpdir(), 'node-'))
-    const input = { arm: resolveArm({ name: 'b' }, join(p.evalDir, 'arms')), scenario: { name: 's', dir: '', meta: { name: 's', turns: 1 }, prompts: ['x'], hasOracle: false, hasSetup: false }, workdir: p.evalDir, evalHome: p.home, overlays: [], env: {} }
+    const overlayDir = mkdtempSync(join(tmpdir(), 'overlays-'))
+    writeFileSync(join(overlayDir, 'b.patch.yml'), '[]\n')
+    const input = { arm: resolveArm({ name: 'b' }, join(p.evalDir, 'arms')), scenario: { name: 's', dir: '', meta: { name: 's', turns: 1 }, prompts: ['x'], hasOracle: false, hasSetup: false }, workdir: p.evalDir, evalHome: p.home, overlays: [join(overlayDir, 'b.patch.yml')], env: {} }
     const args = taskContainerArgs(input, { image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', nodeDir, dsh: { dshSource: src }, cpus: 2, memoryMb: 2048 })
     expect(args.slice(0, 5)).toEqual(['run', '-d', '--init', '--platform', 'linux/amd64'])
     expect(args).toContain('--cpus'); expect(args).toContain('2048m')
     expect(args.some(a => a.includes('target=/opt/dsh-node'))).toBe(true)
     expect(args.slice(-4)).toEqual(['alexgshaw/alpha-task:20251031', 'tail', '-f', '/dev/null'])
+    expect(args.some(a => a.startsWith(`type=bind,source=${realpathSync(overlayDir)},target=`) && a.endsWith(',readonly'))).toBe(true)   // the overlay's directory rides along
     const exec = taskRuntimeExecArgs('cid123', input, { image: 'x', platform: 'amd64', nodeDir, dsh: { dshSource: src } })
     expect(exec.slice(0, 6)).toEqual(['exec', '-i', '-w', '/app', 'cid123', '/opt/dsh-node/bin/node'])
     expect(exec).toContain('--expose-internals')

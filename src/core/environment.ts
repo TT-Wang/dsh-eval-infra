@@ -8,7 +8,7 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { dshRuntimeMounts, type DockerOptions } from './docker.js'
 import type { Driver, DriverFactory, DriverInput } from './runner.js'
@@ -93,7 +93,11 @@ export function taskContainerArgs(input: DriverInput, options: ContainerTaskOpti
   if (options.cpus !== undefined) args.push('--cpus', String(options.cpus))
   if (options.memoryMb !== undefined) args.push('--memory', `${options.memoryMb}m`)
   args.push('--mount', `type=bind,source=${realpathSync(options.nodeDir)},target=${NODE_MOUNT},readonly`)
-  for (const [path, mode] of dshRuntimeMounts(input, options.dsh)) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
+  const mounts = new Map<string, 'ro' | 'rw'>(dshRuntimeMounts(input, options.dsh))
+  // The arm's overlays (base rows, the arm's patch, the meter row, any patch files) are host files the runtime reads by
+  // path: their directories are mounted read-only, as the container sandbox mounts the run directory.
+  for (const overlay of input.overlays) { const dir = dirname(realpathSync(overlay)); if (!mounts.has(dir)) mounts.set(dir, 'ro') }
+  for (const [path, mode] of mounts) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
   for (const [source, target] of options.dsh.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
   args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`, '-e', 'DSH_TELEMETRY_DISABLED=1', '-e', 'NODE_OPTIONS=--max-old-space-size=2048')
   args.push('--add-host', 'host.docker.internal:host-gateway')
