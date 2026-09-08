@@ -23,6 +23,8 @@ export interface SelfcheckOptions {
     maxMutations?: number;
     /** Container scenarios: opens the task's environment (started, untouched) for the null check and the oracle. */
     taskEnvironment?: (scenario: Scenario) => Promise<TaskEnvironment>;
+    /** Cap on a container scenario's verifier, in seconds, over the scenario's own (a benchmark's tests can hang on a third-party host). */
+    verifierTimeoutS?: number;
 }
 export declare function selfcheckScenario(scenario: Scenario, workRoot?: string, options?: SelfcheckOptions): Promise<SelfcheckResult>;
 export declare function selfcheckAll(scenarios: Scenario[], concurrency?: number, options?: SelfcheckOptions): Promise<SelfcheckResult[]>;

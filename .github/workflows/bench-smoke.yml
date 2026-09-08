@@ -10,6 +10,8 @@ on:
     paths-ignore: ['docs/**', 'README*.md', 'THIRD_PARTY.md']
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'   # weekly: the network-dependent task below
 jobs:
   bench-smoke:
     runs-on: ubuntu-latest
@@ -34,11 +36,12 @@ jobs:
           node lib/cli.js bench list terminal-bench | head -5
           node lib/cli.js bench get terminal-bench fix-git
           node lib/cli.js selfcheck fix-git
-      - name: SWE-bench Verified · get two tasks (grading env, images), check them with the official harness
-        # django's tests run offline; requests' reach httpbin.org, which a developer's network may drop and this one must not
+      - name: SWE-bench Verified · get one task (grading env, image), check it with the official harness
+        # A task whose tests run offline: a smoke must not depend on a third party's website (requests' suite calls
+        # httpbin.org and hung the grader for the full verifier timeout on this runner). The cap bounds any hang.
         run: |
-          node lib/cli.js bench get swebench-verified django__django-13406 psf__requests-2317
-          node lib/cli.js selfcheck django__django-13406 psf__requests-2317
+          node lib/cli.js bench get swebench-verified django__django-13406
+          node lib/cli.js selfcheck django__django-13406 --verifier-timeout 900
       - name: keep what the checks left behind
         if: always()
         uses: actions/upload-artifact@v4
@@ -48,3 +51,22 @@ jobs:
           path: |
             .dsh-eval/bench/*/index.json
             bench/public/*/*/meta.json
+
+  # A task whose tests reach a third party's website (requests' suite calls httpbin.org): it passes on a clean
+  # network but takes half an hour, so it runs on demand and weekly rather than on every push.
+  network-task:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v5
+      - run: npm ci
+      - name: SWE-bench Verified · psf__requests-2317, whose tests need httpbin.org
+        run: |
+          node lib/cli.js bench get swebench-verified psf__requests-2317
+          node lib/cli.js selfcheck psf__requests-2317 --verifier-timeout 1800

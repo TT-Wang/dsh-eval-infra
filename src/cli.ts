@@ -188,7 +188,8 @@ async function cmdSelfcheck(project: Project, args: Args): Promise<number> {
 
   const containerEnv = scenarios.some(s => s.meta.runtime === 'container') ? { taskEnvironment: await (await import('./core/orchestrate.js')).containerSelfcheckEnvironment(project, err) } : {}
 
-  const results = await selfcheckAll(scenarios, 4, { strict, ...containerEnv })
+  const verifierTimeoutS = num(args.flags['verifier-timeout'])
+  const results = await selfcheckAll(scenarios, 4, { strict, ...containerEnv, ...(verifierTimeoutS !== undefined ? { verifierTimeoutS } : {}) })
   let ok = true
   for (const r of results) {
     ok &&= r.ok

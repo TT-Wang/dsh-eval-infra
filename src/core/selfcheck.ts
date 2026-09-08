@@ -49,6 +49,8 @@ export interface SelfcheckOptions {
   maxMutations?: number
   /** Container scenarios: opens the task's environment (started, untouched) for the null check and the oracle. */
   taskEnvironment?: (scenario: Scenario) => Promise<TaskEnvironment>
+  /** Cap on a container scenario's verifier, in seconds, over the scenario's own (a benchmark's tests can hang on a third-party host). */
+  verifierTimeoutS?: number
 }
 
 /**
@@ -60,14 +62,15 @@ export interface SelfcheckOptions {
 async function selfcheckContainer(scenario: Scenario, options: SelfcheckOptions): Promise<SelfcheckResult> {
   const result: SelfcheckResult = { name: scenario.name, ok: false, blankPasses: null, oraclePasses: null, bytes: 0, turns: scenario.prompts.length, detail: '' }
   if (options.taskEnvironment === undefined) { result.error = `${scenario.name} is a container scenario (image ${scenario.meta.image ?? '?'}) and needs Docker to be checked`; return result }
-  const timeoutMs = (scenario.meta.verifier_timeout_s ?? 900) * 1000
+  const verifierTimeoutS = options.verifierTimeoutS !== undefined ? Math.min(options.verifierTimeoutS, scenario.meta.verifier_timeout_s ?? Infinity) : (scenario.meta.verifier_timeout_s ?? 900)
+  const timeoutMs = verifierTimeoutS * 1000
   const hostSide = existsSync(join(scenario.dir, 'verify.py'))
   let env: TaskEnvironment | undefined
   // The grade, made the way the run makes it: the benchmark's tests inside the container, or the host-side verifier handed the container.
   const grade = async (e: TaskEnvironment): Promise<{ ok: boolean; detail: string }> => {
     if (!hostSide) return verifyInEnvironment(e, join(scenario.dir, 'tests'), timeoutMs)
     const scratch = mkdtempSync(join(tmpdir(), `dsh-eval-selfcheck-${scenario.name}-`))
-    const v = await scenarioVerify(scenario, scratch, { env: hostVerifierEnvWithTimeout(e, scenario.meta.verifier_timeout_s ?? 900), timeoutMs: timeoutMs + 120_000, ...(scenario.meta.verifier_python !== undefined ? { python: scenario.meta.verifier_python } : {}) })
+    const v = await scenarioVerify(scenario, scratch, { env: hostVerifierEnvWithTimeout(e, verifierTimeoutS), timeoutMs: timeoutMs + 120_000, ...(scenario.meta.verifier_python !== undefined ? { python: scenario.meta.verifier_python } : {}) })
     if (!v.ok && v.detail.startsWith(INFRA_PREFIX)) throw new Error(v.detail)
     return v
   }
