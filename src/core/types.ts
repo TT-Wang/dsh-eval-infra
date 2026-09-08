@@ -260,7 +260,16 @@ export interface RunPlan {
   replay?: { runId: string; forkAt?: number }
   /** Container mode kept dsh's in-process sandbox on inside the container. */
   containerSandbox?: boolean
+  /**
+   * The reading the run is about, chosen before the data: cost per solved task
+   * (default), efficiency (steps per solved task) or quality (blinded judge
+   * preference). Reliability (pass^k) is always read first, whatever this is.
+   */
+  northStar?: NorthStar
 }
+
+export type NorthStar = 'cost' | 'efficiency' | 'quality'
+export const NORTH_STARS: NorthStar[] = ['cost', 'efficiency', 'quality']
 
 /** Environment facts recorded once per run for reproducibility. */
 export interface RunEnvironment {

@@ -9,7 +9,7 @@ import { loadArmFile, type ArmError, applyRoute, type RunRoute } from './arms.js
 import { resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project } from './project.js'
-import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report } from './report.js'
+import { buildReport, noiseFloorOf, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
 import { fileSha, readReceipt, receiptSignatureValid, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
 import { driftTest } from './drift.js'
@@ -22,7 +22,7 @@ import { listScenarios, scenarioVerify } from './scenario.js'
 import { sdkDriverFactory } from './sdk-driver.js'
 import { selfcheckAll, type SelfcheckResult } from './selfcheck.js'
 import { applyAnnotations, listRuns, newRunId, readAnnotations, readLedgers, readPlan, runPaths, runPathsAt, writeJsonAtomic, writeLedger, type Progress } from './store.js'
-import type { ArmSpec, RunLedger, RunPlan, Scenario } from './types.js'
+import type { ArmSpec, RunLedger, RunPlan, Scenario, NorthStar } from './types.js'
 
 export interface RunRequest {
   /** Arm file path, or a name resolved against the project's arms dir. */
@@ -77,6 +77,8 @@ export interface RunRequest {
   model?: string
   /** Reasoning effort for every arm; empty or absent keeps the adapter default. */
   effort?: string
+  /** The reading the run is about (default cost); reliability is always read first. */
+  northStar?: NorthStar
 }
 
 export interface LaunchHooks {
@@ -197,6 +199,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
       createdAt: new Date().toISOString(),
       baseline: baselineSpec,
       candidates: candidateSpecs,
+      ...(request.northStar !== undefined ? { northStar: request.northStar } : {}),
       scenarios: [],
       repeats: request.repeats ?? project.config.repeats,
       concurrency: request.concurrency ?? project.config.concurrency,
@@ -528,6 +531,9 @@ export function analysisContract(plan: RunPlan): AnalysisContract {
     seed: 42,
     gateOrder: 'correctness gate first: any regression blocks the cost reading',
     costRule: 'cost compared only on repeat-pairs where both arms passed; a direction also needs >= 5 comparable scenarios, an interval excluding zero, and no overlap with a measured A/A floor',
+    northStar: plan.northStar ?? 'cost',
+    k: plan.repeats,
+    reliabilityRule: 'pass^k per arm = share of scenarios where every repeat passed; the arms are compared on the scenarios where exactly one arm is reliable (McNemar mid-p at alpha, Beta posterior); a direction needs >= 5 scenarios with complete repeats',
   }
 }
 
@@ -545,7 +551,7 @@ export function sealAndIssue(project: Project, paths: ReturnType<typeof runPaths
     issuedAt: new Date().toISOString(),
     evidenceSha: manifest.evidenceSha,
     contract,
-    claims: report.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })),
+    claims: report.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict, reliability: c.reliability.reading, northStar: `${c.northStar.metric}:${c.northStar.reading}` })),
     coverage: {
       trials: ledgers.length,
       scenarios: plan.scenarios.length,
@@ -588,6 +594,9 @@ export function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyRe
       const c = report.candidates.find(x => x.arm === claim.arm)
       if (!c) return { status: 'INVALID', reason: `the receipt claims arm ${claim.arm}, which the re-derived report does not contain` }
       if (c.gate !== claim.gate || c.costReading !== claim.costReading || c.grade !== claim.grade) return { status: 'INVALID', reason: `re-derived readings for ${claim.arm} differ from the receipt (${claim.grade}/${claim.costReading} vs ${c.grade}/${c.costReading})` }
+      // Receipts issued before these readings existed carry neither field; a receipt that does must recompute to the same values.
+      if (claim.reliability !== undefined && claim.reliability !== c.reliability.reading) return { status: 'INVALID', reason: `re-derived reliability reading for ${claim.arm} (${c.reliability.reading}) differs from the receipt (${claim.reliability})` }
+      if (claim.northStar !== undefined && claim.northStar !== `${c.northStar.metric}:${c.northStar.reading}`) return { status: 'INVALID', reason: `re-derived north-star reading for ${claim.arm} (${c.northStar.metric}:${c.northStar.reading}) differs from the receipt (${claim.northStar})` }
     }
   }
   if (receipt.coverage.unrun > 0) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.unrun} planned trial(s) never ran` }
@@ -673,6 +682,11 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
       const models = j.models ?? [j.model]
       const jj = j as typeof j & { sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; equalLengthWinRate?: NonNullable<Report['candidates'][number]['judge']>['equalLengthWinRate']; effectiveJudges?: NonNullable<Report['candidates'][number]['judge']>['effectiveJudges']; abstention?: NonNullable<Report['candidates'][number]['judge']>['abstention']; anchors?: NonNullable<Report['candidates'][number]['judge']>['anchors'] }
       c.judge = { model: models.join(' + '), models, panelAgreement: j.panelAgreement ?? 1, wins: j.wins, losses: j.losses, ties: j.ties, midP: j.midP, pWin: j.pWin, inconsistentShare: j.inconsistentShare, usd: j.usd, humanAgreement: j.humanAgreement, sameFamilyAsArms: jj.sameFamilyAsArms ?? false, longerWinsShare: jj.longerWinsShare ?? null, interJudgeKappa: jj.interJudgeKappa ?? null, lengthBalancedWinRate: jj.lengthBalancedWinRate ?? null, equalLengthWinRate: jj.equalLengthWinRate ?? null, effectiveJudges: jj.effectiveJudges ?? null, abstention: jj.abstention ?? null, anchors: jj.anchors ?? null }
+      if (c.northStar.metric === 'quality') {
+        c.northStar = qualityReading(c, j.wins, j.losses, j.ties)
+        c.grade = gradeOf(c.gate, c.improvements.length, c.northStar.reading)
+        if (c.gate === 'pass') c.verdict = `${c.northStar.text}${c.improvements.length ? ` Improves correctness on ${c.improvements.join(', ')}.` : ''}`
+      }
       if (jj.abstention) report.notes.push(`${c.arm}: conformal abstention at α = ${jj.abstention.alpha} calibrated on ${jj.abstention.calibratedOn} human-labelled pair${jj.abstention.calibratedOn === 1 ? '' : 's'}: ${Number.isFinite(jj.abstention.tau) ? `threshold ${jj.abstention.tau.toFixed(2)}, ${jj.abstention.abstained} of ${jj.abstention.of} judgments withheld` : `no threshold meets the bound, all ${jj.abstention.of} judgments withheld`}.`)
       else report.notes.push(`${c.arm}: no human-labelled pairs on this run, so the judge cannot calibrate an abstention threshold; only order disagreement and panel splits abstain.`)
       if (jj.anchors) report.notes.push(`${c.arm}: judge anchors — ${jj.anchors.n} archived human-labelled trials re-graded: agreement with humans ${(jj.anchors.humanAgreement * 100).toFixed(0)}%${jj.anchors.stability !== null ? `, stability vs the previous judge run ${(jj.anchors.stability * 100).toFixed(0)}% on ${jj.anchors.comparedWithPrevious}` : ' (first run on these anchors, no previous answers yet)'}${jj.anchors.attribution === 'judge' ? ' → JUDGE DRIFT: the judge changed its mind on the anchors, so differences against earlier judge runs are attributed to the judge, not the system' : ''}.`)

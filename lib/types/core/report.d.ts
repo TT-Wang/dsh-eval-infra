@@ -9,7 +9,7 @@
  *      covers zero reads "no difference".
  */
 import { type BootstrapCI } from './stats.js';
-import type { RunLedger, RunPlan } from './types.js';
+import type { RunLedger, RunPlan, NorthStar } from './types.js';
 export interface ArmScenarioStats {
     arm: string;
     scenario: string;
@@ -95,6 +95,8 @@ export interface PairedScenario {
     costDiffPeakUsd: number | null;
     costDiffOffpeakUsd: number | null;
     stepsDiff: number | null;
+    /** Mean of per-pair (candidate − baseline) steps as a percent of the baseline's steps, over pairs where both passed; null when no pair. */
+    stepsDiffPct: number | null;
     /** Within-arm spread of the baseline cost on passed runs (max−min)/mean, a noise indicator. */
     baselineSpreadPct: number | null;
 }
@@ -106,6 +108,43 @@ export interface BehaviourMean {
     compactions: number;
 }
 export type Grade = 'improvement' | 'regression' | 'tradeoff' | 'tie' | 'inconclusive';
+/**
+ * Reliability, read before anything else: pass^k per arm and the paired
+ * comparison of "reliable on this scenario" between the arms. A component that
+ * makes the agent pass sometimes instead of always has changed something,
+ * whatever it did to the cost.
+ */
+export interface ReliabilityReading {
+    /** Repeats per scenario per arm. */
+    k: number;
+    /** Scenarios with all k repeats on both arms: the denominator of everything below. */
+    scenarios: number;
+    /** pass^k per arm: share of those scenarios where every repeat passed. */
+    baseline: number;
+    candidate: number;
+    /** Discordant scenarios: b = candidate reliable where the baseline is not, c = the reverse. */
+    b: number;
+    c: number;
+    midP: number;
+    pWin: number;
+    inRope: number;
+    /** Unbiased pass^j for j = 1..k per arm, mean over scenarios of C(passes, j) / C(n, j): how fast reliability decays with the bar. */
+    decay: {
+        baseline: number[];
+        candidate: number[];
+    };
+    reading: 'more-reliable' | 'less-reliable' | 'same' | 'inconclusive';
+}
+/** The reading the run was registered for, candidate against baseline. */
+export interface NorthStarReading {
+    metric: NorthStar;
+    /** better / worse are read from the candidate's side: cheaper, fewer steps, preferred by the judge. */
+    reading: 'better' | 'worse' | 'same' | 'inconclusive' | 'none';
+    /** Interval on the metric's own scale: percent for cost and steps; null for quality (the judge has its own counts). */
+    ci: BootstrapCI | null;
+    unit: '%' | 'wins';
+    text: string;
+}
 export interface ArmSummary {
     arm: string;
     runs: number;
@@ -217,6 +256,10 @@ export interface CandidateReport {
         ci: BootstrapCI;
         n: number;
     } | null;
+    /** Read first, whatever the north star: pass^k per arm and the paired comparison of reliability. */
+    reliability: ReliabilityReading;
+    /** The reading this run was registered for (plan.northStar, default cost). */
+    northStar: NorthStarReading;
     /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
     judge?: {
         model: string;
@@ -333,6 +376,14 @@ export interface ReportOptions {
         scenarios: number;
     }>;
 }
+/** One word from the gate, the correctness improvements and the north-star reading; the same rule wherever a grade is made. */
+export declare function gradeOf(gate: CandidateReport['gate'], improvements: number, ns: NorthStarReading['reading']): Grade;
+/**
+ * The quality reading, made once the blinded judge has run: the candidate's wins
+ * against its losses over the decided pairs, read with the same rules as the
+ * other north stars (five decided pairs, mid-p at alpha, equivalence by posterior).
+ */
+export declare function qualityReading(c: CandidateReport, wins: number, losses: number, ties: number, minScenarios?: number): NorthStarReading;
 /** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
 export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[]): NoiseFloor | null;
 export interface Report {

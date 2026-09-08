@@ -8,8 +8,8 @@
  *   3. Aggregates carry a bootstrap interval over scenarios; an interval that
  *      covers zero reads "no difference".
  */
-import { icc, mcnemar, mean, median, resolution, sequenceSimilarity, signTest, smallSampleCI, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
-import type { RunLedger, RunPlan } from './types.js'
+import { icc, mcnemar, mean, median, passPow, resolution, sequenceSimilarity, signTest, smallSampleCI, wilson, tCritical, stddev, type BootstrapCI } from './stats.js'
+import type { RunLedger, RunPlan, NorthStar } from './types.js'
 
 export interface ArmScenarioStats {
   arm: string
@@ -65,6 +65,8 @@ export interface PairedScenario {
   costDiffPeakUsd: number | null
   costDiffOffpeakUsd: number | null
   stepsDiff: number | null
+  /** Mean of per-pair (candidate − baseline) steps as a percent of the baseline's steps, over pairs where both passed; null when no pair. */
+  stepsDiffPct: number | null
   /** Within-arm spread of the baseline cost on passed runs (max−min)/mean, a noise indicator. */
   baselineSpreadPct: number | null
 }
@@ -72,6 +74,42 @@ export interface PairedScenario {
 export interface BehaviourMean { toolErrors: number; repeatedCalls: number; noActionSteps: number; observationChars: number; compactions: number }
 
 export type Grade = 'improvement' | 'regression' | 'tradeoff' | 'tie' | 'inconclusive'
+
+/**
+ * Reliability, read before anything else: pass^k per arm and the paired
+ * comparison of "reliable on this scenario" between the arms. A component that
+ * makes the agent pass sometimes instead of always has changed something,
+ * whatever it did to the cost.
+ */
+export interface ReliabilityReading {
+  /** Repeats per scenario per arm. */
+  k: number
+  /** Scenarios with all k repeats on both arms: the denominator of everything below. */
+  scenarios: number
+  /** pass^k per arm: share of those scenarios where every repeat passed. */
+  baseline: number
+  candidate: number
+  /** Discordant scenarios: b = candidate reliable where the baseline is not, c = the reverse. */
+  b: number
+  c: number
+  midP: number
+  pWin: number
+  inRope: number
+  /** Unbiased pass^j for j = 1..k per arm, mean over scenarios of C(passes, j) / C(n, j): how fast reliability decays with the bar. */
+  decay: { baseline: number[]; candidate: number[] }
+  reading: 'more-reliable' | 'less-reliable' | 'same' | 'inconclusive'
+}
+
+/** The reading the run was registered for, candidate against baseline. */
+export interface NorthStarReading {
+  metric: NorthStar
+  /** better / worse are read from the candidate's side: cheaper, fewer steps, preferred by the judge. */
+  reading: 'better' | 'worse' | 'same' | 'inconclusive' | 'none'
+  /** Interval on the metric's own scale: percent for cost and steps; null for quality (the judge has its own counts). */
+  ci: BootstrapCI | null
+  unit: '%' | 'wins'
+  text: string
+}
 
 export interface ArmSummary {
   arm: string
@@ -140,6 +178,10 @@ export interface CandidateReport {
   holdoutGap: { dev: number; holdout: number; devScenarios: number; holdoutScenarios: number } | null
   /** CUPED-adjusted cost Δ% using each scenario's archived baseline cost as covariate; reported beside, never instead of, the raw interval. */
   cuped: { theta: number; varianceRemoved: number; ci: BootstrapCI; n: number } | null
+  /** Read first, whatever the north star: pass^k per arm and the paired comparison of reliability. */
+  reliability: ReliabilityReading
+  /** The reading this run was registered for (plan.northStar, default cost). */
+  northStar: NorthStarReading
   /** Blinded pairwise judge summary when `dsh-eval judge` has been run. */
   judge?: { model: string; models?: string[]; panelAgreement?: number; wins: number; losses: number; ties: number; midP: number; pWin: number; inconsistentShare: number; usd: number; humanAgreement: { n: number; agree: number; kappa: number | null } | null; sameFamilyAsArms?: boolean; longerWinsShare?: number | null; interJudgeKappa?: number | null; lengthBalancedWinRate?: number | null; equalLengthWinRate?: { rate: number; slope: number; n: number } | null; effectiveJudges?: { k: number; rhoBar: number; nEff: number; basis: 'error' | 'vote' } | null; abstention?: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number } | null; anchors?: { n: number; humanAgreement: number; stability: number | null; comparedWithPrevious: number; attribution: 'none' | 'judge' } | null }
   /** Absolute judge grades with PPI++ rectification against human annotations, when `dsh-eval judge --mode absolute` has been run. */
@@ -192,6 +234,37 @@ function failureReasons(rows: RunLedger[]): Array<{ reason: string; n: number }>
     counts.set(reason, (counts.get(reason) ?? 0) + 1)
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, n]) => ({ reason, n }))
+}
+
+/** One word from the gate, the correctness improvements and the north-star reading; the same rule wherever a grade is made. */
+export function gradeOf(gate: CandidateReport['gate'], improvements: number, ns: NorthStarReading['reading']): Grade {
+  if (gate === 'regressions') return 'regression'
+  if (gate === 'incomplete') return 'inconclusive'
+  if (improvements > 0 && (ns === 'better' || ns === 'same' || ns === 'none')) return 'improvement'
+  if (improvements > 0 && ns === 'worse') return 'tradeoff'
+  if (ns === 'better') return 'improvement'
+  if (ns === 'worse') return 'regression'
+  if (ns === 'same') return 'tie'
+  return 'inconclusive'
+}
+
+/**
+ * The quality reading, made once the blinded judge has run: the candidate's wins
+ * against its losses over the decided pairs, read with the same rules as the
+ * other north stars (five decided pairs, mid-p at alpha, equivalence by posterior).
+ */
+export function qualityReading(c: CandidateReport, wins: number, losses: number, ties: number, minScenarios = 5): NorthStarReading {
+  const decided = wins + losses
+  const stat = mcnemar(wins, losses)
+  const counts = `${wins} won / ${losses} lost / ${ties} tied`
+  let reading: NorthStarReading['reading']
+  let text: string
+  if (decided + ties === 0) { reading = 'none'; text = 'The judge compared no pairs.' }
+  else if (decided < minScenarios) { reading = 'inconclusive'; text = `Only ${decided} decided pair${decided === 1 ? '' : 's'} (${counts}); fewer than ${minScenarios} cannot support a preference.` }
+  else if (stat.midP < c.alpha) { reading = wins > losses ? 'better' : 'worse'; text = `The judge prefers the ${wins > losses ? 'candidate' : 'baseline'} (${counts}, mid-p ${stat.midP.toFixed(3)}, P(candidate) ${(stat.pWin * 100).toFixed(0)}%).` }
+  else if (stat.inRope >= 0.95) { reading = 'same'; text = `No preference: the judge splits evenly (${counts}).` }
+  else { reading = 'inconclusive'; text = `Preference inconclusive (${counts}, mid-p ${stat.midP.toFixed(2)}); more pairs needed.` }
+  return { metric: 'quality', reading, ci: null, unit: 'wins', text }
 }
 
 /** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
@@ -319,6 +392,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
   const peak: number[] = []
   const off: number[] = []
   const steps: number[] = []
+  const stepsPct: number[] = []
   for (const rep of Object.keys(b.byRep).map(Number)) {
     const x = b.byRep[rep]
     const y = c.byRep[rep]
@@ -328,6 +402,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     peak.push(y.usdPeak - x.usdPeak)
     off.push(y.usdOffpeak - x.usdOffpeak)
     steps.push(y.steps - x.steps)
+    if (x.steps > 0) stepsPct.push((y.steps - x.steps) / x.steps * 100)
   }
   const passedBaseline = Object.values(b.byRep).filter(r => r.ok).map(r => r.usd)
   const spread = passedBaseline.length >= 2 && mean(passedBaseline) > 0 ? (Math.max(...passedBaseline) - Math.min(...passedBaseline)) / mean(passedBaseline) * 100 : null
@@ -349,6 +424,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
     costDiffPeakUsd: peak.length ? mean(peak) : null,
     costDiffOffpeakUsd: off.length ? mean(off) : null,
     stepsDiff: steps.length ? mean(steps) : null,
+    stepsDiffPct: stepsPct.length ? mean(stepsPct) : null,
     baselineSpreadPct: spread,
   }
 }
@@ -463,16 +539,58 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     if (options.probe?.verdict === 'differs') servedMismatch.unshift(`the route's answer distribution differs from the enrolled reference for ${options.probe.model} (probe distance ${options.probe.distance.toFixed(3)}, p = ${options.probe.p.toFixed(3)})`)
     let servedBlocked = false
     if (servedMismatch.length > 0 && costReading !== 'none') { costReading = 'inconclusive'; servedBlocked = true }
-    let grade: Grade
-    if (gate === 'regressions') grade = 'regression'
-    else if (gate === 'incomplete') grade = 'inconclusive'
-    else if (improvements.length > 0 && (costReading === 'cheaper' || costReading === 'equivalent' || costReading === 'none')) grade = 'improvement'
-    else if (improvements.length > 0 && costReading === 'more-expensive') grade = 'tradeoff'
-    else if (costReading === 'cheaper') grade = 'improvement'
-    else if (costReading === 'more-expensive') grade = 'regression'
-    else if (costReading === 'equivalent') grade = 'tie'
-    else grade = 'inconclusive'
-    if (gate === 'regressions') verdict = `REGRESSION on ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} (${regressions.join(', ')}); cost is not compared until this is fixed.`
+    // Reliability: pass^k per arm over the scenarios with complete repeats on both sides, and the paired
+    // comparison of "reliable here" — the same McNemar / Beta machinery as the per-trial pairing, one unit per scenario.
+    const k = plan.repeats
+    const withK = pairs.filter(p => p.baseline.n >= k && p.candidate.n >= k)
+    const reliableB = (p: PairedScenario): boolean => p.baseline.passes === p.baseline.n
+    const reliableC = (p: PairedScenario): boolean => p.candidate.passes === p.candidate.n
+    let relB = 0
+    let relC = 0
+    for (const p of withK) { if (reliableC(p) && !reliableB(p)) relB += 1; if (reliableB(p) && !reliableC(p)) relC += 1 }
+    const relStat = mcnemar(relB, relC)
+    const decay = (side: 'baseline' | 'candidate'): number[] => Array.from({ length: k }, (_, i) => withK.length ? mean(withK.map(p => passPow(p[side].passes, p[side].n, i + 1))) : 0)
+    const reliability: ReliabilityReading = {
+      k,
+      scenarios: withK.length,
+      baseline: withK.length ? withK.filter(reliableB).length / withK.length : 0,
+      candidate: withK.length ? withK.filter(reliableC).length / withK.length : 0,
+      b: relB,
+      c: relC,
+      midP: relStat.midP,
+      pWin: relStat.pWin,
+      inRope: relStat.inRope,
+      decay: { baseline: decay('baseline'), candidate: decay('candidate') },
+      reading: withK.length < minScenarios ? 'inconclusive'
+        : relB + relC === 0 ? 'same'
+        : relStat.midP < alpha ? (relB > relC ? 'more-reliable' : 'less-reliable')
+        : relStat.inRope >= 0.95 ? 'same'
+        : 'inconclusive',
+    }
+    // The north star: the reading the run was registered for. Cost reuses the reading above; efficiency
+    // applies the same rules to steps on the pairs where both arms passed; quality needs the judge.
+    const metric: NorthStar = plan.northStar ?? 'cost'
+    let northStar: NorthStarReading
+    if (metric === 'cost') {
+      northStar = { metric, reading: costReading === 'cheaper' ? 'better' : costReading === 'more-expensive' ? 'worse' : costReading === 'equivalent' ? 'same' : costReading, ci: costPctCI, unit: '%', text: '' }
+    } else if (metric === 'efficiency') {
+      const withSteps = comparable.filter(p => p.stepsDiffPct !== null)
+      const stepsCI = smallSampleCI(withSteps.map(p => p.stepsDiffPct!), 2000, 42, alpha)
+      const stepsText = `${fmtPct(stepsCI.mean)} steps, 95% CI ${fmtPct(stepsCI.lo)} to ${fmtPct(stepsCI.hi)}, ${withSteps.length} scenario${withSteps.length === 1 ? '' : 's'}`
+      let reading: NorthStarReading['reading']
+      let text: string
+      if (withSteps.length === 0) { reading = 'none'; text = 'No scenario where both arms passed; nothing to compare on steps.' }
+      else if (withSteps.length < minScenarios) { reading = 'inconclusive'; text = withSteps.length < 2 ? `Single comparable scenario: ${fmtPct(stepsCI.mean)} on steps, no interval possible; add scenarios or repeats before reading this as an effect.` : `Only ${withSteps.length} comparable scenarios (${stepsText}); fewer than ${minScenarios} scenarios cannot support a direction.` }
+      else if (stepsCI.significant) { reading = stepsCI.mean < 0 ? 'better' : 'worse'; text = `${stepsCI.mean < 0 ? 'Fewer' : 'More'} steps by ${fmtPct(Math.abs(stepsCI.mean))} (${stepsText}), no regressions.` }
+      else if (stepsCI.lo > -sesoi && stepsCI.hi < sesoi) { reading = 'same'; text = `Steps equivalent within ±${sesoi}% (${stepsText}), no regressions.` }
+      else { reading = 'inconclusive'; text = `Step difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${stepsText}); more repeats or scenarios needed.` }
+      northStar = { metric, reading, ci: stepsCI, unit: '%', text }
+    } else {
+      // Quality is the blinded judge's preference; it is attached after `dsh-eval judge` runs and read there (see judgeReading).
+      northStar = { metric, reading: 'none', ci: null, unit: 'wins', text: 'Quality is read from the blinded judge: run `dsh-eval judge <run>` to make this reading.' }
+    }
+    let grade: Grade = gradeOf(gate, improvements.length, northStar.reading)
+    if (gate === 'regressions') verdict = `REGRESSION on ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} (${regressions.join(', ')}); ${metric} is not compared until this is fixed.`
     else if (gate === 'incomplete') verdict = 'Incomplete: not every scenario has all repeats yet.'
     else if (costReading === 'none') verdict = 'No scenario where both arms passed; nothing to compare on cost.'
     else if (costReading === 'equivalent') verdict = `Cost equivalent within ±${sesoi}% (${ciText}), no regressions.${gains}`
@@ -483,6 +601,8 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     else if (costReading === 'inconclusive' && insideNoise) verdict = `Cost interval (${ciText}) reaches into the A/A noise band of ±${noiseFloor!.meanAbsPct.toFixed(1)}% measured on this baseline; not read as a real difference.${gains}`
     else if (costReading === 'inconclusive') verdict = `Cost difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${ciText}); more repeats or scenarios needed.${gains}`
     else verdict = `${costReading === 'cheaper' ? 'Cheaper' : 'More expensive'} by ${fmtPct(Math.abs(costPctCI.mean))} (${ciText}), no regressions.${gains}`
+    if (metric !== 'cost' && gate === 'pass') verdict = `${northStar.text}${gains}`
+    northStar.text = metric === 'cost' ? verdict : northStar.text
     // Confirmation rule: a pass-rate direction found on the dev pool that reverses on a sealed pool of at least three scenarios is declined, not reported.
     if (holdoutGap !== null && holdoutGap.holdoutScenarios >= 3 && Math.abs(holdoutGap.dev) >= 10 && Math.sign(holdoutGap.dev) !== Math.sign(holdoutGap.holdout) && grade !== 'regression') {
       grade = 'inconclusive'
@@ -513,6 +633,8 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       costReading,
       passDiffCI,
       grade,
+      reliability,
+      northStar,
       flaky,
       mdePct,
       noiseFloor,
@@ -635,6 +757,10 @@ export function renderMarkdown(report: Report): string {
     lines.push(`**${c.verdict}**`)
     lines.push('')
     lines.push(`Grade: **${c.grade}** · Δ pass ${fmtPct(c.passDiffCI.mean)} pp (${((1 - c.alpha) * 100).toFixed(c.alpha < 0.05 ? 1 : 0)}% CI ${fmtPct(c.passDiffCI.lo)} to ${fmtPct(c.passDiffCI.hi)})${c.flaky.length ? ` · flaky: ${c.flaky.join(', ')}` : ''}${c.mdePct !== null ? ` · MDE ≈ ±${c.mdePct.toFixed(0)}%` : ''}`)
+    lines.push('')
+    lines.push(`Reliability (pass^${c.reliability.k} over ${c.reliability.scenarios} scenarios with complete repeats): baseline ${(c.reliability.baseline * 100).toFixed(0)}% → candidate ${(c.reliability.candidate * 100).toFixed(0)}% · **${c.reliability.reading}** · reliable on one side only: ${c.reliability.b} for the candidate, ${c.reliability.c} for the baseline (mid-p ${c.reliability.midP.toFixed(2)}, P(candidate) ${(c.reliability.pWin * 100).toFixed(0)}%) · decay baseline ${c.reliability.decay.baseline.map(v => (v * 100).toFixed(0) + '%').join(' → ')}, candidate ${c.reliability.decay.candidate.map(v => (v * 100).toFixed(0) + '%').join(' → ')}`)
+    lines.push('')
+    lines.push(`North star (${c.northStar.metric}): **${c.northStar.reading}** — ${c.northStar.text}`)
     lines.push('')
     lines.push(`Pass: baseline ${c.passBaseline}/${c.runsBaseline}, candidate ${c.passCandidate}/${c.runsCandidate} · pass^k ${(c.summary.baseline.passAllK * 100).toFixed(0)}% → ${(c.summary.candidate.passAllK * 100).toFixed(0)}% · discordant pairs: ${c.wins} won / ${c.losses} lost (McNemar mid-p ${c.paired.midP.toFixed(2)}, P(candidate wins a discordant pair) ${(c.paired.pWin * 100).toFixed(0)}%, ${(c.paired.inRope * 100).toFixed(0)}% of the posterior within ±0.1 of even)`)
     lines.push('')

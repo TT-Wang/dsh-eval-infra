@@ -222,12 +222,13 @@ function Forest({ c }: { c: CandidateReport }) {
   const W = 1000
   const ROW = 46
   const PAD_BOTTOM = 26
-  const lim = Math.max(20, Math.abs(c.costPctCI.lo), Math.abs(c.costPctCI.hi), Math.abs(c.noiseFloor?.lo ?? 0), Math.abs(c.noiseFloor?.hi ?? 0), c.mdePct ?? 0) * 1.15
+  const lim = Math.max(20, Math.abs(c.costPctCI.lo), Math.abs(c.costPctCI.hi), Math.abs(c.northStar?.ci?.lo ?? 0), Math.abs(c.northStar?.ci?.hi ?? 0), Math.abs(c.noiseFloor?.lo ?? 0), Math.abs(c.noiseFloor?.hi ?? 0), c.mdePct ?? 0) * 1.15
   const x = (v: number): number => W / 2 + (v / lim) * (W / 2 - 24)
-  const rows: Array<{ label: string; lo: number; hi: number; mean: number; tone: string }> = [
-    { label: 'Δ cost % (paired)', lo: c.costPctCI.lo, hi: c.costPctCI.hi, mean: c.costPctCI.mean, tone: c.costReading === 'cheaper' ? 'good' : c.costReading === 'more-expensive' ? 'bad' : 'neutral' },
-    { label: 'Δ pass (pp)', lo: c.passDiffCI.lo, hi: c.passDiffCI.hi, mean: c.passDiffCI.mean, tone: c.passDiffCI.mean > 0 ? 'good' : c.passDiffCI.mean < 0 ? 'bad' : 'neutral' },
-  ]
+  const ns: CandidateReport['northStar'] = c.northStar ?? { metric: 'cost', reading: 'inconclusive', ci: c.costPctCI, unit: '%', text: '' }
+  const rows: Array<{ label: string; lo: number; hi: number; mean: number; tone: string }> = []
+  if (ns.ci !== null) rows.push({ label: `Δ ${ns.metric === 'cost' ? 'cost' : 'steps'} % (paired) · north star`, lo: ns.ci.lo, hi: ns.ci.hi, mean: ns.ci.mean, tone: ns.reading === 'better' ? 'good' : ns.reading === 'worse' ? 'bad' : 'neutral' })
+  if (ns.metric !== 'cost') rows.push({ label: 'Δ cost % (paired)', lo: c.costPctCI.lo, hi: c.costPctCI.hi, mean: c.costPctCI.mean, tone: c.costReading === 'cheaper' ? 'good' : c.costReading === 'more-expensive' ? 'bad' : 'neutral' })
+  rows.push({ label: 'Δ pass (pp)', lo: c.passDiffCI.lo, hi: c.passDiffCI.hi, mean: c.passDiffCI.mean, tone: c.passDiffCI.mean > 0 ? 'good' : c.passDiffCI.mean < 0 ? 'bad' : 'neutral' })
   if (c.noiseFloor) rows.push({ label: `A/A floor · ${c.noiseFloor.runId.slice(0, 15)}`, lo: c.noiseFloor.lo, hi: c.noiseFloor.hi, mean: 0, tone: 'floor' })
   const H = rows.length * ROW + PAD_BOTTOM
   return (
@@ -261,13 +262,37 @@ function Forest({ c }: { c: CandidateReport }) {
 function plainVerdict(c: CandidateReport): string {
   const pct = (x: number): string => `${Math.abs(x).toFixed(0)}%`
   const regressions = c.scenarios.filter(p => p.class === 'regression')
-  if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. Cost is not compared until that is fixed.`
+  const ns: CandidateReport['northStar'] = c.northStar ?? { metric: 'cost', reading: c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading, ci: c.costPctCI, unit: '%', text: c.verdict }
+  const noun = ns.metric === 'cost' ? 'cost' : ns.metric === 'efficiency' ? 'steps' : 'quality'
+  if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. ${noun[0]!.toUpperCase()}${noun.slice(1)} is not compared until that is fixed.`
   if (c.gate === 'incomplete') return `Some trials did not finish, so there is nothing to compare yet.`
-  if (c.costReading === 'cheaper') return `${c.arm} is cheaper by about ${pct(c.costPctCI.mean)} and breaks nothing.`
-  if (c.costReading === 'more-expensive') return `${c.arm} costs about ${pct(c.costPctCI.mean)} more and breaks nothing.`
-  if (c.costReading === 'equivalent') return `No real difference: cost is within ±10% and nothing broke.`
-  if (c.costReading === 'none') return `No scenario where both arms passed, so there is nothing to price.`
-  return `Not enough evidence yet. The measured difference is ${c.costPctCI.mean < 0 ? '−' : '+'}${pct(c.costPctCI.mean)}, but it could as easily be noise.`
+  const rel = c.reliability === undefined ? '' : c.reliability.reading === 'more-reliable' ? ` It is also more reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : c.reliability.reading === 'less-reliable' ? ` But it is less reliable: ${(c.reliability.candidate * 100).toFixed(0)}% of scenarios pass every time, against ${(c.reliability.baseline * 100).toFixed(0)}%.` : ''
+  if (ns.metric === 'quality') {
+    if (ns.reading === 'better') return `The blinded judge prefers ${c.arm}, and it breaks nothing.${rel}`
+    if (ns.reading === 'worse') return `The blinded judge prefers the baseline over ${c.arm}.${rel}`
+    if (ns.reading === 'same') return `The judge has no preference, and nothing broke.${rel}`
+    if (ns.reading === 'none') return `Quality is read from the blinded judge, which has not run yet.${rel}`
+    return `Not enough judged pairs to state a preference yet.${rel}`
+  }
+  const v = ns.ci?.mean ?? 0
+  if (ns.reading === 'better') return `${c.arm} ${ns.metric === 'cost' ? 'is cheaper' : 'takes fewer steps'} by about ${pct(v)} and breaks nothing.${rel}`
+  if (ns.reading === 'worse') return `${c.arm} ${ns.metric === 'cost' ? 'costs' : 'takes'} about ${pct(v)} more ${noun} and breaks nothing.${rel}`
+  if (ns.reading === 'same') return `No real difference: ${noun} within ±10% and nothing broke.${rel}`
+  if (ns.reading === 'none') return `No scenario where both arms passed, so there is nothing to compare on ${noun}.${rel}`
+  return `Not enough evidence yet. The measured difference in ${noun} is ${v < 0 ? '−' : '+'}${pct(v)}, but it could as easily be noise.${rel}`
+}
+
+/** pass^1 … pass^k for both arms, as two small lines: how fast each arm's reliability falls as the bar rises. */
+function Decay({ r }: { r: CandidateReport['reliability'] }) {
+  const W = 72
+  const H = 20
+  const pts = (ys: number[]): string => ys.map((y, i) => `${(ys.length === 1 ? W / 2 : (i / (ys.length - 1)) * (W - 4) + 2).toFixed(1)},${(H - 2 - y * (H - 4)).toFixed(1)}`).join(' ')
+  return (
+    <svg class="decay" viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={`pass^1 to pass^${r.k}: baseline ${r.decay.baseline.map(v => (v * 100).toFixed(0) + '%').join(', ')}; candidate ${r.decay.candidate.map(v => (v * 100).toFixed(0) + '%').join(', ')}`}>
+      <polyline points={pts(r.decay.baseline)} class="base" />
+      <polyline points={pts(r.decay.candidate)} class="cand" />
+    </svg>
+  )
 }
 
 /** The single most useful thing to do next, with the command that does it. */
@@ -275,7 +300,9 @@ function nextStep(c: CandidateReport, runId: string, baseline: string): { text: 
   const comparable = c.scenarios.filter(p => p.costDiffPct !== null).length
   const regression = c.scenarios.find(p => p.class === 'regression')
   if (regression) return { text: `Look at where the two arms diverge on ${regression.scenario}, then confirm the failure is real and not luck.`, cmd: `dsh-eval rerun ${runId} ${regression.scenario} --fork` }
-  if (c.costReading === 'cheaper' || c.costReading === 'more-expensive' || c.costReading === 'equivalent') return { text: 'This result is usable. Bundle it if someone else needs to check it.', cmd: `dsh-eval publish ${runId}` }
+  const nsReading = c.northStar?.reading ?? (c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading)
+  if (c.northStar?.metric === 'quality' && nsReading === 'none') return { text: 'Quality is read from the blinded judge. Run it on this run.', cmd: `dsh-eval judge ${runId}` }
+  if (nsReading === 'better' || nsReading === 'worse' || nsReading === 'same') return { text: 'This result is usable. Bundle it if someone else needs to check it.', cmd: `dsh-eval publish ${runId}` }
   if (comparable > 0 && comparable < 5) return { text: `Only ${comparable} scenario${comparable === 1 ? '' : 's'} could be compared; five is the minimum before any direction is stated. Run more of the library.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' 'x*' --repeats 3` }
   if (c.noiseFloor === null) return { text: 'Measure what "no change" looks like on your setup first; every direction is judged against that floor.', cmd: `dsh-eval run --baseline ${baseline} --aa 'f*' --repeats 3` }
   return { text: `This design can only detect a difference of about ±${c.mdePct === null ? '?' : c.mdePct.toFixed(0)}%. Add repeats or scenarios to see smaller ones.`, cmd: `dsh-eval run --baseline ${baseline} --arm ${c.arm} 'f*' 'p*' --repeats 5` }
@@ -288,11 +315,30 @@ function Verdict({ c, baseline, runId }: { c: CandidateReport; baseline: string;
     <div class={`verdict ${GRADE_TONE[c.grade]}`}>
       <div class="verdict-head"><span class={`grade ${c.grade}`}>{c.grade}</span> <b>{c.arm}</b> vs {baseline}</div>
       <p class="verdict-text">{plainVerdict(c)}</p>
-      <p class="muted small" style="margin:-6px 0 10px">{c.verdict}</p>
+      {c.reliability === undefined || c.northStar === undefined ? (
+        <p class="muted small">This report was written by an earlier version and carries no reliability or north-star reading. Rebuild it: <code>dsh-eval report {runId}</code></p>
+      ) : (
+      <div class="readings">
+        <div class="reading">
+          <span class="reading-label">Reliability · pass^{c.reliability.k}</span>
+          <b>{(c.reliability.baseline * 100).toFixed(0)}% → {(c.reliability.candidate * 100).toFixed(0)}%</b>
+          <span class={`cls ${c.reliability.reading === 'more-reliable' ? 'improvement' : c.reliability.reading === 'less-reliable' ? 'regression' : c.reliability.reading === 'same' ? 'same' : 'incomplete'}`}>{c.reliability.reading}</span>
+          <Decay r={c.reliability} />
+          <span class="muted small">{c.reliability.scenarios} scenario{c.reliability.scenarios === 1 ? '' : 's'} with all {c.reliability.k} repeats · reliable on one side only: {c.reliability.b} for {c.arm}, {c.reliability.c} for {baseline}</span>
+        </div>
+        <div class="reading">
+          <span class="reading-label">North star · {c.northStar.metric}</span>
+          <b>{c.northStar.ci ? `${fmt.pct(c.northStar.ci.mean)} [${fmt.pct(c.northStar.ci.lo)}, ${fmt.pct(c.northStar.ci.hi)}]` : c.judge ? `${c.judge.wins} / ${c.judge.losses} / ${c.judge.ties}` : '—'}</b>
+          <span class={`cls ${c.northStar.reading === 'better' ? 'improvement' : c.northStar.reading === 'worse' ? 'regression' : c.northStar.reading === 'same' ? 'same' : 'incomplete'}`}>{c.northStar.reading}</span>
+          <span class="muted small">{c.northStar.metric === 'cost' ? 'cost per solved task, paired on scenarios both arms passed' : c.northStar.metric === 'efficiency' ? 'steps per solved task, paired on scenarios both arms passed' : 'blinded pairwise judge preference'}</span>
+        </div>
+      </div>
+      )}
+      <p class="muted small" style="margin:-2px 0 10px">{c.verdict}</p>
       <div class="cards simple">
         <Stat label="scenarios passed" a={`${s.baseline.passes}/${s.baseline.runs}`} b={`${s.candidate.passes}/${s.candidate.runs}`} />
         <Stat label="cost per solved task" a={fmt.usd(s.baseline.usdPerSolved)} b={fmt.usd(s.candidate.usdPerSolved)} />
-        <Stat label="cost difference" a={fmt.pct(c.costPctCI.mean)} b={c.costReading === 'inconclusive' || c.costReading === 'none' ? 'not conclusive' : c.costReading} />
+        <Stat label={`${c.northStar?.metric ?? 'cost'} difference`} a={c.northStar ? (c.northStar.ci ? fmt.pct(c.northStar.ci.mean) : '—') : fmt.pct(c.costPctCI.mean)} b={c.northStar ? (c.northStar.reading === 'inconclusive' || c.northStar.reading === 'none' ? 'not conclusive' : c.northStar.reading) : (c.costReading === 'inconclusive' || c.costReading === 'none' ? 'not conclusive' : c.costReading)} />
       </div>
       <p class="next-step"><b>Next:</b> {step.text}{step.cmd ? <><br /><code>{step.cmd}</code></> : null}</p>
       <details class="fold">

@@ -6,7 +6,7 @@ import { type ProbeVerdict } from './probe.js';
 import { type RunDeps } from './runner.js';
 import { type SelfcheckResult } from './selfcheck.js';
 import { runPaths, type Progress } from './store.js';
-import type { RunLedger, RunPlan, Scenario } from './types.js';
+import type { RunLedger, RunPlan, Scenario, NorthStar } from './types.js';
 export interface RunRequest {
     /** Arm file path, or a name resolved against the project's arms dir. */
     baseline: string;
@@ -63,6 +63,8 @@ export interface RunRequest {
     model?: string;
     /** Reasoning effort for every arm; empty or absent keeps the adapter default. */
     effort?: string;
+    /** The reading the run is about (default cost); reliability is always read first. */
+    northStar?: NorthStar;
 }
 export interface LaunchHooks {
     log?: (line: string) => void;

@@ -21,6 +21,8 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
   // The run's route, the same for both arms; '' effort means the adapter default.
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
+  // Registered before the data: the reading this run is about. Reliability is always read first.
+  const [northStar, setNorthStar] = useState<'cost' | 'efficiency' | 'quality'>('cost')
   const [startedAt, setStartedAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [label, setLabel] = useState('')
@@ -143,7 +145,7 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
       const fork = Number(forkAt)
       const { id } = await api.start({
         baseline, candidates: aa ? [] : activeCandidates, scenarios: [...selected], repeats, concurrency, label: label || undefined, allowMulti, aa,
-        ...route,
+        ...route, northStar,
         ...(sandbox !== 'auto' ? { sandbox } : docker ? { sandbox: 'docker' } : {}),
         ...(dockerRuntime.trim() !== '' ? { dockerRuntime: dockerRuntime.trim() } : {}),
         ...(keepDshSandbox ? { dockerKeepSandbox: true } : {}),
@@ -254,6 +256,16 @@ export function NewRunView({ preset = {} }: { preset?: Record<string, string> })
                 </label>
                 <span class="text-xs text-muted-foreground sm:col-span-2">Both arms run on the same model at the same effort. Only the component under test differs.</span>
               </div>
+
+              <label class="flex flex-col gap-1 max-w-xl">
+                <span class="text-sm font-medium">North star</span>
+                <select class="uk-select" value={northStar} onChange={e => setNorthStar((e.target as HTMLSelectElement).value as 'cost' | 'efficiency' | 'quality')}>
+                  <option value="cost">cost — dollars per solved task</option>
+                  <option value="efficiency">efficiency — steps per solved task</option>
+                  <option value="quality">quality — blinded judge preference (run the judge afterwards)</option>
+                </select>
+                <span class="text-xs text-muted-foreground">The one reading this run is registered for; it is sealed into the receipt before any data comes in. Correctness is a gate and reliability (pass^{repeats}) is read first, whatever you pick here.</span>
+              </label>
 
               <label class="flex flex-col gap-1">
                 <span class="text-sm font-medium">Repeats per scenario, per arm</span>

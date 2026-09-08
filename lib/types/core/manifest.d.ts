@@ -11,6 +11,11 @@ export interface AnalysisContract {
     seed: number;
     gateOrder: string;
     costRule: string;
+    /** The reading the run was registered for (cost / efficiency / quality); absent on receipts issued before this field existed. */
+    northStar?: string;
+    /** Repeats per scenario per arm: the k of pass^k. */
+    k?: number;
+    reliabilityRule?: string;
 }
 export interface RunManifest {
     schema: 'dsh-eval-manifest/1';
@@ -43,6 +48,8 @@ export interface RunReceipt {
         costReading: string;
         grade: string;
         verdict: string;
+        reliability?: string;
+        northStar?: string;
     }>;
     coverage: {
         trials: number;

@@ -213,3 +213,12 @@ details.fold > summary .cls { margin-left: 4px; }
 .feed-row .what { overflow: hidden; text-overflow: ellipsis; }
 .feed-row.muted .what { color: hsl(var(--muted-foreground)); }
 .feed-row.bad .what { color: hsl(var(--destructive)); }
+
+/* The two readings at the top of a report: reliability, then the north star. */
+.readings { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.reading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .95rem; }
+.reading-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: hsl(var(--muted-foreground)); min-width: 11rem; }
+.decay { overflow: visible; }
+.decay polyline { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.decay .base { stroke: hsl(var(--muted-foreground)); opacity: .7; }
+.decay .cand { stroke: hsl(var(--primary)); }

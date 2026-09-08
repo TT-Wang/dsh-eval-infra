@@ -29,7 +29,7 @@ import { toAtif } from './core/atif.js'
 import { evalInfraVersion, tilde } from './core/env.js'
 import type { TraceRow } from './core/ledger.js'
 import { discoverPatterns } from './core/patterns.js'
-import type { RunLedger } from './core/types.js'
+import { NORTH_STARS, type NorthStar, type RunLedger } from './core/types.js'
 
 interface Args {
   command: string
@@ -38,6 +38,12 @@ interface Args {
 }
 
 /** Flags that never take a value, so a following positional (a scenario glob) is not swallowed. */
+/** `--north-star` accepts only the readings the report knows how to make. */
+function parseNorthStar(value: string): NorthStar {
+  if ((NORTH_STARS as string[]).includes(value)) return value as NorthStar
+  throw new LaunchError(`--north-star must be one of ${NORTH_STARS.join(', ')} (got ${value})`, 'usage')
+}
+
 const BOOLEAN_FLAGS = new Set(['aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
 
 export function parseArgs(argv: string[]): Args {
@@ -227,6 +233,7 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
     ...(aa ? { aa: true } : {}),
     ...(num(args.flags['max-usd']) !== undefined ? { maxUsd: num(args.flags['max-usd'])! } : {}),
     ...(args.flags['sequential'] === true ? { sequential: true } : {}),
+    ...(typeof args.flags['north-star'] === 'string' ? { northStar: parseNorthStar(args.flags['north-star']) } : {}),
     ...(args.flags['sandbox'] === 'docker' ? { sandbox: 'docker' as const } : args.flags['sandbox'] === 'host' ? { sandbox: 'host' as const } : {}),
     ...(typeof args.flags['docker-runtime'] === 'string' ? { dockerRuntime: args.flags['docker-runtime'] } : {}),
     ...(args.flags['docker-keep-sandbox'] === true ? { dockerKeepSandbox: true } : {}),

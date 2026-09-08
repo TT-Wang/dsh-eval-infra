@@ -525,3 +525,61 @@ describe('run route', () => {
     expect(applyRoute({ name: 'x', model: 'm', effort: 'e' }, {})).toEqual({ name: 'x', model: 'm', effort: 'e' })
   })
 })
+
+describe('reliability first, then the north star', () => {
+  it('estimates pass^j without bias and reads reliability from the scenarios where only one arm is reliable', async () => {
+    const { passPow } = await import('../src/core/stats.js')
+    expect(passPow(2, 3, 1)).toBeCloseTo(2 / 3, 6)   // pass rate
+    expect(passPow(2, 3, 2)).toBeCloseTo(1 / 3, 6)   // one of the three pairs is all-pass
+    expect(passPow(2, 3, 3)).toBe(0)                 // not every repeat passed
+    expect(passPow(3, 3, 3)).toBe(1)
+    const { buildReport } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, rep: number, ok: boolean, usd = 1, steps = 10) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep, order: 0, startedAt: '2026-09-05T00:00:00Z', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok, detail: ok ? 'ok' : 'wrong' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const scenarios = ['s1', 's2', 's3', 's4', 's5', 's6']
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'base' }, candidates: [{ name: 'cand' }], scenarios, repeats: 3, concurrency: 1, scenarioRoot: '' }
+    // The baseline passes two of three repeats everywhere (flaky); the candidate passes all three everywhere.
+    const ledgers = scenarios.flatMap(s => [1, 2, 3].flatMap(rep => [mk(s, 'base', rep, rep !== 3), mk(s, 'cand', rep, true)]))
+    const r = buildReport(plan, ledgers).candidates[0]!
+    expect(r.reliability).toMatchObject({ k: 3, scenarios: 6, baseline: 0, candidate: 1, b: 6, c: 0, reading: 'more-reliable' })
+    expect(r.reliability.decay.baseline.map(v => Number(v.toFixed(3)))).toEqual([0.667, 0.333, 0])
+    expect(r.reliability.decay.candidate).toEqual([1, 1, 1])
+    // No regression: the baseline's third repeat failing where the candidate passes is an improvement, not a break.
+    expect(r.gate).toBe('pass')
+    // Identical arms read "same" — no scenario is reliable on one side only.
+    const same = buildReport(plan, scenarios.flatMap(s => [1, 2, 3].flatMap(rep => [mk(s, 'base', rep, true), mk(s, 'cand', rep, true)]))).candidates[0]!
+    expect(same.reliability).toMatchObject({ b: 0, c: 0, reading: 'same' })
+    // Fewer than five complete scenarios cannot support a direction.
+    const few = buildReport({ ...plan, scenarios: scenarios.slice(0, 3) }, ledgers.filter(l => scenarios.slice(0, 3).includes(l.scenario))).candidates[0]!
+    expect(few.reliability.reading).toBe('inconclusive')
+  })
+
+  it('reads the north star the plan registered: efficiency on steps, cost by default, and grades from it', async () => {
+    const { buildReport } = await import('../src/core/report.js')
+    const mk = (scenario: string, arm: string, rep: number, usd: number, steps: number) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario, arm, rep, order: 0, startedAt: '2026-09-05T00:00:00Z', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps, turns: 1, usd, usdPeak: usd, usdOffpeak: usd, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: 'ok' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 1, workdir: '', eventsFile: '', traceFile: '',
+    })
+    const scenarios = ['s1', 's2', 's3', 's4', 's5', 's6']
+    // Same cost, the candidate takes 40% fewer steps on every scenario (with a little spread so an interval exists).
+    const ledgers = scenarios.flatMap((s, i) => [1, 2].flatMap(rep => [mk(s, 'base', rep, 1, 20 + i), mk(s, 'cand', rep, 1, Math.round((20 + i) * 0.6) + (rep === 1 ? 0 : 1))]))
+    const base = { id: 'r', createdAt: '', baseline: { name: 'base' }, candidates: [{ name: 'cand' }], scenarios, repeats: 2, concurrency: 1, scenarioRoot: '' }
+    const cost = buildReport(base, ledgers).candidates[0]!
+    expect(cost.northStar.metric).toBe('cost')
+    expect(cost.northStar.reading).toBe('same')          // identical cost reads equivalent
+    expect(cost.grade).toBe('tie')
+    const eff = buildReport({ ...base, northStar: 'efficiency' as const }, ledgers).candidates[0]!
+    expect(eff.northStar.metric).toBe('efficiency')
+    expect(eff.northStar.reading).toBe('better')
+    expect(eff.northStar.ci!.mean).toBeLessThan(-30)
+    expect(eff.grade).toBe('improvement')
+    expect(eff.verdict).toMatch(/^Fewer steps by/)
+    expect(eff.reliability.reading).toBe('same')
+    // quality needs the judge; without one the reading is "none" and the grade does not pretend otherwise
+    const q = buildReport({ ...base, northStar: 'quality' as const }, ledgers).candidates[0]!
+    expect(q.northStar).toMatchObject({ metric: 'quality', reading: 'none' })
+    expect(q.grade).toBe('inconclusive')
+  })
+})

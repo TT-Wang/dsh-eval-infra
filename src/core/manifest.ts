@@ -23,6 +23,11 @@ export interface AnalysisContract {
   seed: number
   gateOrder: string
   costRule: string
+  /** The reading the run was registered for (cost / efficiency / quality); absent on receipts issued before this field existed. */
+  northStar?: string
+  /** Repeats per scenario per arm: the k of pass^k. */
+  k?: number
+  reliabilityRule?: string
 }
 
 export interface RunManifest {
@@ -46,7 +51,7 @@ export interface RunReceipt {
   issuedAt: string
   evidenceSha: string
   contract: AnalysisContract
-  claims: Array<{ arm: string; gate: string; costReading: string; grade: string; verdict: string }>
+  claims: Array<{ arm: string; gate: string; costReading: string; grade: string; verdict: string; reliability?: string; northStar?: string }>
   coverage: { trials: number; scenarios: number; repeats: number; arms: number; reconciled: number; metered: number; unrun: number; errors: number }
   environment: { dshVersion?: string; dshRevision?: string; evalInfraVersion?: string; sandbox?: string; composedTreeSha?: Record<string, string> }
   publicKey: string

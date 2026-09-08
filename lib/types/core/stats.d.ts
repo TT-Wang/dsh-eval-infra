@@ -81,6 +81,12 @@ export declare function mcnemar(b: number, c: number, ropeHalfWidth?: number): {
  * an effect of the observed size; q ≪ 1 means "inconclusive" is about the
  * design, not the effect.
  */
+/**
+ * Unbiased pass^j from n repeats of which `passes` succeeded: the share of the
+ * C(n, j) j-subsets that are all passes, C(passes, j) / C(n, j) (τ-bench's
+ * estimator). pass^1 is the pass rate; pass^n is 1 only when every repeat passed.
+ */
+export declare function passPow(passes: number, n: number, j: number): number;
 export declare function resolution(values: number[]): {
     nStar: number | null;
     q: number | null;
