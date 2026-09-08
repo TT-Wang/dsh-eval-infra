@@ -1,6 +1,6 @@
 import { prepareArms, type ArmDiff } from './plan.js';
 import { type Project } from './project.js';
-import { type NoiseFloor, type Report } from './report.js';
+import { buildReport, type NoiseFloor, type Report } from './report.js';
 import { type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js';
 import { type ProbeVerdict } from './probe.js';
 import { type RunDeps } from './runner.js';
@@ -158,10 +158,26 @@ export declare function sealAndIssue(project: Project, paths: ReturnType<typeof 
  * own evidence is incomplete (unrun trials, errors, or usage that never
  * reconciled); PASS when the signed claims recompute from intact evidence.
  */
-export declare function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null): {
+export declare function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null, trustedKeys?: string[]): {
     status: ReceiptStatus;
     reason: string;
 };
+/** The archive-derived inputs a run's readings use, pinned in the run directory (`context.json`) as evidence. */
+export interface RunContext {
+    schema: 'dsh-eval-context/1';
+    writtenAt: string;
+    noiseFloors: Record<string, NoiseFloor>;
+    priorBaselineUsd: Record<string, number>;
+    drift: import('./drift.js').DriftResult | null;
+    holdout: string[];
+}
+export declare function writeRunContext(project: Project, plan: RunPlan, paths: ReturnType<typeof runPaths>, scenarios: Scenario[]): RunContext;
+export declare function readRunContext(paths: ReturnType<typeof runPaths>): RunContext | null;
+/**
+ * Report options for a run: the pinned context when the run has one (every run sealed since context pinning), else
+ * the live archive (runs from before it, and runs still in flight).
+ */
+export declare function reportOptionsFor(project: Project, plan: RunPlan, paths: ReturnType<typeof runPaths>): Parameters<typeof buildReport>[2];
 export declare function probeOf(paths: ReturnType<typeof runPaths>): {
     probe?: ProbeVerdict;
 };
@@ -251,11 +267,22 @@ export declare function rerunScenario(project: Project, runId: string, scenario:
     log?: (line: string) => void;
     hooks?: LaunchHooks;
 }): Promise<RerunResult>;
+/**
+ * The receipt keys this verifier trusts: the project's own signing key (a run made here is checked against the key that
+ * made it), plus any PEM files named in DSH_EVAL_TRUSTED_KEYS (comma-separated) or passed by the caller (`verify --key`).
+ */
+export declare function trustedReceiptKeys(project: Project, extra?: string[]): string[];
+export interface VerifyOptions {
+    /** Extra trusted public keys: PEM text or paths to PEM files. */
+    keys?: string[];
+}
 /** Verify a run directory that lives anywhere (a published bundle): hashes plus report re-derivation. */
-export declare function verifyRunDir(project: Project, dir: string): VerifyResult;
+export declare function verifyRunDir(project: Project, dir: string, options?: VerifyOptions): VerifyResult;
 export declare function rebuildReport(project: Project, id: string): Report;
 /** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
-export declare function verifyRunIntegrity(project: Project, id: string): VerifyResult;
+export declare function verifyRunIntegrity(project: Project, id: string, options?: VerifyOptions): VerifyResult;
+/** Re-seal a finished run after a file the report derives from was added or changed (judge, annotations, rerun), and re-issue its receipt. */
+export declare function resealRun(project: Project, id: string): void;
 /** Archived human-labelled trials with judge artifacts, newest first, for the judge drift check. */
 export declare function collectAnchors(project: Project, exceptRunId: string, limit?: number): Array<{
     key: string;

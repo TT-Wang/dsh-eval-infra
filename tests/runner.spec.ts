@@ -192,8 +192,8 @@ describe('runner + ledger + report', () => {
   it('sequential mode stops early once the paired sequences decide, and reports unrun scenarios as not run', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
     const { scenarios } = listScenarios(FIXTURES, { names: ['t1*'] })
-    // sixteen copies of the same scenario under different names → a pool where the candidate is always 40% cheaper
-    const pool = Array.from({ length: 16 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
+    // thirty copies of the same scenario under different names → a pool where the candidate is always 40% cheaper
+    const pool = Array.from({ length: 30 }, (_, i) => ({ ...scenarios[0]!, name: `t1_copy${i}` }))
     const plan = makePlan(root, { repeats: 1, concurrency: 1, scenarios: pool.map(s => s.name) })
     const paths = runPaths(root, plan.id)
     writeJsonAtomic(paths.plan, plan)
@@ -207,10 +207,10 @@ describe('runner + ledger + report', () => {
     })
     expect(progress.status).toBe('done')
     expect(progress.stoppedEarly).toBeDefined()
-    expect(progress.stoppedEarly!.after).toBeLessThan(16)
+    expect(progress.stoppedEarly!.after).toBeLessThan(30)
     expect(progress.stoppedEarly!.after).toBeGreaterThanOrEqual(3)
     const report = buildReport(plan, readLedgers(paths))
-    expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(16 - progress.stoppedEarly!.after)
+    expect(report.candidates[0]!.scenarios.filter(p => p.class === 'unrun').length).toBe(30 - progress.stoppedEarly!.after)
     expect(report.candidates[0]!.gate).toBe('pass')
     // the reliability sequence is part of every decision (both arms always pass here, so it sits on 1/2)
     expect(reliabilitySeqs.at(-1)).not.toBeNull()
@@ -407,5 +407,29 @@ describe('replay provenance and per-trial cap', () => {
     expect(cand.verdict?.detail).toContain('spend cap')
     const base = ledgers.find(l => l.arm === 'base')!
     expect(base.capped ?? null).toBeNull()
+  })
+})
+
+describe('pair dispatch under concurrency (H6)', () => {
+  it('with two workers the two arms of a pair start back to back, alternating who goes first by repeat', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-test-')); tmp.push(root)
+    const plan = makePlan(root, { repeats: 4, concurrency: 2 })
+    const paths = runPaths(root, plan.id)
+    writeJsonAtomic(paths.plan, plan)
+    const { scenarios } = listScenarios(FIXTURES, { names: plan.scenarios })
+    const arms = [resolveArm(plan.baseline, paths.arms), ...plan.candidates.map(c => resolveArm(c, paths.arms))]
+    const starts: Array<{ scenario: string; arm: string; rep: number }> = []
+    const inner = scriptedDriverFactory()
+    await executeRun(plan, scenarios, arms, { driverFactory: (i) => { starts.push({ scenario: i.scenario.name, arm: i.arm.name, rep: i.rep }); return inner(i) }, evalHome: join(root, 'home'), paths, env: {}, workRoot: join(root, 'work') })
+    // every (scenario, rep) pair occupies two consecutive start slots: the two arms run side by side, never a pair apart
+    for (let i = 0; i < starts.length; i += 2) {
+      const [a, b] = [starts[i]!, starts[i + 1]!]
+      expect(a.scenario).toBe(b.scenario)
+      expect(a.rep).toBe(b.rep)
+      expect(a.arm).not.toBe(b.arm)
+    }
+    // and the dispatch order alternates which arm is handed out first by repeat (exact when one worker runs them)
+    const planned = planJobs(scenarios, arms, plan.repeats)
+    for (let i = 0; i < planned.length; i += 2) expect(planned[i]!.arm.name).toBe(planned[i]!.rep % 2 === 1 ? plan.baseline.name : plan.candidates[0]!.name)
   })
 })

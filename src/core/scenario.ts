@@ -99,6 +99,23 @@ export interface PythonRunOptions {
   env?: Record<string, string>
 }
 
+/**
+ * The environment scenario code (setup, verify, oracle) runs with: what a Python process needs to find its
+ * interpreter, packages, temp dir, proxy and Docker (host-side benchmark verifiers drive `docker`), and the
+ * DSH_EVAL_* variables the runner sets — never the host's secrets. Anything whose name says key, token,
+ * secret or password is dropped whatever else it matches.
+ */
+export function scenarioProcessEnv(base: Record<string, string | undefined> = process.env): Record<string, string> {
+  const keep = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|LANG|LANGUAGE|LC_[A-Z_]+|TZ|TMPDIR|TMP|TEMP|PWD|PYTHON[A-Z_]*|VIRTUAL_ENV|CONDA_[A-Z_]+|UV_[A-Z_]+|PIP_[A-Z_]+|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|DOCKER_HOST|DOCKER_CONFIG|DOCKER_CONTEXT|DOCKER_TLS_VERIFY|DOCKER_CERT_PATH|DOCKER_DEFAULT_PLATFORM|(HTTP|HTTPS|ALL|NO|FTP)_PROXY|(http|https|all|no|ftp)_proxy|DSH_EVAL_[A-Z0-9_]+|SYSTEMROOT|COMSPEC|WINDIR)$/
+  const secret = /key|token|secret|password|passwd|credential/i
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(base)) {
+    if (v === undefined || !keep.test(k) || secret.test(k)) continue
+    out[k] = v
+  }
+  return out
+}
+
 /** Run a python snippet with the scenario directory on sys.path; returns stdout. */
 export async function runScenarioPython(scenario: Scenario, code: string, options: PythonRunOptions = {}): Promise<string> {
   const program = ['import sys, json', `sys.path.insert(0, ${JSON.stringify(scenario.dir)})`, code].join('\n')
@@ -107,7 +124,7 @@ export async function runScenarioPython(scenario: Scenario, code: string, option
       timeout: options.timeoutMs ?? 120_000,
       maxBuffer: 64 * 1024 * 1024,
       cwd: scenario.dir,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', ...(options.env ?? {}) },
+      env: { ...scenarioProcessEnv(), PYTHONDONTWRITEBYTECODE: '1', ...(options.env ?? {}) },
     })
     return stdout
   } catch (error) {

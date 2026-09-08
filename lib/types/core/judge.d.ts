@@ -63,9 +63,12 @@ export interface JudgeReport {
     panelAgreement: number;
     generatedAt: string;
     judgments: Judgment[];
+    /** Wins, losses and ties over the judgments the abstention rule kept (every judgment when nothing abstains). */
     wins: number;
     losses: number;
     ties: number;
+    /** Judgments the abstention rule withheld: not counted anywhere above. */
+    abstained?: number;
     /** Share of pairs where the two presentation orders disagreed (position sensitivity of the judge on this data). */
     inconsistentShare: number;
     midP: number;
@@ -102,7 +105,8 @@ export interface JudgeReport {
         tau: number;
         calibratedOn: number;
         abstained: number;
-        of: number;
+        of: number; /** false when no threshold met the bound: nothing withheld, guarantee not in force. */
+        calibrated?: boolean;
     } | null;
     /** Anchor set: archived human-labelled trials re-graded by this panel; agreement with the humans and stability vs the previous judge run on the same anchors. */
     anchors: {

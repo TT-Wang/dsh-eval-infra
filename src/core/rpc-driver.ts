@@ -112,7 +112,9 @@ export class RpcDriver implements Driver {
   }
 
   async runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult> {
+    if (options.signal?.aborted) throw new Error('cancelled')
     await this.start()
+    if (options.signal?.aborted) throw new Error('cancelled')
     this.turn += 1
     const events: EventLike[] = []
     return new Promise<DriverTurnResult>((resolve, reject) => {

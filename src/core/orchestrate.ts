@@ -6,11 +6,11 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { loadArmFile, type ArmError, applyRoute, type RunRoute, DEFAULT_PROVIDER, DEFAULT_MODEL } from './arms.js'
-import { resolveApiKey } from './env.js'
+import { evalInfraVersion, resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project, benchPools } from './project.js'
 import { buildReport, noiseFloorOf, readingAlpha, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
-import { fileSha, readReceipt, receiptSignatureValid, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
+import { fileSha, keyFingerprint, readManifest, readReceipt, receiptSignatureValid, reportDigest, sameKey, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
 import { driftTest } from './drift.js'
 import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './probe.js'
@@ -177,6 +177,36 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     plan = readPlan(paths)
     baselineSpec = plan.baseline
     candidateSpecs = plan.candidates
+    // A resumed run continues under the conditions it started with: those are read from its plan, and a request
+    // that names different ones is refused rather than silently mixing two experiments in one run directory.
+    const asked: Array<[string, unknown, unknown]> = [
+      ['sandbox', request.sandbox, plan.sandbox ?? 'host'],
+      ['perturb', request.perturb, plan.perturb ?? false],
+      ['sequential', request.sequential, plan.sequential ?? false],
+      ['north-star', request.northStar, plan.northStar ?? 'cost'],
+      ['replay', request.replay === undefined ? undefined : JSON.stringify(request.replay), plan.replay === undefined ? undefined : JSON.stringify(plan.replay)],
+      ['meter', request.meter, plan.meter],
+      ['seed', request.seed, plan.seed],
+      ['model', request.model, plan.baseline.model],
+      ['effort', request.effort, plan.baseline.effort],
+      ['repeats', request.repeats, plan.repeats],
+      ['docker-keep-sandbox', request.dockerKeepSandbox, plan.containerSandbox ?? false],
+    ]
+    const conflicts = asked.filter(([, want, have]) => want !== undefined && want !== have && !(want === false && have === undefined)).map(([name, want, have]) => `${name}: run has ${String(have ?? 'default')}, request says ${String(want)}`)
+    if (conflicts.length > 0) throw new LaunchError(`--resume keeps the run's own conditions; drop these flags or start a new run — ${conflicts.join('; ')}`, 'usage')
+    sandbox = plan.sandbox ?? 'host'
+    request = {
+      ...request,
+      sandbox,
+      perturb: plan.perturb ?? false,
+      sequential: plan.sequential ?? false,
+      ...(plan.northStar !== undefined ? { northStar: plan.northStar } : {}),
+      ...(plan.replay !== undefined ? { replay: plan.replay } : {}),
+      ...(plan.meter !== undefined ? { meter: plan.meter } : {}),
+      ...(plan.seed !== undefined ? { seed: plan.seed } : {}),
+      ...(plan.containerSandbox ? { dockerKeepSandbox: true } : {}),
+      repeats: plan.repeats,
+    }
   } else {
     if (request.candidates.length === 0 && !request.aa) throw new LaunchError('at least one candidate arm is required', 'usage')
     const route: RunRoute = { ...(request.model !== undefined ? { model: request.model } : {}), ...(request.effort !== undefined ? { effort: request.effort } : {}) }
@@ -214,6 +244,8 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     if (sandbox === 'docker' && request.dockerKeepSandbox) plan.containerSandbox = true
     if (request.perturb) plan.perturb = true
     if (request.replay) plan.replay = request.replay
+    plan.meter = request.meter ?? hooks.driverFactory === undefined
+    if (request.seed !== undefined) plan.seed = request.seed
   }
   if (plan.repeats < 1) throw new LaunchError('repeats must be at least 1', 'usage')
 
@@ -312,7 +344,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     log(`probe: ${verdict.verdict === 'no-reference' ? 'enrolled a reference (no comparison yet)' : verdict.verdict === 'not-completed' ? `did not complete (${verdict.error ?? 'unknown'}) — the run continues and the report says the check was not made` : `${verdict.verdict} (distance ${verdict.distance.toFixed(3)}, p = ${verdict.p.toFixed(3)})`} · $${verdict.usd.toFixed(4)}`)
   }
   // The meter belongs to the run, not the driver: container mode gets it too (the overlay points the container at the host gateway).
-  const meterOn = request.meter ?? hooks.driverFactory === undefined
+  const meterOn = plan.meter ?? request.meter ?? hooks.driverFactory === undefined
   if (meterOn) {
     deps.meter = {
       upstream: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
@@ -340,7 +372,11 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   const done = (async (): Promise<{ progress: Progress; report: Report }> => {
     const progress = await executeRun(plan, scenarios, [prepared.baseline, ...prepared.candidates], deps)
     if (request.sequential) writeJsonAtomic(join(paths.dir, 'sequential.json'), { seed: request.seed ?? 42, candidate: candidateSpecs[0]?.name ?? null, decisions })
-    const report = buildReport(plan, readLedgers(paths), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout: new Set(scenarios.filter(s => s.meta.holdout).map(s => s.name)), drift: baselineDrift(project, plan, readLedgers(paths)), ...probeOf(paths), ...sequencesOf(paths) })
+    // What the readings borrow from the archive (A/A floors, CUPED covariates, the drift check, which scenarios are sealed
+    // holdouts) is written down as evidence before the seal, so the report re-derives identically anywhere — a verifier
+    // with a different archive, or none, still recomputes the receipted readings.
+    writeRunContext(project, plan, paths, scenarios)
+    const report = buildReport(plan, readLedgers(paths), reportOptionsFor(project, plan, paths))
     if (request.sequential) {
       const last = decisions.at(-1)
       if (progress.stoppedEarly) report.notes.unshift(`Sequential mode stopped after ${progress.stoppedEarly.after} of ${progress.stoppedEarly.of} scenarios: ${progress.stoppedEarly.reason}. The estimate applies to the scenario pool the shuffle drew from; unrun scenarios are not "incomplete", they were not needed.`)
@@ -495,8 +531,17 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
   const specs: Record<string, import('./judge.js').JudgeSpec> = {}
   for (const s of scenarios) if (s.meta.judge) specs[s.name] = s.meta.judge
   if (Object.keys(specs).length === 0) throw new LaunchError('no scenario in this run declares meta.judge', 'usage')
-  const judges = resolveJudgeModels(project, options.models, options.chats, deepseekChat)
   const armFamilies = new Set([plan.baseline, ...plan.candidates].map(a => modelFamily(a.model ?? 'deepseek-v4-flash')))
+  // No judge named: the first configured judge from another family than the arms. Without one there is no default —
+  // a same-family judge is an explicit choice (--allow-same-family), never a silent one.
+  let models = options.models
+  if (models === undefined || models.length === 0) {
+    const crossFamily = (project.config.judges ?? []).find(j => !armFamilies.has(modelFamily(j.model, j.family)))
+    if (crossFamily !== undefined) models = [crossFamily.name ?? crossFamily.model]
+    else if (options.allowSameFamily) models = ['deepseek-v4-pro']
+    else throw new LaunchError(`no judge named and none configured from another model family than the arms (${[...armFamilies].join(', ')}). Add one under "judges" in the project config (model, baseUrl, apiKeyEnv, family), name it with --model, or pass --allow-same-family to use deepseek-v4-pro with the same-family caveat on the report`, 'usage')
+  }
+  const judges = resolveJudgeModels(project, models, options.chats, deepseekChat)
   const sameFamily = judges.filter(j => armFamilies.has(modelFamily(j.model, (project.config.judges ?? []).find(c => c.model === j.model || c.name === j.model)?.family)))
   if (sameFamily.length > 0 && !options.allowSameFamily) {
     throw new LaunchError(`judge ${sameFamily.map(j => j.model).join(', ')} shares a model family with the arms (${[...armFamilies].join(', ')}); self-preference and preference leakage bias such judgments. Configure a judge from another family in .dsh-eval/config.json (judges: [{model, baseUrl, apiKeyEnv, family}]) or pass --allow-same-family to proceed with the bias stated in the report.`, 'usage')
@@ -520,7 +565,8 @@ export async function runJudge(project: Project, id: string, options: JudgeOptio
     const abs = await absoluteJudge({ plan, ledgers, specs, artifactDir, judges, annotations, ...(options.log !== undefined ? { log: options.log } : {}) })
     writeJsonAtomic(join(paths.dir, 'judge-absolute.json'), abs)
   }
-  rebuildReport(project, id)
+  // Judge files are evidence the report derives from: the run is sealed again over them and the receipt re-issued with the new readings.
+  resealRun(project, id)
   return out
 }
 
@@ -565,6 +611,7 @@ export function sealAndIssue(project: Project, paths: ReturnType<typeof runPaths
     issuedAt: new Date().toISOString(),
     evidenceSha: manifest.evidenceSha,
     contract,
+    reportSha: reportDigest(report as unknown as Record<string, unknown>),
     claims: report.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict, reliability: c.reliability.reading, northStar: `${c.northStar.metric}:${c.northStar.reading}` })),
     coverage: {
       trials: ledgers.length,
@@ -596,13 +643,21 @@ export function sealAndIssue(project: Project, paths: ReturnType<typeof runPaths
  * own evidence is incomplete (unrun trials, errors, or usage that never
  * reconciled); PASS when the signed claims recompute from intact evidence.
  */
-export function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null): { status: ReceiptStatus; reason: string } {
+export function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyResult, report: Report | null, trustedKeys: string[] = []): { status: ReceiptStatus; reason: string } {
+  let digestNote = ''
   if (base.missing.length || base.changed.length) return { status: 'INVALID', reason: `${base.missing.length} missing and ${base.changed.length} changed evidence file(s) since the seal` }
+  if (base.manifestConsistent === false) return { status: 'INVALID', reason: 'the manifest\'s evidence sha does not follow from its own file list (the manifest was rewritten)' }
   if (base.reportReproduces === false) return { status: 'INVALID', reason: 'the stored report does not re-derive from the sealed ledgers' }
   const receipt = readReceipt(paths)
   if (receipt === null) return { status: 'INCONCLUSIVE', reason: 'no receipt: this run was sealed without an analysis contract' }
-  if (!receiptSignatureValid(receipt)) return { status: 'INVALID', reason: 'the receipt signature does not verify against its public key' }
-  if (base.evidenceSha !== null && receipt.evidenceSha !== base.evidenceSha) return { status: 'INVALID', reason: 'the receipt was issued for a different evidence set (evidence sha mismatch)' }
+  if (!receiptSignatureValid(receipt)) return { status: 'INVALID', reason: 'the receipt signature does not verify against the key it carries' }
+  // The key that signed must be one this verifier trusts; the key inside the receipt only identifies the signer.
+  const trusted = trustedKeys.find(k => sameKey(k, receipt.publicKey))
+  if (trusted === undefined) return { status: 'INCONCLUSIVE', reason: `the receipt is signed by a key this verifier does not trust (fingerprint ${keyFingerprint(receipt.publicKey)}); nothing is falsified, but a self-signed receipt proves only its own consistency — pass the author\'s published key with --key to verify it` }
+  if (!receiptSignatureValid(receipt, trusted)) return { status: 'INVALID', reason: 'the receipt signature does not verify against the trusted key' }
+  // The evidence the receipt names must be the bytes on disk, hashed here — not what the manifest says about itself.
+  const onDisk = base.evidenceShaOnDisk ?? base.evidenceSha
+  if (onDisk !== null && receipt.evidenceSha !== onDisk) return { status: 'INVALID', reason: 'the receipt was issued for a different evidence set (evidence sha of the files on disk does not match)' }
   if (report !== null) {
     for (const claim of receipt.claims) {
       const c = report.candidates.find(x => x.arm === claim.arm)
@@ -616,7 +671,59 @@ export function receiptStatus(paths: ReturnType<typeof runPaths>, base: VerifyRe
   if (receipt.coverage.unrun > 0) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.unrun} planned trial(s) never ran` }
   if (receipt.coverage.errors > 0) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.errors} trial(s) ended in a runtime error` }
   if (receipt.coverage.metered > 0 && receipt.coverage.reconciled < receipt.coverage.metered) return { status: 'INCONCLUSIVE', reason: `${receipt.coverage.metered - receipt.coverage.reconciled} trial(s) never reconciled against the wire meter` }
-  return { status: 'PASS', reason: `signed claims recompute from ${Object.keys(base.changed).length === 0 ? 'intact' : 'the'} evidence (${receipt.coverage.trials} trials, ${receipt.coverage.reconciled}/${receipt.coverage.metered} reconciled)` }
+  // The whole derived report, field by field, against the signed digest. Every input to the derivation is sealed
+  // evidence, so with the evidence intact and the readings matching, a different digest means the code deriving the
+  // report changed since the receipt was issued (a rebuild and re-seal refreshes it) — said, not called tampering.
+  if (report !== null && receipt.reportSha !== undefined) {
+    const issuedBy = receipt.environment.evalInfraVersion
+    if (issuedBy !== undefined && issuedBy !== evalInfraVersion()) digestNote = `report digest not compared: this verifier runs dsh-eval ${evalInfraVersion()}, the receipt was issued by ${issuedBy}; the receipted readings were compared instead`
+    else if (receipt.reportSha !== reportDigest(report as unknown as Record<string, unknown>)) return { status: 'INCONCLUSIVE', reason: 'the evidence is intact and the receipted readings recompute, but the whole report derived now differs from the receipted digest in other fields: the code deriving reports has changed since the receipt was issued — rebuild the report and re-seal (dsh-eval report <run> then regrade/judge, or publish) to refresh the receipt' }
+  }
+  return { status: 'PASS', reason: `signed claims recompute from ${Object.keys(base.changed).length === 0 ? 'intact' : 'the'} evidence (${receipt.coverage.trials} trials, ${receipt.coverage.reconciled}/${receipt.coverage.metered} reconciled)${receipt.reportSha !== undefined && digestNote === '' ? '; the whole derived report matches the receipted digest' : ''}${digestNote ? `; ${digestNote}` : ''}` }
+}
+
+/** The archive-derived inputs a run's readings use, pinned in the run directory (`context.json`) as evidence. */
+export interface RunContext {
+  schema: 'dsh-eval-context/1'
+  writtenAt: string
+  noiseFloors: Record<string, NoiseFloor>
+  priorBaselineUsd: Record<string, number>
+  drift: import('./drift.js').DriftResult | null
+  holdout: string[]
+}
+
+export function writeRunContext(project: Project, plan: RunPlan, paths: ReturnType<typeof runPaths>, scenarios: Scenario[]): RunContext {
+  const context: RunContext = {
+    schema: 'dsh-eval-context/1',
+    writtenAt: new Date().toISOString(),
+    noiseFloors: archiveNoiseFloors(project, plan.id),
+    priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id),
+    drift: baselineDrift(project, plan, readLedgers(paths)),
+    holdout: scenarios.filter(s => s.meta.holdout).map(s => s.name),
+  }
+  writeJsonAtomic(join(paths.dir, 'context.json'), context)
+  return context
+}
+
+export function readRunContext(paths: ReturnType<typeof runPaths>): RunContext | null {
+  const file = join(paths.dir, 'context.json')
+  if (!existsSync(file)) return null
+  try { return JSON.parse(readFileSync(file, 'utf8')) as RunContext } catch { return null }
+}
+
+/**
+ * Report options for a run: the pinned context when the run has one (every run sealed since context pinning), else
+ * the live archive (runs from before it, and runs still in flight).
+ */
+export function reportOptionsFor(project: Project, plan: RunPlan, paths: ReturnType<typeof runPaths>): Parameters<typeof buildReport>[2] {
+  const pinned = readRunContext(paths)
+  if (pinned !== null) {
+    return { noiseFloors: pinned.noiseFloors, priorBaselineUsd: pinned.priorBaselineUsd, holdout: new Set(pinned.holdout), ...(pinned.drift ? { drift: pinned.drift } : {}), ...probeOf(paths), ...sequencesOf(paths) }
+  }
+  let holdout = new Set<string>()
+  try { holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name)) } catch { /* no library at hand: holdout unknown */ }
+  const drift = baselineDrift(project, plan, readLedgers(paths))
+  return { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, ...(drift ? { drift } : {}), ...probeOf(paths), ...sequencesOf(paths) }
 }
 
 export function probeOf(paths: ReturnType<typeof runPaths>): { probe?: ProbeVerdict } {
@@ -686,8 +793,7 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
   const paths = at ?? runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
   const plan = readPlan(paths)
-  const holdout = new Set(collectScenarios(project, { scenarios: plan.scenarios, includeHoldout: true }).scenarios.filter(s => s.meta.holdout).map(s => s.name))
-  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), { noiseFloors: archiveNoiseFloors(project, plan.id), priorBaselineUsd: archiveBaselineCosts(project, plan.baseline.name, plan.id), holdout, drift: baselineDrift(project, plan, readLedgers(paths)), ...probeOf(paths), ...sequencesOf(paths) })
+  const report = buildReport(plan, applyAnnotations(readLedgers(paths), readAnnotations(paths)), reportOptionsFor(project, plan, paths))
   const judges = readJudgeReports(paths)
   const absolute = readAbsoluteJudge(paths)
   for (const c of report.candidates) {
@@ -701,7 +807,7 @@ export function deriveReport(project: Project, id: string, at?: ReturnType<typeo
         c.grade = gradeOf(c.gate, c.improvements.length, c.northStar.reading)
         if (c.gate === 'pass') c.verdict = `${c.northStar.text}${c.improvements.length ? ` Improves correctness on ${c.improvements.join(', ')}.` : ''}`
       }
-      if (jj.abstention) report.notes.push(`${c.arm}: conformal abstention at α = ${jj.abstention.alpha} calibrated on ${jj.abstention.calibratedOn} human-labelled pair${jj.abstention.calibratedOn === 1 ? '' : 's'}: ${Number.isFinite(jj.abstention.tau) ? `threshold ${jj.abstention.tau.toFixed(2)}, ${jj.abstention.abstained} of ${jj.abstention.of} judgments withheld` : `no threshold meets the bound, all ${jj.abstention.of} judgments withheld`}.`)
+      if (jj.abstention) report.notes.push(`${c.arm}: conformal abstention at α = ${jj.abstention.alpha} calibrated on ${jj.abstention.calibratedOn} human-labelled pair${jj.abstention.calibratedOn === 1 ? '' : 's'}: ${Number.isFinite(jj.abstention.tau) ? `threshold ${jj.abstention.tau.toFixed(2)}, ${jj.abstention.abstained} of ${jj.abstention.of} judgments withheld and not counted in the wins, losses or ties` : `no threshold meets the risk bound on that many labels (about ${Math.ceil(1 / jj.abstention.alpha)} are needed even with no judge errors), so nothing is withheld and the ≤ ${jj.abstention.alpha} error guarantee is not in force`}.`)
       else report.notes.push(`${c.arm}: no human-labelled pairs on this run, so the judge cannot calibrate an abstention threshold; only order disagreement and panel splits abstain.`)
       if (jj.anchors) report.notes.push(`${c.arm}: judge anchors — ${jj.anchors.n} archived human-labelled trials re-graded: agreement with humans ${(jj.anchors.humanAgreement * 100).toFixed(0)}%${jj.anchors.stability !== null ? `, stability vs the previous judge run ${(jj.anchors.stability * 100).toFixed(0)}% on ${jj.anchors.comparedWithPrevious}` : ' (first run on these anchors, no previous answers yet)'}${jj.anchors.attribution === 'judge' ? ' → JUDGE DRIFT: the judge changed its mind on the anchors, so differences against earlier judge runs are attributed to the judge, not the system' : ''}.`)
       if (jj.lengthBalancedWinRate !== null && jj.lengthBalancedWinRate !== undefined) report.notes.push(`${c.arm}: length-balanced candidate win rate ${(jj.lengthBalancedWinRate * 100).toFixed(0)}% (average of the candidate-longer and candidate-shorter strata)${jj.equalLengthWinRate ? `; at zero length difference the logistic fit gives ${(jj.equalLengthWinRate.rate * 100).toFixed(0)}% (length slope ${jj.equalLengthWinRate.slope.toFixed(2)} on ${jj.equalLengthWinRate.n} decided pairs)` : ''}.`)
@@ -821,19 +927,45 @@ export async function rerunScenario(project: Project, runId: string, scenario: s
   const verdict: RerunResult['verdict'] = original === null ? 'no original failure' : failedAgain === 0 ? 'not reproduced' : failedAgain === reps ? 'reproduced' : 'partly reproduced'
   const result: RerunResult = { scenario, candidate, newRunId: launched.id, ...(fork ? { fork } : {}), reps, original, failedAgain, sameCall, verdict }
   writeJsonAtomic(join(paths.dir, `rerun-${fork ? 'fork-' : ''}${scenario}.json`), result)
-  rebuildReport(project, runId)
+  resealRun(project, runId)
   return result
 }
 
+/**
+ * The receipt keys this verifier trusts: the project's own signing key (a run made here is checked against the key that
+ * made it), plus any PEM files named in DSH_EVAL_TRUSTED_KEYS (comma-separated) or passed by the caller (`verify --key`).
+ */
+export function trustedReceiptKeys(project: Project, extra: string[] = []): string[] {
+  const keys: string[] = []
+  const own = join(project.evalDir, 'receipt-key.json')
+  if (existsSync(own)) { try { keys.push((JSON.parse(readFileSync(own, 'utf8')) as { publicKey: string }).publicKey) } catch { /* unreadable key file: nothing trusted from it */ } }
+  for (const file of (process.env['DSH_EVAL_TRUSTED_KEYS'] ?? '').split(',').map(f => f.trim()).filter(Boolean)) { try { keys.push(readFileSync(file, 'utf8')) } catch { /* missing file: not trusted */ } }
+  for (const k of extra) keys.push(k.includes('-----BEGIN') ? k : (() => { try { return readFileSync(k, 'utf8') } catch { return '' } })())
+  return keys.filter(Boolean)
+}
+
+export interface VerifyOptions {
+  /** Extra trusted public keys: PEM text or paths to PEM files. */
+  keys?: string[]
+}
+
 /** Verify a run directory that lives anywhere (a published bundle): hashes plus report re-derivation. */
-export function verifyRunDir(project: Project, dir: string): VerifyResult {
+export function verifyRunDir(project: Project, dir: string, options: VerifyOptions = {}): VerifyResult {
   const paths = runPathsAt(dir)
   if (!existsSync(paths.plan)) throw new LaunchError(`${dir} is not a run directory (no plan.json)`, 'usage')
   const id = readPlan(paths).id
-  const pick = (r: Report): Record<string, unknown> => ({ candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })) })
-  const base = verifyRun(paths, () => ({ fresh: pick(deriveReport(project, id, paths)), stored: existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null }))
-  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id, paths))
+  const base = verifyRun(paths, () => ({ fresh: reportView(deriveReport(project, id, paths)), stored: existsSync(paths.report) ? reportView(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null }))
+  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id, paths), trustedReceiptKeys(project, options.keys ?? []))
   return { ...base, status, statusReason: reason, ok: base.ok && status !== 'INVALID' }
+}
+
+/**
+ * The stored report against a fresh derivation: the readings the receipt attests (gate, cost reading, grade, verdict,
+ * reliability, north star per candidate). Every other field is compared through the signed report digest, and only
+ * against the same code version — a stored report from an older version is stale, which is not tampering.
+ */
+function reportView(r: Report): Record<string, unknown> {
+  return { candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict, reliability: c.reliability?.reading, northStar: c.northStar ? `${c.northStar.metric}:${c.northStar.reading}` : undefined })) }
 }
 
 export function rebuildReport(project: Project, id: string): Report {
@@ -845,19 +977,24 @@ export function rebuildReport(project: Project, id: string): Report {
 }
 
 /** Check the sealed evidence against the files on disk and the stored report against a fresh derivation. */
-export function verifyRunIntegrity(project: Project, id: string): VerifyResult {
+export function verifyRunIntegrity(project: Project, id: string, options: VerifyOptions = {}): VerifyResult {
   const paths = runPaths(project.runsRoot, id)
   if (!existsSync(paths.plan)) throw new LaunchError(`run ${id} not found`, 'usage')
-  const pick = (r: Report): Record<string, unknown> => ({
-    candidates: r.candidates.map(c => ({ arm: c.arm, gate: c.gate, costReading: c.costReading, grade: c.grade, verdict: c.verdict })),
-  })
   const base = verifyRun(paths, () => {
-    const fresh = pick(deriveReport(project, id))
-    const stored = existsSync(paths.report) ? pick(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null
+    const fresh = reportView(deriveReport(project, id))
+    const stored = existsSync(paths.report) ? reportView(JSON.parse(readFileSync(paths.report, 'utf8')) as Report) : null
     return { fresh, stored }
   })
-  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id))
+  const { status, reason } = receiptStatus(paths, base, deriveReport(project, id), trustedReceiptKeys(project, options.keys ?? []))
   return { ...base, status, statusReason: reason, ok: base.ok && status !== 'INVALID' }
+}
+
+/** Re-seal a finished run after a file the report derives from was added or changed (judge, annotations, rerun), and re-issue its receipt. */
+export function resealRun(project: Project, id: string): void {
+  const paths = runPaths(project.runsRoot, id)
+  if (readManifest(paths) === null) return   // not sealed yet (still running): the final seal will cover it
+  const plan = readPlan(paths)
+  sealAndIssue(project, paths, plan, rebuildReport(project, id))
 }
 
 /** Archived human-labelled trials with judge artifacts, newest first, for the judge drift check. */

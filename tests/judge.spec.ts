@@ -170,3 +170,32 @@ describe('entropy abstention, effective judges and length control', () => {
     expect(equalLengthWinRate([{ won: true, lengthDiff: 1 }])).toBeNull()
   })
 })
+
+describe('abstention decides what is tallied (H5)', () => {
+  it('a judgment below the calibrated threshold is neither a win, a loss nor a tie', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-judge-')); tmp.push(root)
+    const dir = (s: string, a: string, r: number): string => join(root, s, a, `rep${r}`)
+    const names = ['s1', 's2', 's3', 's4']
+    for (const s of names) for (const a of ['base', 'cand']) { mkdirSync(dir(s, a, 1), { recursive: true }); writeFileSync(join(dir(s, a, 1), 'out.md'), `${s} ${a} ${a === 'cand' ? 'GOOD' : 'meh'}`) }
+    // confident and right on s1–s3; on s4 the judge is wrong (prefers the baseline) and says so with low confidence
+    const chat: ChatCall = async (messages) => {
+      const u = messages[1]!.content
+      const first = u.slice(u.indexOf('### Submission 1'), u.indexOf('### Submission 2'))
+      const s4 = u.includes('s4 ')
+      const good = first.includes('GOOD')
+      const winner = s4 ? (good ? '2' : '1') : (good ? '1' : '2')
+      return { text: JSON.stringify({ winner, reason: 'r', confidence: s4 ? 0.2 : 0.9 }), usage: { hit: 0, miss: 10, output: 5 } }
+    }
+    const plan: RunPlan = { id: 'r', createdAt: '', baseline: { name: 'base' }, candidates: [{ name: 'cand' }], scenarios: names, repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const ledgers = names.flatMap(s => [ledger(s, 'base', 1), ledger(s, 'cand', 1)])
+    const specs = Object.fromEntries(names.map(s => [s, { rubric: 'good beats meh', artifacts: ['out.md'] }]))
+    const annotations = Object.fromEntries(names.flatMap(s => [[`${s}|cand|1`, { verdict: true }], [`${s}|base|1`, { verdict: false }]]))
+    const report = await judgeRun({ plan, candidate: 'cand', ledgers, specs, artifactDir: dir, judges: [{ model: 'j', chat }], seed: 1, annotations, abstentionAlpha: 0.2 })
+    expect(report.abstention).not.toBeNull()
+    expect(report.judgments.find(j => j.scenario === 's4')!.abstained).toBe(true)
+    expect(report.abstained).toBe(1)
+    expect(report.wins).toBe(3)
+    expect(report.losses).toBe(0)                  // the withheld judgment is not a loss
+    expect(report.ties).toBe(0)
+  })
+})

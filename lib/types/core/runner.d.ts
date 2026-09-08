@@ -47,11 +47,15 @@ export interface JobSpec {
  */
 export declare function planJobs(scenarios: Scenario[], arms: ResolvedArm[], repeats: number): JobSpec[];
 /**
- * Ground truth must not be readable from inside the workspace. Scenario
- * generators that keep it under `<workdir>/.truth` get it moved out after
- * setup and back in before verify; the agent never sees it.
+ * Ground truth is kept out of the workspace: `<workdir>/.truth` is moved after
+ * setup into a private directory (mode 0700, random name) under the system
+ * temp root — not beside the workspace, where `ls ..` would find it — and
+ * moved back before verify. On the host this keeps the answer key out of the
+ * agent's working tree, not out of reach of a process running as the same
+ * user; the container sandbox, which mounts the workspace and nothing else,
+ * is the boundary. The docs say so.
  */
-export declare function stashTruth(workdir: string, stashRoot: string): (() => void) | undefined;
+export declare function stashTruth(workdir: string, stashRoot?: string): (() => void) | undefined;
 export interface RunDeps {
     driverFactory: DriverFactory;
     evalHome: string;

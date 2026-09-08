@@ -17,7 +17,8 @@ export interface DockerOptions {
     nativeShims?: Array<[string, string]>;
     onStderr?: (line: string) => void;
 }
-export declare const DEFAULT_IMAGE = "node:22-bookworm-slim";
+/** The sandbox base image, pinned by the digest of its multi-platform index (2026-09-09) so a moved tag cannot change what trials run in. */
+export declare const DEFAULT_IMAGE = "node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5";
 /** Host directories the eval profile links (pnpm `link:` symlinks) — they must exist inside the container at the same path. */
 export declare function linkedPluginPaths(evalHome: string, profile: string): string[];
 /**

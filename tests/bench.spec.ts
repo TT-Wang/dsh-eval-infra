@@ -6,7 +6,7 @@ import { parseToml, terminalBench } from '../src/core/bench/terminal-bench.js'
 import { loadProject, ensureEvalProfile, benchPools } from '../src/core/project.js'
 import { loadScenario } from '../src/core/scenario.js'
 import { selfcheckScenario } from '../src/core/selfcheck.js'
-import { verifyInEnvironment, taskContainerArgs, taskRuntimeExecArgs, type TaskEnvironment } from '../src/core/environment.js'
+import { verifyInEnvironment, taskContainerArgs, taskContainerEnv, taskRuntimeExecArgs, type TaskEnvironment } from '../src/core/environment.js'
 import { executeRun } from '../src/core/runner.js'
 import { resolveArm } from '../src/core/arms.js'
 import { runPaths, readLedgers } from '../src/core/store.js'
@@ -214,12 +214,16 @@ describe('container scenarios', () => {
     const nodeDir = mkdtempSync(join(tmpdir(), 'node-'))
     const overlayDir = mkdtempSync(join(tmpdir(), 'overlays-'))
     writeFileSync(join(overlayDir, 'b.patch.yml'), '[]\n')
-    const input = { arm: resolveArm({ name: 'b' }, join(p.evalDir, 'arms')), scenario: { name: 's', dir: '', meta: { name: 's', turns: 1 }, prompts: ['x'], hasOracle: false, hasSetup: false }, workdir: p.evalDir, evalHome: p.home, overlays: [join(overlayDir, 'b.patch.yml')], env: {} }
+    const input = { arm: resolveArm({ name: 'b' }, join(p.evalDir, 'arms')), scenario: { name: 's', dir: '', meta: { name: 's', turns: 1 }, prompts: ['x'], hasOracle: false, hasSetup: false }, workdir: p.evalDir, evalHome: p.home, overlays: [join(overlayDir, 'b.patch.yml')], env: { DEEPSEEK_API_KEY: 'sk-test' } }
     const args = taskContainerArgs(input, { image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', runtime: { nodeDir, dsh: { dshSource: src } }, cpus: 2, memoryMb: 2048 })
     expect(args.slice(0, 5)).toEqual(['run', '-d', '--init', '--platform', 'linux/amd64'])
     expect(args).toContain('--cpus'); expect(args).toContain('2048m')
     expect(args.some(a => a.includes('target=/opt/dsh-node'))).toBe(true)
     expect(args.slice(-4)).toEqual(['alexgshaw/alpha-task:20251031', 'tail', '-f', '/dev/null'])
+    // the key is named to docker (-e NAME) and supplied through the process environment, never written into argv
+    expect(args.some(a => a.startsWith('DEEPSEEK_API_KEY='))).toBe(false)
+    expect(args).toContain('DEEPSEEK_API_KEY')
+    expect(taskContainerEnv(input)['DEEPSEEK_API_KEY']).toBe(input.env['DEEPSEEK_API_KEY'])
     expect(args.some(a => a.startsWith(`type=bind,source=${realpathSync(overlayDir)},target=`) && a.endsWith(',readonly'))).toBe(true)   // the overlay's directory rides along
     const exec = taskRuntimeExecArgs('cid123', input, { image: 'x', platform: 'amd64', runtime: { nodeDir, dsh: { dshSource: src } } })
     // grading only: the image as it is, no runtime mounts, and no driver

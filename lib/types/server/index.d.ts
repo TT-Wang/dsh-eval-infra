@@ -11,6 +11,19 @@ export interface EvalAppOptions {
     /** Directory holding the built UI (index.html, app.js, app.css). */
     uiDir?: string;
 }
+/** A request the server refuses before routing: the status says why. */
+export declare class RequestError extends Error {
+    readonly status: number;
+    constructor(status: number, message: string);
+}
+/**
+ * The server listens on loopback for one person's browser, without accounts. What it must still refuse is a
+ * request another site's page makes the browser send here: browsers mark those with Sec-Fetch-Site and an Origin
+ * that is not this server, so every state-changing method checks both. Non-browser clients (curl, tests) send neither.
+ */
+export declare function crossSiteRequest(req: IncomingMessage): string | null;
+/** A public-benchmark task id as the adapters accept it: one path segment, no traversal. */
+export declare function validTaskId(id: unknown): id is string;
 export declare class EvalApp {
     readonly project: Project;
     readonly uiDir: string;

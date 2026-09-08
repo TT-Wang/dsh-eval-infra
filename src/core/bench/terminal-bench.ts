@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Project } from '../project.js'
-import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions } from './types.js'
+import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions , taskDir } from './types.js'
 
 const REGISTRY = 'https://raw.githubusercontent.com/harbor-framework/harbor/main/registry.json'
 const DATASET = 'terminal-bench'
@@ -179,7 +179,7 @@ export const terminalBench: BenchAdapter = {
     if (!task) throw new Error(`${DATASET}: no task "${id}" (run: dsh-eval bench list ${DATASET})`)
     if (task.image === '') throw new Error(`${DATASET}/${id}: task.toml names no docker_image`)
     const reg: RegistryTask = { name: task.id, git_url: task.source.gitUrl, git_commit_id: task.source.commit, path: task.source.path }
-    const dir = join(this.poolDir(project), id)
+    const dir = taskDir(this.poolDir(project), id)
     const files = new Map<string, string>()
     files.set('instruction.md', await fetcher(rawUrl(reg, 'instruction.md')))
     files.set('task.toml', await fetcher(rawUrl(reg, 'task.toml')))
@@ -233,7 +233,7 @@ export const terminalBench: BenchAdapter = {
   },
 
   remove(project, id) {
-    const dir = join(this.poolDir(project), id)
+    const dir = taskDir(this.poolDir(project), id)
     if (!existsSync(dir)) return false
     rmSync(dir, { recursive: true, force: true })
     const pool = this.poolDir(project)

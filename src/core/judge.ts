@@ -66,9 +66,12 @@ export interface JudgeReport {
   panelAgreement: number
   generatedAt: string
   judgments: Judgment[]
+  /** Wins, losses and ties over the judgments the abstention rule kept (every judgment when nothing abstains). */
   wins: number
   losses: number
   ties: number
+  /** Judgments the abstention rule withheld: not counted anywhere above. */
+  abstained?: number
   /** Share of pairs where the two presentation orders disagreed (position sensitivity of the judge on this data). */
   inconsistentShare: number
   midP: number
@@ -87,7 +90,7 @@ export interface JudgeReport {
   /** Effective independent judges in the panel (Kish n_eff) from vote or error correlation. */
   effectiveJudges: { k: number; rhoBar: number; nEff: number; basis: 'error' | 'vote' } | null
   /** Conformal abstention (SCOPE-style): threshold calibrated on human-labelled pairs so the error rate among kept judgments is at most alpha; null without labels. */
-  abstention: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number } | null
+  abstention: { alpha: number; tau: number; calibratedOn: number; abstained: number; of: number; /** false when no threshold met the bound: nothing withheld, guarantee not in force. */ calibrated?: boolean } | null
   /** Anchor set: archived human-labelled trials re-graded by this panel; agreement with the humans and stability vs the previous judge run on the same anchors. */
   anchors: { n: number; humanAgreement: number; stability: number | null; comparedWithPrevious: number; attribution: 'none' | 'judge' } | null
 }
@@ -392,23 +395,6 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
       input.log?.(`judge ${scenario}#${rep}: ${preference} (${votes.map(v => `${v.model}: ${v.preference}`).join(', ')})`)
     }
   }
-  const wins = judgments.filter(j => j.preference === 'candidate').length
-  const losses = judgments.filter(j => j.preference === 'baseline').length
-  const ties = judgments.length - wins - losses
-  const inconsistentVotes = judgments.flatMap(j => j.votes).filter(v => { const a = v.answers[0]; const b = v.answers[1]; return !(a === 'tie' && b === 'tie') && !((a === '1' && b === '2') || (a === '2' && b === '1')) }).length
-  const totalVotes = judgments.reduce((a, j) => a + j.votes.length, 0)
-  const unanimous = judgments.filter(j => new Set(j.votes.map(v => v.preference)).size <= 1).length
-  const m = mcnemar(wins, losses)
-  const decided = judgments.filter(j => j.preference !== 'tie' && j.lengths && j.lengths.baseline !== j.lengths.candidate)
-  const longerWins = decided.filter(j => (j.preference === 'candidate') === (j.lengths!.candidate > j.lengths!.baseline)).length
-  const longerWinsShare = decided.length ? longerWins / decided.length : null
-  const interJudgeKappa = input.judges.length >= 2 ? kappa(judgments.map(j => [j.votes[0]!.preference, j.votes[1]!.preference] as [string, string])) : null
-  // Length-balanced win rate: the candidate's win share in the "candidate longer" and "candidate shorter" strata, averaged.
-  const longer = decided.filter(j => j.lengths!.candidate > j.lengths!.baseline)
-  const shorter = decided.filter(j => j.lengths!.candidate < j.lengths!.baseline)
-  const share = (xs: Judgment[]): number => xs.filter(j => j.preference === 'candidate').length / xs.length
-  const lengthBalancedWinRate = longer.length && shorter.length ? (share(longer) + share(shorter)) / 2 : null
-  const equalLength = equalLengthWinRate(decided.map(j => ({ won: j.preference === 'candidate', lengthDiff: j.lengths!.candidate - j.lengths!.baseline })))
   let humanAgreement: JudgeReport['humanAgreement'] = null
   const labelledScores: Array<{ score: number; correct: boolean }> = []
   const humanTruth: Array<string | null> = []
@@ -425,7 +411,9 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
     }
     if (pairs.length) humanAgreement = { n: pairs.length, agree: pairs.filter(([a, b]) => a === b).length / pairs.length, kappa: kappa(pairs) }
   }
-  const nEff = effectiveJudges(judgments.map(j => j.votes.map(v => v.preference)), judgments.map((_, i) => humanTruth[i] ?? null))
+  // Conformal abstention first (SCOPE-style): a judgment whose certainty score falls below the threshold calibrated
+  // on human-labelled pairs is withheld, and a withheld judgment is neither a win nor a loss nor a tie — it is not
+  // counted. Without labelled pairs nothing is calibrated and every judgment counts (the report says so).
   let abstention: JudgeReport['abstention'] = null
   if (labelledScores.length > 0) {
     const alpha = input.abstentionAlpha ?? 0.1
@@ -435,10 +423,31 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
       for (const j of judgments) { j.abstained = (j.score ?? 0) < tau; if (j.abstained) abstained += 1 }
       abstention = { alpha, tau, calibratedOn: labelledScores.length, abstained, of: judgments.length }
     } else {
-      for (const j of judgments) j.abstained = true
-      abstention = { alpha, tau: Infinity, calibratedOn: labelledScores.length, abstained: judgments.length, of: judgments.length }
+      // No threshold meets the risk bound on this many labels (it needs about 1/alpha of them even with no errors):
+      // the rule is uncalibrated, every judgment counts, and the report says the guarantee is not in force.
+      for (const j of judgments) j.abstained = false
+      abstention = { alpha, tau: Infinity, calibratedOn: labelledScores.length, abstained: 0, of: judgments.length, calibrated: false }
     }
   }
+  const kept = judgments.filter(j => j.abstained !== true)
+  const wins = kept.filter(j => j.preference === 'candidate').length
+  const losses = kept.filter(j => j.preference === 'baseline').length
+  const ties = kept.length - wins - losses
+  const inconsistentVotes = judgments.flatMap(j => j.votes).filter(v => { const a = v.answers[0]; const b = v.answers[1]; return !(a === 'tie' && b === 'tie') && !((a === '1' && b === '2') || (a === '2' && b === '1')) }).length
+  const totalVotes = judgments.reduce((a, j) => a + j.votes.length, 0)
+  const unanimous = judgments.filter(j => new Set(j.votes.map(v => v.preference)).size <= 1).length
+  const m = mcnemar(wins, losses)
+  const decided = judgments.filter(j => j.preference !== 'tie' && j.lengths && j.lengths.baseline !== j.lengths.candidate)
+  const longerWins = decided.filter(j => (j.preference === 'candidate') === (j.lengths!.candidate > j.lengths!.baseline)).length
+  const longerWinsShare = decided.length ? longerWins / decided.length : null
+  const interJudgeKappa = input.judges.length >= 2 ? kappa(judgments.map(j => [j.votes[0]!.preference, j.votes[1]!.preference] as [string, string])) : null
+  // Length-balanced win rate: the candidate's win share in the "candidate longer" and "candidate shorter" strata, averaged.
+  const longer = decided.filter(j => j.lengths!.candidate > j.lengths!.baseline)
+  const shorter = decided.filter(j => j.lengths!.candidate < j.lengths!.baseline)
+  const share = (xs: Judgment[]): number => xs.filter(j => j.preference === 'candidate').length / xs.length
+  const lengthBalancedWinRate = longer.length && shorter.length ? (share(longer) + share(shorter)) / 2 : null
+  const equalLength = equalLengthWinRate(decided.map(j => ({ won: j.preference === 'candidate', lengthDiff: j.lengths!.candidate - j.lengths!.baseline })))
+  const nEff = effectiveJudges(judgments.map(j => j.votes.map(v => v.preference)), judgments.map((_, i) => humanTruth[i] ?? null))
   let anchors: JudgeReport['anchors'] = null
   if (input.anchors && input.anchors.length > 0) {
     const g = await gradeAnchors(input.anchors, input.judges, input.log)
@@ -459,6 +468,7 @@ export async function judgeRun(input: JudgeInput): Promise<JudgeReport & { ancho
     wins,
     losses,
     ties,
+    abstained: judgments.length - kept.length,
     inconsistentShare: totalVotes ? inconsistentVotes / totalVotes : 0,
     midP: m.midP,
     pWin: m.pWin,

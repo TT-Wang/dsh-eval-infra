@@ -3,8 +3,16 @@
  * files under the run directory are hashed into `manifest.json`; `verifyRun`
  * recomputes the hashes and re-derives the report from the sealed ledgers so
  * a reader can check that the report they were given follows from the
- * evidence they were given. Report, annotations and judge files are derived
- * or added later and are checked separately.
+ * evidence they were given. Everything the report is derived from — ledgers,
+ * events, traces, meter ledgers, annotations, judge, rerun and regrade files,
+ * the archive context the readings used — is evidence and is sealed; whatever
+ * adds such a file re-seals and re-issues the receipt. Only the report itself,
+ * the manifest and the receipt are derived.
+ *
+ * The receipt's signature is checked against a key the verifier trusts (the
+ * project's own key, or one passed in), never only against the key embedded in
+ * the receipt: a receipt signed by an unknown key is self-consistent, not
+ * verified, and reads INCONCLUSIVE until that key is trusted out of band.
  */
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify as verifySignature } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -54,6 +62,8 @@ export interface RunReceipt {
   claims: Array<{ arm: string; gate: string; costReading: string; grade: string; verdict: string; reliability?: string; northStar?: string }>
   coverage: { trials: number; scenarios: number; repeats: number; arms: number; reconciled: number; metered: number; unrun: number; errors: number }
   environment: { dshVersion?: string; dshRevision?: string; evalInfraVersion?: string; sandbox?: string; composedTreeSha?: Record<string, string> }
+  /** sha256 of the canonical JSON of the whole derived report (minus its timestamp): the verifier re-derives and compares every field, not a summary. Absent on receipts issued before it existed. */
+  reportSha?: string
   publicKey: string
   /** Ed25519 signature over the canonical JSON of everything above except this field. */
   signature: string
@@ -75,17 +85,17 @@ export interface VerifyResult {
   /** Whether report.json's readings equal a fresh derivation from the sealed ledgers (null when no report). */
   reportReproduces: boolean | null
   reportDiff: string[]
+  /** Evidence sha recomputed from the bytes on disk (the manifest's file list, hashed again); what a receipt is checked against. */
+  evidenceShaOnDisk?: string
+  /** Whether the manifest's own evidence sha follows from its file list (a rewritten manifest that forgot to recompute it fails here). */
+  manifestConsistent?: boolean
 }
 
-const DERIVED = new Set(['manifest.json', 'report.json', 'report.md', 'annotations.json', 'receipt.json'])
+/** Files derived from the evidence: never sealed, always recomputable. Everything else under the run directory is evidence. */
+const DERIVED = new Set(['manifest.json', 'report.json', 'report.md', 'receipt.json', 'report.html', 'VERIFY.md'])
 
-function isDerived(rel: string): boolean {
-  if (DERIVED.has(rel)) return true
-  if (rel.startsWith('judge-') && rel.endsWith('.json')) return true
-  if (rel.startsWith('regrade-') && rel.endsWith('.json')) return true
-  if (rel.startsWith('rerun-') && rel.endsWith('.json')) return true
-  if (rel === 'report.html' || rel === 'VERIFY.md') return true
-  return false
+export function isDerived(rel: string): boolean {
+  return DERIVED.has(rel)
 }
 
 function walk(dir: string, root: string, out: string[]): void {
@@ -155,6 +165,11 @@ export function verifyRun(paths: RunPaths, derive?: () => { fresh: Record<string
   }
   const now = new Set(evidenceFiles(paths.dir))
   const added = [...now].filter(rel => !(rel in manifest.files)).sort()
+  // The receipt is checked against what is on disk, hashed again here — not against the manifest's own claims about itself.
+  const onDisk: Record<string, string> = {}
+  for (const rel of Object.keys(manifest.files)) { const p = join(paths.dir, rel); if (existsSync(p)) onDisk[rel] = fileSha(p) }
+  const evidenceShaOnDisk = evidenceShaOf(onDisk)
+  const manifestConsistent = evidenceShaOf(manifest.files) === manifest.evidenceSha
   let reportReproduces: boolean | null = null
   const reportDiff: string[] = []
   if (derive) {
@@ -169,7 +184,7 @@ export function verifyRun(paths: RunPaths, derive?: () => { fresh: Record<string
       reportReproduces = reportDiff.length === 0
     }
   }
-  return { ok: missing.length === 0 && changed.length === 0 && reportReproduces !== false, sealedAt: manifest.sealedAt, evidenceSha: manifest.evidenceSha, missing, changed, added, reportReproduces, reportDiff }
+  return { ok: missing.length === 0 && changed.length === 0 && manifestConsistent && reportReproduces !== false, sealedAt: manifest.sealedAt, evidenceSha: manifest.evidenceSha, missing, changed, added, reportReproduces, reportDiff, evidenceShaOnDisk, manifestConsistent }
 }
 
 
@@ -208,9 +223,30 @@ export function signReceipt(receipt: Omit<RunReceipt, 'signature'>, privateKeyPe
   return { ...receipt, signature }
 }
 
-export function receiptSignatureValid(receipt: RunReceipt): boolean {
+/**
+ * Does the signature verify under `publicKeyPem`? Without a key this checks the receipt against the key it carries,
+ * which proves the receipt is self-consistent and nothing more; a verifier passes the key it trusts.
+ */
+export function receiptSignatureValid(receipt: RunReceipt, publicKeyPem: string = receipt.publicKey): boolean {
   const { signature, ...rest } = receipt
-  try { return verifySignature(null, Buffer.from(canonicalJson(rest)), createPublicKey(receipt.publicKey), Buffer.from(signature, 'base64')) } catch { return false }
+  try { return verifySignature(null, Buffer.from(canonicalJson(rest)), createPublicKey(publicKeyPem), Buffer.from(signature, 'base64')) } catch { return false }
+}
+
+/** Short fingerprint of a public key (sha256 of its DER SPKI, first 16 hex chars): what an author publishes and a reader compares. */
+export function keyFingerprint(publicKeyPem: string): string {
+  try { return createHash('sha256').update(createPublicKey(publicKeyPem).export({ type: 'spki', format: 'der' }) as Buffer).digest('hex').slice(0, 16) } catch { return 'invalid-key' }
+}
+
+/** Two PEM keys are the same key when their DER encodings match, whatever their whitespace. */
+export function sameKey(a: string, b: string): boolean {
+  try { return (createPublicKey(a).export({ type: 'spki', format: 'der' }) as Buffer).equals(createPublicKey(b).export({ type: 'spki', format: 'der' }) as Buffer) } catch { return false }
+}
+
+/** Digest of a derived report, timestamp removed: identical inputs and code give an identical digest. */
+export function reportDigest(report: Record<string, unknown>): string {
+  const { generatedAt: _dropped, ...rest } = report
+  void _dropped
+  return createHash('sha256').update(canonicalJson(rest)).digest('hex')
 }
 
 export function readReceipt(paths: RunPaths): RunReceipt | null {

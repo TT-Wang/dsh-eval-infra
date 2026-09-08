@@ -409,3 +409,38 @@ describe('paths in api responses', () => {
     } finally { rmSync(projectRoot, { recursive: true, force: true }) }
   })
 })
+
+describe('request guards (C2, C3, H9)', () => {
+  const base = (): string => url.replace(/\/$/, '')
+  it('refuses state-changing requests a browser marks as coming from another site, and non-JSON bodies', async () => {
+    const own = new URL(url).host
+    // a page on another origin: Origin does not match this server → 403 before any route runs
+    const cross = await fetch(base() + '/api/bench/rm', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' }, body: JSON.stringify({ dataset: 'terminal-bench', task: 'x' }) })
+    expect(cross.status).toBe(403)
+    expect(((await cross.json()) as { error: string }).error).toMatch(/cross-site/)
+    // the fetch-metadata header alone is enough
+    const meta = await fetch(base() + '/api/runs/r1/cancel', { method: 'POST', headers: { 'sec-fetch-site': 'cross-site' } })
+    expect(meta.status).toBe(403)
+    // a "simple" request (text/plain body, no preflight) is what a cross-site form or fetch can send: refused as a body type
+    const plain = await fetch(base() + '/api/scenarios', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ name: 'evil', files: { 'verify.py': 'import os' } }) })
+    expect(plain.status).toBe(415)
+    // the same request from this server's own origin, as JSON, reaches the route
+    const same = await fetch(base() + '/api/bench/rm', { method: 'POST', headers: { 'content-type': 'application/json', origin: `http://${own}`, 'sec-fetch-site': 'same-origin' }, body: JSON.stringify({ dataset: 'terminal-bench', task: 'never-materialised' }) })
+    expect(same.status).toBe(200)
+    // reads are not guarded: a GET with a foreign Origin still answers
+    const read = await fetch(base() + '/api/meta', { headers: { origin: 'http://evil.example' } })
+    expect(read.status).toBe(200)
+  })
+  it('refuses task ids and arm names that are not a single path segment', async () => {
+    for (const task of ['../../../../tmp', 'a/b', '..', '/etc', '']) {
+      const r = await fetch(base() + '/api/bench/rm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dataset: 'terminal-bench', task }) })
+      expect(r.status, task).toBe(400)
+      const g = await fetch(base() + '/api/bench/get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dataset: 'terminal-bench', task }) })
+      expect(g.status, task).toBe(400)
+    }
+    const del = await fetch(base() + '/api/arms/..%2F..%2Fconfig', { method: 'DELETE' })
+    expect(del.status).toBe(400)
+    const missing = await fetch(base() + '/api/arms/nope', { method: 'DELETE' })
+    expect(missing.status).toBe(404)
+  })
+})

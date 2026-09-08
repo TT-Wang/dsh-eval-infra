@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Project } from '../project.js'
-import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions } from './types.js'
+import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type BenchIndex, type BenchTask, type Fetcher, type MaterializeOptions , taskDir } from './types.js'
 
 const DATASET = 'swebench-verified'
 const HF_DATASET = 'SWE-bench/SWE-bench_Verified'
@@ -342,7 +342,7 @@ export const swebenchVerified: BenchAdapter = {
     const hash = createHash('sha256')
     for (const k of ['instance_id', 'base_commit', 'patch', 'test_patch', 'eval_script', 'problem_statement', 'FAIL_TO_PASS', 'PASS_TO_PASS', 'image', 'log_parser', 'eval_type'] as const) hash.update(k).update('\0').update(String(row[k] ?? '')).update('\0')
     const taskHash = hash.digest('hex')
-    const dir = join(this.poolDir(project), id)
+    const dir = taskDir(this.poolDir(project), id)
     rmSync(dir, { recursive: true, force: true })
     mkdirSync(join(dir, 'solution'), { recursive: true })
     writeFileSync(join(dir, 'instance.json'), JSON.stringify(row, null, 2) + '\n')
@@ -376,7 +376,7 @@ export const swebenchVerified: BenchAdapter = {
   },
 
   remove(project, id) {
-    const dir = join(this.poolDir(project), id)
+    const dir = taskDir(this.poolDir(project), id)
     if (!existsSync(dir)) return false
     rmSync(dir, { recursive: true, force: true })
     const pool = this.poolDir(project)

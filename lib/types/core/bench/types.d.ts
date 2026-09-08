@@ -1,8 +1,3 @@
-/**
- * The contract a public-benchmark adapter fulfils: a dataset's task index,
- * what each task needs (image, size, platform), and how one task becomes a
- * scenario directory — nothing is downloaded until a task is picked.
- */
 import type { Project } from '../project.js';
 export interface BenchTask {
     id: string;
@@ -51,6 +46,11 @@ export interface MaterializeOptions {
     /** Interpreter for a host-side verifier that needs its own environment (tests pass one so no venv is built). */
     verifierPython?: string;
 }
+/**
+ * The directory of one task inside a pool. A task id is one path segment; anything else (a path, `..`, an
+ * absolute name) is refused here so no adapter can be talked into removing or writing outside its pool.
+ */
+export declare function taskDir(pool: string, id: string): string;
 export interface BenchAdapter {
     /** Dataset id used on the command line and as the pool directory name. */
     id: string;

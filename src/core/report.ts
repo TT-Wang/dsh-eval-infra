@@ -700,6 +700,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     else if (gate === 'suspect') verdict = `Suspected regression on ${suspected.length} scenario${suspected.length === 1 ? '' : 's'} (${suspected.map(sc => { const p = pairs.find(q => q.scenario === sc)!; return `${sc}: baseline ${p.baseline.passes}/${p.baseline.n}, ${cand.name} ${p.candidate.passes}/${p.candidate.n}` }).join('; ')}): the repeats disagree, so this is not called a regression and not cleared either; rerun ${suspected.length === 1 ? 'it' : 'them'} with more repeats (dsh-eval rerun) before reading ${metric}.`
     else if (gate === 'incomplete') verdict = 'Incomplete: not every scenario has all repeats yet.'
     else if (unpricedTrials.length > 0) verdict = `Cost not priced: ${unpricedTrials.length} trial${unpricedTrials.length === 1 ? '' : 's'} ran a model with no entry in the price table (${[...new Set(unpricedTrials.map(l => l.model))].join(', ')}); usage was recorded, cost is 0, and no cost reading is made — add the model's prices to the project config.`
+    else if (costReading === 'none' && pairs.some(p => p.costPairs > 0)) verdict = `Both arms passed on ${pairs.filter(p => p.costPairs > 0).length} scenario${pairs.filter(p => p.costPairs > 0).length === 1 ? '' : 's'} but no trial carried a priced cost (usd 0 on every pair): the model is unpriced or no usage was recorded, so cost is not read.`
     else if (costReading === 'none') verdict = 'No scenario where both arms passed; nothing to compare on cost.'
     else if (costReading === 'equivalent') verdict = `Cost equivalent within ±${sesoi}% (${ciText}), no regressions.${gains}`
     else if (costReading === 'inconclusive' && comparable.length < 2) verdict = `Single comparable scenario: ${fmtPct(costPctCI.mean)} on cost, no interval possible; add scenarios or repeats before reading this as an effect.${gains}`
@@ -783,6 +784,11 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
   }
   const unsafeTrials = ledgers.filter(l => (l.violations?.length ?? 0) > 0)
   if (unsafeTrials.length > 0) notes.push(`Safety gate: ${unsafeTrials.length} trial(s) failed it — ${[...new Set(unsafeTrials.flatMap(l => (l.violations ?? []).map(v => v.kind)))].join(', ')}; a trial that fails the gate counts as a failure whatever its verifier said. Evidence per trial is in its ledger (violations, containerWrites).`)
+  // What the gate could check: a benchmark task owns its container (write scope unrestricted by contract), a host trial has no container diff.
+  const unrestricted = ledgers.filter(l => l.safety?.scope.includes('*')).length
+  const uninspected = ledgers.filter(l => l.safety !== undefined && !l.safety.writesInspected && !l.safety.scope.includes('*')).length
+  if (unrestricted > 0) notes.push(`Safety gate scope: ${unrestricted} trial(s) ran a benchmark task inside its own container, where the write scope is unrestricted by the benchmark's contract (installing what the task needs is expected); the gate checked destructive commands and obeyed injections there, not out-of-scope writes.`)
+  if (uninspected > 0) notes.push(`Safety gate scope: ${uninspected} trial(s) ran on the host, where there is no container diff to read; the gate checked destructive commands and obeyed injections only — the container sandbox (--sandbox docker) adds the write check.`)
   for (const c of candidates) if (c.bothUnsafe.length > 0) notes.push(`${c.arm}: both arms failed the safety gate on ${c.bothUnsafe.join(', ')} — not a regression of the candidate, but neither arm is acceptable there.`)
   const infrastructure = ledgers.filter(l => l.errorKind === 'infrastructure').length
   const errors = ledgers.filter(l => l.error !== undefined && l.errorKind !== 'infrastructure').length

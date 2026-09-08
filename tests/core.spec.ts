@@ -257,7 +257,7 @@ describe('hedged betting sequence', () => {
   it('is two-sided, valid at every t, shrinks, and excludes the null for a clear bounded effect', async () => {
     const { bettingCS } = await import('../src/core/stats.js')
     const CAP = 2
-    const ratios = Array.from({ length: 12 }, (_, i) => (0.6 + (i % 3) * 0.02) / CAP)   // candidate at ~62% of baseline cost
+    const ratios = Array.from({ length: 24 }, (_, i) => (0.6 + (i % 3) * 0.02) / CAP)   // candidate at ~62% of baseline cost
     const c = bettingCS(ratios)
     expect(c.hi * CAP).toBeLessThan(1)
     expect(c.lo * CAP).toBeGreaterThan(0.2)
@@ -267,7 +267,7 @@ describe('hedged betting sequence', () => {
     const n = bettingCS(noisy)
     expect(n.lo * CAP).toBeLessThan(1)
     expect(n.hi * CAP).toBeGreaterThan(1)
-    const expensive = Array.from({ length: 12 }, () => 1.6 / CAP)
+    const expensive = Array.from({ length: 24 }, () => 1.6 / CAP)
     expect(bettingCS(expensive).lo * CAP).toBeGreaterThan(1)
     expect(bettingCS([]).t).toBe(0)
   })
@@ -748,5 +748,96 @@ describe('statistics review (H14–H19 and the medium findings)', () => {
     expect(tight.lo).toBeLessThanOrEqual(0.4567)
     expect(tight.hi).toBeGreaterThanOrEqual(0.4567)
     expect(tight.hi - tight.lo).toBeLessThan(0.3)
+  })
+})
+
+describe('security and validity review (C1–C4, H1, H8, H10, H13)', () => {
+  it('the hedged betting sequence keeps its level under optional stopping (H1)', async () => {
+    const { bettingRejectsAt, bettingCS } = await import('../src/core/stats.js')
+    // seeded Bernoulli(1/2) sequences: the true mean is 1/2; count the runs where 1/2 is ever rejected within 40 looks
+    let state = 20260909
+    const rnd = (): number => { state = (state * 1664525 + 1013904223) >>> 0; return state / 2 ** 32 }
+    const sims = 1500
+    let falseExclusions = 0
+    for (let s = 0; s < sims; s += 1) {
+      const xs = Array.from({ length: 40 }, () => (rnd() < 0.5 ? 0 : 1))
+      if (bettingRejectsAt(xs, 0.5, 0.05) !== null) falseExclusions += 1
+    }
+    const rate = falseExclusions / sims
+    expect(rate).toBeLessThan(0.06)             // the max(K+, K−) rule ran at 6.5–8%; the hedged average sits near 3–4%
+    expect(rate).toBeGreaterThan(0.005)         // and it is not vacuous
+    // and a real effect is still found: a 0.8-mean sequence excludes 1/2 well within 40 looks
+    expect(bettingRejectsAt(Array.from({ length: 40 }, (_, i) => (i % 5 === 0 ? 0 : 1)), 0.5, 0.05)).not.toBeNull()
+    const cs = bettingCS(Array.from({ length: 60 }, (_, i) => (i % 5 === 0 ? 0 : 1)), 0.05)
+    expect(cs.lo).toBeGreaterThan(0.5)
+  })
+
+  it('scenario code gets an allowlisted environment without the host\'s secrets (H10)', async () => {
+    const { scenarioProcessEnv } = await import('../src/core/scenario.js')
+    const env = scenarioProcessEnv({ PATH: '/usr/bin', HOME: '/home/u', DEEPSEEK_API_KEY: 'sk-1', AWS_SECRET_ACCESS_KEY: 'x', GITHUB_TOKEN: 't', HTTPS_PROXY: 'http://127.0.0.1:7890', DOCKER_HOST: 'unix:///var/run/docker.sock', DSH_EVAL_CONTAINER: 'cid', PYTHONPATH: '/p', DSH_EVAL_API_KEY_HINT: 'nope', RANDOM_THING: '1', LC_ALL: 'C' })
+    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/home/u', HTTPS_PROXY: 'http://127.0.0.1:7890', DOCKER_HOST: 'unix:///var/run/docker.sock', DSH_EVAL_CONTAINER: 'cid', PYTHONPATH: '/p', LC_ALL: 'C' })
+  })
+
+  it('stashes ground truth in a private directory away from the workspace and restores it (C4)', async () => {
+    const { stashTruth } = await import('../src/core/runner.js')
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, statSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join, dirname } = await import('node:path')
+    const workRoot = mkdtempSync(join(tmpdir(), 'dsh-eval-c4-'))
+    const workdir = join(workRoot, 'trial-1')
+    mkdirSync(join(workdir, '.truth'), { recursive: true })
+    writeFileSync(join(workdir, '.truth', 'answer'), '42')
+    const restore = stashTruth(workdir)!
+    expect(existsSync(join(workdir, '.truth'))).toBe(false)
+    // nothing truth-like beside the workspace (the old sibling stash), and nothing under the work root at all
+    expect(readdirSync(workRoot)).toEqual(['trial-1'])
+    expect(readdirSync(workdir)).toEqual([])
+    restore()
+    expect(readFileSync(join(workdir, '.truth', 'answer'), 'utf8')).toBe('42')
+    // an explicit stash root is private (0700) as well
+    const explicit = join(workRoot, 'stash')
+    const restore2 = stashTruth(workdir, explicit)!
+    expect((statSync(explicit).mode & 0o777)).toBe(0o700)
+    expect(dirname(explicit)).toBe(workRoot)
+    restore2()
+  })
+
+  it('keeps benchmark task ids inside their pool (C2)', async () => {
+    const { taskDir } = await import('../src/core/bench/types.js')
+    const { validTaskId } = await import('../src/server/index.js')
+    expect(taskDir('/pool/tb', 'fix-git')).toBe('/pool/tb/fix-git')
+    expect(taskDir('/pool/tb', 'django__django-13406')).toBe('/pool/tb/django__django-13406')
+    for (const bad of ['../../tmp', '..', 'a/b', '/etc', '', '.hidden/../x', 'x'.repeat(200)]) {
+      expect(() => taskDir('/pool/tb', bad), bad).toThrow(/invalid task id|outside the pool/)
+      expect(validTaskId(bad), bad).toBe(false)
+    }
+    expect(validTaskId('psf__requests-2317')).toBe(true)
+  })
+
+  it('identifies receipt keys by fingerprint, compares them by content, and digests a report without its timestamp (C1)', async () => {
+    const { keyFingerprint, sameKey, reportDigest, signReceipt, receiptSignatureValid } = await import('../src/core/manifest.js')
+    const { generateKeyPairSync } = await import('node:crypto')
+    const pem = (): { privateKey: string; publicKey: string } => { const { publicKey, privateKey } = generateKeyPairSync('ed25519'); return { privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString() } }
+    const a = pem()
+    const b = pem()
+    expect(keyFingerprint(a.publicKey)).toMatch(/^[0-9a-f]{16}$/)
+    expect(keyFingerprint(a.publicKey)).not.toBe(keyFingerprint(b.publicKey))
+    expect(sameKey(a.publicKey, a.publicKey.replace(/\n/g, '\r\n'))).toBe(true)
+    expect(sameKey(a.publicKey, b.publicKey)).toBe(false)
+    expect(reportDigest({ generatedAt: '1', x: 1, y: [2] })).toBe(reportDigest({ y: [2], x: 1, generatedAt: '2' }))
+    expect(reportDigest({ x: 1 })).not.toBe(reportDigest({ x: 2 }))
+    const receipt = signReceipt({ schema: 'dsh-eval-receipt/1', runId: 'r', issuedAt: '', evidenceSha: 'e', contract: {} as never, claims: [], coverage: { trials: 0, scenarios: 0, repeats: 0, arms: 0, reconciled: 0, metered: 0, unrun: 0, errors: 0 }, environment: {}, publicKey: a.publicKey }, a.privateKey)
+    expect(receiptSignatureValid(receipt)).toBe(true)                 // self-consistent
+    expect(receiptSignatureValid(receipt, a.publicKey)).toBe(true)    // and under the trusted key
+    expect(receiptSignatureValid(receipt, b.publicKey)).toBe(false)   // but not under another
+  })
+
+  it('pins the sandbox image by digest and the Node runtime by checksum (H13)', async () => {
+    const { DEFAULT_IMAGE } = await import('../src/core/docker.js')
+    const { NODE_SHA256, NODE_VERSION } = await import('../src/core/environment.js')
+    expect(DEFAULT_IMAGE).toMatch(/^node:22-bookworm-slim@sha256:[0-9a-f]{64}$/)
+    expect(NODE_VERSION).toBe('v22.23.2')
+    expect(NODE_SHA256.x64).toMatch(/^[0-9a-f]{64}$/)
+    expect(NODE_SHA256.arm64).toMatch(/^[0-9a-f]{64}$/)
   })
 })

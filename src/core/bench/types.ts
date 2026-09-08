@@ -3,6 +3,7 @@
  * what each task needs (image, size, platform), and how one task becomes a
  * scenario directory — nothing is downloaded until a task is picked.
  */
+import { join, resolve, sep } from 'node:path'
 import type { Project } from '../project.js'
 
 export interface BenchTask {
@@ -44,6 +45,18 @@ export interface MaterializeOptions {
   docker?: (args: string[]) => Promise<{ code: number; stderr: string; stdout?: string }>
   /** Interpreter for a host-side verifier that needs its own environment (tests pass one so no venv is built). */
   verifierPython?: string
+}
+
+/**
+ * The directory of one task inside a pool. A task id is one path segment; anything else (a path, `..`, an
+ * absolute name) is refused here so no adapter can be talked into removing or writing outside its pool.
+ */
+export function taskDir(pool: string, id: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes('..')) throw new Error(`invalid task id ${JSON.stringify(id)}: one path segment of letters, digits, . _ -`)
+  const dir = resolve(pool, id)
+  const root = resolve(pool)
+  if (dir !== join(root, id) || !dir.startsWith(root + sep)) throw new Error(`task ${id} resolves outside the pool ${pool}`)
+  return dir
 }
 
 export interface BenchAdapter {

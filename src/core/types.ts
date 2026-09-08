@@ -240,6 +240,8 @@ export interface RunLedger {
   errorKind?: 'runtime' | 'infrastructure'
   /** The model had no entry in the price table: usd figures are 0 and the report withholds cost readings. */
   unpriced?: boolean
+  /** What the safety gate could check on this trial: the write scope it enforced ('*' = unrestricted, a benchmark task's own container) and whether container writes were inspected at all. */
+  safety?: { scope: string[]; writesInspected: boolean; checked: Array<'writes' | 'commands' | 'injection'> }
   /** Present when a human override replaced the machine verdict (the original is kept here). */
   machineVerdict?: Verdict | null
   overridden?: boolean
@@ -297,6 +299,10 @@ export interface RunPlan {
   replay?: { runId: string; forkAt?: number }
   /** Container mode kept dsh's in-process sandbox on inside the container. */
   containerSandbox?: boolean
+  /** Whether the independent usage meter was on; a resume keeps it as it was. */
+  meter?: boolean
+  /** Seed of the sequential shuffle / prompt perturbation, kept for resumes. */
+  seed?: number
   /**
    * The reading the run is about, chosen before the data: cost per solved task
    * (default), efficiency (steps per solved task) or quality (blinded judge

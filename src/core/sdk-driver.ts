@@ -21,7 +21,11 @@ export interface SdkDriverOptions {
   /** Explicit dsh CLI module for the SDK client (default: the linked same-version @deepseek-ai/dsh). */
   dshBin?: string
   initializeTimeoutMs?: number
+  /** Test seam: the harness constructor to use instead of loading @deepseek-ai/dsh-sdk-client. */
+  harness?: HarnessCtor
 }
+
+export type { HarnessCtor, HarnessLike, HarnessNotificationLike }
 
 async function loadHarness(): Promise<HarnessCtor> {
   // Resolved at run time on a machine that has dsh; the non-literal specifier keeps tsc from demanding its types elsewhere.
@@ -42,7 +46,7 @@ class SdkDriver implements Driver {
 
   private async ensure(): Promise<ReturnType<HarnessLike['session']>> {
     if (this.session !== undefined) return this.session
-    const Harness = await loadHarness()
+    const Harness = this.options.harness ?? await loadHarness()
     const { arm, workdir, evalHome, overlays, env } = this.input
     const opts: Record<string, unknown> = {
       profile: arm.profile,
@@ -64,7 +68,9 @@ class SdkDriver implements Driver {
   }
 
   async runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult> {
+    if (options.signal?.aborted) throw new Error('cancelled')
     const session = await this.ensure()
+    if (options.signal?.aborted) throw new Error('cancelled')
     // The client observes every notification as it comes off the wire; the root
     // session's events are what a live view of the trial is made of.
     const onEvent = options.onEvent

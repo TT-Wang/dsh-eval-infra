@@ -25,6 +25,13 @@ export interface PythonRunOptions {
     /** Extra environment for the verifier process (a container scenario's host-side verifier gets the container's id this way). */
     env?: Record<string, string>;
 }
+/**
+ * The environment scenario code (setup, verify, oracle) runs with: what a Python process needs to find its
+ * interpreter, packages, temp dir, proxy and Docker (host-side benchmark verifiers drive `docker`), and the
+ * DSH_EVAL_* variables the runner sets — never the host's secrets. Anything whose name says key, token,
+ * secret or password is dropped whatever else it matches.
+ */
+export declare function scenarioProcessEnv(base?: Record<string, string | undefined>): Record<string, string>;
 /** Run a python snippet with the scenario directory on sys.path; returns stdout. */
 export declare function runScenarioPython(scenario: Scenario, code: string, options?: PythonRunOptions): Promise<string>;
 export declare function scenarioSetup(scenario: Scenario, workdir: string, options?: PythonRunOptions): Promise<void>;

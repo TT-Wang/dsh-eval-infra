@@ -324,3 +324,145 @@ describe('sequential mode guards', () => {
     await expect(launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], sequential: true, northStar: 'efficiency' }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })).rejects.toMatchObject({ code: 'arms' })
   })
 })
+
+describe('trust root, sealed derivations and pinned context (C1)', () => {
+  const keyPair = async () => { const { generateKeyPairSync } = await import('node:crypto'); const { publicKey, privateKey } = generateKeyPairSync('ed25519'); return { privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString() } }
+
+  it('a ledger edited together with its manifest entry, or a receipt re-signed with a fresh key, never verifies', async () => {
+    const { verifyRunIntegrity } = await import('../src/core/orchestrate.js')
+    const { readManifest, readReceipt, signReceipt, evidenceShaOf } = await import('../src/core/manifest.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { createHash } = await import('node:crypto')
+    const p = project()
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory({ costScale: { persona: 0.5 } }), invoke: fakeDsh })
+    await launched.done
+    const paths = runPaths(p.runsRoot, launched.id)
+    expect(verifyRunIntegrity(p, launched.id).status).toBe('PASS')
+    expect(existsSync(join(paths.dir, 'context.json'))).toBe(true)
+    expect(readManifest(paths)!.files['context.json']).toBeDefined()          // the archive context is evidence
+    // 1. tamper with a ledger AND rewrite its manifest entry and the manifest's own evidence sha (the "re-hash" attack)
+    const manifest = readManifest(paths)!
+    const ledgerFile = Object.keys(manifest.files).find(f => f.startsWith('ledgers/') && f.endsWith('.json') && f.includes('/persona/'))!
+    const abs = join(paths.dir, ledgerFile)
+    const ledger = JSON.parse(readFileSync(abs, 'utf8')) as { totals: { usd: number } }
+    ledger.totals.usd *= 10
+    const bytes = JSON.stringify(ledger)
+    writeFileSync(abs, bytes)
+    manifest.files[ledgerFile] = createHash('sha256').update(bytes).digest('hex')
+    manifest.evidenceSha = evidenceShaOf(manifest.files)
+    writeFileSync(join(paths.dir, 'manifest.json'), JSON.stringify(manifest))
+    const rehashed = verifyRunIntegrity(p, launched.id)
+    expect(rehashed.changed).toEqual([])                                        // the manifest agrees with the disk…
+    expect(rehashed.status).toBe('INVALID')                                     // …but the signed receipt names other bytes
+    expect(rehashed.statusReason).toMatch(/evidence sha|report/)
+    // a thorough attacker rebuilds the report too, so the stored report matches the tampered ledger; the receipt still does not
+    const { rebuildReport } = await import('../src/core/orchestrate.js')
+    rebuildReport(p, launched.id)
+    const rebuilt = verifyRunIntegrity(p, launched.id)
+    expect(rebuilt.reportReproduces).toBe(true)
+    expect(rebuilt.status).toBe('INVALID')
+    expect(rebuilt.statusReason).toMatch(/evidence sha/)
+    // 2. forge the receipt too: new claims, new evidence sha, signed with a fresh key pair whose public half is embedded
+    const receipt = readReceipt(paths)!
+    const fresh = await keyPair()
+    const { signature: _s, ...unsigned } = receipt
+    void _s
+    const forged = signReceipt({ ...unsigned, evidenceSha: manifest.evidenceSha, publicKey: fresh.publicKey, claims: receipt.claims.map(c => ({ ...c, costReading: 'cheaper', grade: 'improvement' })) }, fresh.privateKey)
+    writeFileSync(join(paths.dir, 'receipt.json'), JSON.stringify(forged))
+    const forgedResult = verifyRunIntegrity(p, launched.id)
+    expect(forgedResult.status).not.toBe('PASS')
+    expect(forgedResult.statusReason).toMatch(/does not trust|fingerprint/)        // self-signed by an unknown key: not verified
+    // even a verifier told to trust that key finds the report digest does not match the forged claims
+    const trustedAnyway = verifyRunIntegrity(p, launched.id, { keys: [fresh.publicKey] })
+    expect(trustedAnyway.status).toBe('INVALID')
+  })
+
+  it('judge and annotation files are sealed evidence: a judged run verifies, an edited judge file does not', async () => {
+    const { verifyRunIntegrity, runJudge } = await import('../src/core/orchestrate.js')
+    const { readManifest } = await import('../src/core/manifest.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { cpSync } = await import('node:fs')
+    // a scenario library where t1 declares a judge rubric, so the judge has artifacts to read
+    const lib = mkdtempSync(join(tmpdir(), 'dsh-eval-judged-lib-')); tmp.push(lib)
+    cpSync(join(FIXTURES, 't1_write_answer'), join(lib, 't1_write_answer'), { recursive: true })
+    const meta = JSON.parse(readFileSync(join(lib, 't1_write_answer', 'meta.json'), 'utf8')) as Record<string, unknown>
+    writeFileSync(join(lib, 't1_write_answer', 'meta.json'), JSON.stringify({ ...meta, judge: { rubric: 'the answer file is present and tidy', artifacts: ['answer.txt'] } }))
+    const p = project({ scenarioRoot: lib })
+    const launched = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await launched.done
+    const paths = runPaths(p.runsRoot, launched.id)
+    const chat = async (): Promise<{ text: string; usage: { hit: number; miss: number; output: number } }> => ({ text: JSON.stringify({ winner: '1', reason: 'first', confidence: 0.9 }), usage: { hit: 0, miss: 10, output: 5 } })
+    await runJudge(p, launched.id, { models: ['gpt-5.2'], chats: { 'gpt-5.2': chat } })
+    expect(readManifest(paths)!.files['judge-persona.json']).toBeDefined()     // sealed
+    const judged = verifyRunIntegrity(p, launched.id)
+    expect(judged.status).toBe('PASS')                                          // re-sealed and re-receipted after the judge
+    const file = join(paths.dir, 'judge-persona.json')
+    const j = JSON.parse(readFileSync(file, 'utf8')) as { wins: number; losses: number }
+    writeFileSync(file, JSON.stringify({ ...j, wins: j.wins + 5, losses: 0 }))
+    const edited = verifyRunIntegrity(p, launched.id)
+    expect(edited.status).toBe('INVALID')
+    expect(edited.changed).toEqual(['judge-persona.json'])
+  })
+
+  it('a bundle re-derives its receipted readings in a project with no archive, given the author\'s key', async () => {
+    const { verifyRunDir } = await import('../src/core/orchestrate.js')
+    const { runPaths } = await import('../src/core/store.js')
+    const { cpSync } = await import('node:fs')
+    const author = project()
+    // an A/A run first, so the archive supplies a floor the A/B reading depends on
+    const aa = await launchRun(author, { baseline: 'baseline', candidates: [], aa: true, scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await aa.done
+    const ab = await launchRun(author, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory({ costScale: { persona: 0.5 } }), invoke: fakeDsh })
+    const { report } = await ab.done
+    expect(report.candidates[0]!.floor).toBe('thin')                             // the reading saw the archive's (one-scenario) floor
+    const bundle = join(mkdtempSync(join(tmpdir(), 'dsh-eval-bundle-')), ab.id)
+    cpSync(runPaths(author.runsRoot, ab.id).dir, bundle, { recursive: true })
+    const authorKey = (JSON.parse(readFileSync(join(author.evalDir, 'receipt-key.json'), 'utf8')) as { publicKey: string }).publicKey
+    const stranger = project()                                                   // no A/A run, no archive, another signing key
+    const untrusted = verifyRunDir(stranger, bundle)
+    expect(untrusted.status).toBe('INCONCLUSIVE')
+    expect(untrusted.statusReason).toMatch(/does not trust/)
+    const trusted = verifyRunDir(stranger, bundle, { keys: [authorKey] })
+    expect(trusted.reportReproduces).toBe(true)                                  // the pinned context, not the stranger's archive, fed the derivation
+    expect(trusted.status).toBe('PASS')
+  })
+})
+
+describe('resume keeps its conditions (H7) and the judge default is cross-family (H4)', () => {
+  it('refuses a resume that names other conditions than the run started with', async () => {
+    const p = project()
+    const ac = new AbortController()
+    let created = 0
+    const inner = scriptedDriverFactory()
+    const first = await launchRun(p, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 2 }, { driverFactory: (i) => { created += 1; if (created === 1) ac.abort(); return inner(i) }, invoke: fakeDsh, signal: ac.signal })
+    await first.done
+    await expect(launchRun(p, { baseline: 'baseline', candidates: [], resume: first.id, perturb: true }, { driverFactory: inner, invoke: fakeDsh })).rejects.toMatchObject({ code: 'usage' })
+    await expect(launchRun(p, { baseline: 'baseline', candidates: [], resume: first.id, sandbox: 'docker' }, { driverFactory: inner, invoke: fakeDsh })).rejects.toMatchObject({ code: 'usage' })
+    await expect(launchRun(p, { baseline: 'baseline', candidates: [], resume: first.id, northStar: 'efficiency' }, { driverFactory: inner, invoke: fakeDsh })).rejects.toMatchObject({ code: 'usage' })
+    await expect(launchRun(p, { baseline: 'baseline', candidates: [], resume: first.id, repeats: 3 }, { driverFactory: inner, invoke: fakeDsh })).rejects.toMatchObject({ code: 'usage' })
+    const second = await launchRun(p, { baseline: 'baseline', candidates: [], resume: first.id, repeats: 2 }, { driverFactory: inner, invoke: fakeDsh })
+    const r2 = await second.done
+    expect(r2.progress.status).toBe('done')
+    expect(r2.progress.completed).toBe(4)
+  })
+  it('without a named judge, uses the configured cross-family judge and otherwise refuses instead of defaulting to the arms\' family', async () => {
+    const { runJudge } = await import('../src/core/orchestrate.js')
+    const { cpSync } = await import('node:fs')
+    const lib = mkdtempSync(join(tmpdir(), 'dsh-eval-judged-lib-')); tmp.push(lib)
+    cpSync(join(FIXTURES, 't1_write_answer'), join(lib, 't1_write_answer'), { recursive: true })
+    const meta = JSON.parse(readFileSync(join(lib, 't1_write_answer', 'meta.json'), 'utf8')) as Record<string, unknown>
+    writeFileSync(join(lib, 't1_write_answer', 'meta.json'), JSON.stringify({ ...meta, judge: { rubric: 'tidy', artifacts: ['answer.txt'] } }))
+    const chat = async (): Promise<{ text: string; usage: { hit: number; miss: number; output: number } }> => ({ text: JSON.stringify({ winner: '1', reason: 'first', confidence: 0.9 }), usage: { hit: 0, miss: 10, output: 5 } })
+    const bare = project({ scenarioRoot: lib })
+    const run1 = await launchRun(bare, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await run1.done
+    await expect(runJudge(bare, run1.id, { chats: { 'deepseek-v4-pro': chat } })).rejects.toMatchObject({ code: 'usage' })
+    const reports = await runJudge(bare, run1.id, { allowSameFamily: true, chats: { 'deepseek-v4-pro': chat } })
+    expect(reports[0]!.models).toEqual(['deepseek-v4-pro'])
+    const configured = project({ scenarioRoot: lib, judges: [{ name: 'gpt', model: 'gpt-5.2', baseUrl: 'https://example.invalid/v1', apiKeyEnv: 'NOPE_KEY', family: 'openai' }] })
+    const run2 = await launchRun(configured, { baseline: 'baseline', candidates: ['persona'], scenarios: ['t1*'], repeats: 1 }, { driverFactory: scriptedDriverFactory(), invoke: fakeDsh })
+    await run2.done
+    const viaConfig = await runJudge(configured, run2.id, { chats: { gpt: chat } })
+    expect(viaConfig[0]!.models).toEqual(['gpt'])
+  })
+})

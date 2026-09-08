@@ -38,7 +38,7 @@ describe('docker sandbox', () => {
     expect(joined).toContain('-e DEEPSEEK_API_KEY')
     expect(joined).not.toContain('DEEPSEEK_API_KEY=k')
     expect(args.slice(-2)).toEqual(['--patch', overlay])
-    expect(args).toContain('node:22-bookworm-slim')
+    expect(args.some(a => a.startsWith('node:22-bookworm-slim@sha256:'))).toBe(true)   // digest-pinned base image
   })
   it('container overlay rows switch off the in-process sandbox and the permission presets and add the plain executor', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-eval-docker-')); tmp.push(root)

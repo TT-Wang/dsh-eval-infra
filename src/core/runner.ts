@@ -5,7 +5,7 @@
  * scripted driver. Scheduling order is fixed — scenario → repeat → arm — so
  * baseline and candidate always run back to back under the same conditions.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -85,17 +85,26 @@ export function planJobs(scenarios: Scenario[], arms: ResolvedArm[], repeats: nu
 }
 
 /**
- * Ground truth must not be readable from inside the workspace. Scenario
- * generators that keep it under `<workdir>/.truth` get it moved out after
- * setup and back in before verify; the agent never sees it.
+ * Ground truth is kept out of the workspace: `<workdir>/.truth` is moved after
+ * setup into a private directory (mode 0700, random name) under the system
+ * temp root — not beside the workspace, where `ls ..` would find it — and
+ * moved back before verify. On the host this keeps the answer key out of the
+ * agent's working tree, not out of reach of a process running as the same
+ * user; the container sandbox, which mounts the workspace and nothing else,
+ * is the boundary. The docs say so.
  */
-export function stashTruth(workdir: string, stashRoot: string): (() => void) | undefined {
+export function stashTruth(workdir: string, stashRoot?: string): (() => void) | undefined {
   const truth = join(workdir, '.truth')
   if (!existsSync(truth)) return undefined
-  mkdirSync(stashRoot, { recursive: true })
-  const stash = join(stashRoot, 'truth-' + basename(workdir))
+  const root = stashRoot ?? mkdtempSync(join(tmpdir(), 'dsh-eval-truth-'))
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  try { chmodSync(root, 0o700) } catch { /* best effort on filesystems without modes */ }
+  const stash = join(root, 'truth-' + basename(workdir))
   renameSync(truth, stash)
-  return () => { if (existsSync(stash)) renameSync(stash, truth) }
+  return () => {
+    if (existsSync(stash)) renameSync(stash, truth)
+    if (stashRoot === undefined) rmSync(root, { recursive: true, force: true })
+  }
 }
 
 export interface RunDeps {
@@ -377,7 +386,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   try {
     if (!container) {
       await scenarioSetup(scenario, workdir)
-      restoreTruth = stashTruth(workdir, join(workRoot, '.truth-stash'))
+      restoreTruth = stashTruth(workdir)
     }
     const overlays = [scenario.meta.network ? base.network : base.noNetwork, ...armOverlays(arm)]
     if (deps.meter) {
@@ -486,9 +495,13 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   // The safety gate: writes outside the scope, destructive commands, obeyed injections. Any finding fails the trial,
   // whatever the verifier said; the verifier's own reason is kept beside it.
   let violations: RunLedger['violations']
+  let safetyRecord: RunLedger['safety']
   const safetyOff = deps.safety?.off === true || scenario.meta.safety === 'off'
   if (!safetyOff && error === undefined) {
+    // A benchmark task owns its container (it installs what it needs), so its write scope is unrestricted and the
+    // gate can only check commands and injections there; the ledger says so, and the report repeats it.
     const scope = scenario.meta.scope ?? (container ? ['*'] : [realpathSync(workdir), workdir])
+    safetyRecord = { scope, writesInspected: inspectedContainer, checked: [...(scope.includes('*') || !inspectedContainer ? [] : ['writes' as const]), 'commands' as const, 'injection' as const] }
     const found = evaluateSafety({ diff: inspectedContainer ? containerWrites.join('\n') : null, scope, ignores: [...DEFAULT_WRITE_IGNORES, ...(deps.safety?.ignore ?? [])], mounts: mountTargets, events, network: scenario.meta.network === true, verdict })
     if (found.length > 0) {
       violations = found
@@ -538,6 +551,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   if (deps.perturb) ledger.promptVariant = variantIndex
   if (infrastructure) ledger.errorKind = 'infrastructure'
   if (violations !== undefined) ledger.violations = violations
+  if (safetyRecord !== undefined) ledger.safety = safetyRecord
   if (inspectedContainer && containerWrites.length > 0) ledger.containerWrites = containerWrites.slice(0, 500)
   if (capped) ledger.capped = capped
   const verifierPath = join(scenario.dir, 'verify.py')

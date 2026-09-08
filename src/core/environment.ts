@@ -7,7 +7,8 @@
  * checkout are bind-mounted in, the same way the plain container mode does it.
  */
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { dshRuntimeMounts, type DockerOptions } from './docker.js'
@@ -18,6 +19,8 @@ const execFileAsync = promisify(execFile)
 
 /** The Node build mounted into task images. Official Linux builds need glibc; every Terminal-Bench 2.0 image has it. */
 export const NODE_VERSION = 'v22.23.2'
+/** sha256 of the Node tarballs mounted into task containers (nodejs.org SHASUMS256.txt for v22.23.2); a download that does not match is discarded. */
+export const NODE_SHA256: Record<'x64' | 'arm64', string> = { x64: 'd60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307', arm64: 'fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8' }
 export const NODE_MOUNT = '/opt/dsh-node'
 
 export type ImagePlatform = 'amd64' | 'arm64'
@@ -63,9 +66,9 @@ export interface ContainerTaskOptions {
   log?: (line: string) => void
 }
 
-function run(cmd: string, args: string[], timeoutMs = 120_000): Promise<ExecResult> {
+function run(cmd: string, args: string[], timeoutMs = 120_000, env?: Record<string, string>): Promise<ExecResult> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, ...(env ? { env: { ...process.env, ...env } } : {}) }, (err, stdout, stderr) => {
       const e = err as (Error & { code?: number | string; killed?: boolean }) | null
       resolve({ code: e === null ? 0 : typeof e.code === 'number' ? e.code : e.killed ? 124 : 1, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
     })
@@ -86,6 +89,8 @@ export async function ensureNodeRuntime(evalHome: string, platform: ImagePlatfor
   const tarball = join(dir, 'node.tar.xz')
   const dl = await run('curl', ['-fsSL', '-o', tarball, url], 600_000)
   if (dl.code !== 0) { rmSync(dir, { recursive: true, force: true }); throw new Error(`could not download ${url}: ${dl.stderr.trim().split('\n').at(-1) ?? dl.code}`) }
+  const got = createHash('sha256').update(readFileSync(tarball)).digest('hex')
+  if (got !== NODE_SHA256[arch]) { rmSync(dir, { recursive: true, force: true }); throw new Error(`${url} does not match its pinned sha256 (got ${got.slice(0, 16)}…, expected ${NODE_SHA256[arch].slice(0, 16)}…); refusing to mount it`) }
   const ex = await run('tar', ['-xJf', tarball, '-C', dir, '--strip-components', '1'], 300_000)
   rmSync(tarball, { force: true })
   if (ex.code !== 0 || !existsSync(join(dir, 'bin', 'node'))) { rmSync(dir, { recursive: true, force: true }); throw new Error(`could not unpack ${url}: ${ex.stderr.trim().split('\n').at(-1) ?? ex.code}`) }
@@ -127,10 +132,20 @@ export function taskContainerArgs(input: DriverInput, options: ContainerTaskOpti
   // proxy that traffic has to go the same way the host's does, so the host's proxy variables are forwarded with a
   // loopback address rewritten to the host gateway — a proxy on 127.0.0.1 is unreachable from the container by that name.
   for (const [k, v] of proxyEnvForContainer(process.env)) args.push('-e', `${k}=${v}`)
-  for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) args.push('-e', `${k}=${input.env[k]}`)
-  for (const [k, v] of Object.entries(input.arm.env ?? {})) args.push('-e', `${k}=${v}`)
+  // Secrets never go on the command line (argv is readable by every process on the host): `-e NAME` makes Docker
+  // read the value from the environment of the `docker run` process, which `taskContainerEnv` supplies.
+  for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) args.push('-e', k)
+  for (const k of Object.keys(input.arm.env ?? {})) args.push('-e', k)
   args.push(options.image, 'tail', '-f', '/dev/null')
   return args
+}
+
+/** The environment `docker run` needs for the `-e NAME` entries of `taskContainerArgs`: the key and the arm's own variables. */
+export function taskContainerEnv(input: DriverInput): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of ['DEEPSEEK_API_KEY']) if (input.env[k] !== undefined) out[k] = input.env[k]!
+  for (const [k, v] of Object.entries(input.arm.env ?? {})) out[k] = v
+  return out
 }
 
 /** The host's proxy settings as a container sees them: loopback rewritten to the host gateway, both spellings kept. */
@@ -200,7 +215,7 @@ export async function imageWorkdir(image: string): Promise<string | null> {
 export async function openContainerTask(input: DriverInput, options: ContainerTaskOptions): Promise<TaskRuntime> {
   // The task's working directory is the image's unless the scenario says otherwise; /app is only the last resort.
   if (options.workdir === undefined) { const wd = await imageWorkdir(options.image); options = { ...options, workdir: wd ?? '/app' } }
-  const started = await run('docker', taskContainerArgs(input, options), 300_000)
+  const started = await run('docker', taskContainerArgs(input, options), 300_000, taskContainerEnv(input))
   if (started.code !== 0) throw new Error(`docker run ${options.image} failed: ${started.stderr.trim().split('\n').at(-1) ?? started.code}`)
   const id = started.stdout.trim()
   const environment = new ContainerEnvironment(id, options.workdir ?? '/app', options.image, options.platform, taskContainerMounts(input, options), options.log)

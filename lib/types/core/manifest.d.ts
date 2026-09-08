@@ -68,6 +68,8 @@ export interface RunReceipt {
         sandbox?: string;
         composedTreeSha?: Record<string, string>;
     };
+    /** sha256 of the canonical JSON of the whole derived report (minus its timestamp): the verifier re-derives and compares every field, not a summary. Absent on receipts issued before it existed. */
+    reportSha?: string;
     publicKey: string;
     /** Ed25519 signature over the canonical JSON of everything above except this field. */
     signature: string;
@@ -87,7 +89,12 @@ export interface VerifyResult {
     /** Whether report.json's readings equal a fresh derivation from the sealed ledgers (null when no report). */
     reportReproduces: boolean | null;
     reportDiff: string[];
+    /** Evidence sha recomputed from the bytes on disk (the manifest's file list, hashed again); what a receipt is checked against. */
+    evidenceShaOnDisk?: string;
+    /** Whether the manifest's own evidence sha follows from its file list (a rewritten manifest that forgot to recompute it fails here). */
+    manifestConsistent?: boolean;
 }
+export declare function isDerived(rel: string): boolean;
 export declare function evidenceFiles(runDir: string): string[];
 export declare function fileSha(path: string): string;
 export declare function evidenceShaOf(files: Record<string, string>): string;
@@ -104,6 +111,16 @@ export declare function signingKey(evalDir: string): {
     publicKey: string;
 };
 export declare function signReceipt(receipt: Omit<RunReceipt, 'signature'>, privateKeyPem: string): RunReceipt;
-export declare function receiptSignatureValid(receipt: RunReceipt): boolean;
+/**
+ * Does the signature verify under `publicKeyPem`? Without a key this checks the receipt against the key it carries,
+ * which proves the receipt is self-consistent and nothing more; a verifier passes the key it trusts.
+ */
+export declare function receiptSignatureValid(receipt: RunReceipt, publicKeyPem?: string): boolean;
+/** Short fingerprint of a public key (sha256 of its DER SPKI, first 16 hex chars): what an author publishes and a reader compares. */
+export declare function keyFingerprint(publicKeyPem: string): string;
+/** Two PEM keys are the same key when their DER encodings match, whatever their whitespace. */
+export declare function sameKey(a: string, b: string): boolean;
+/** Digest of a derived report, timestamp removed: identical inputs and code give an identical digest. */
+export declare function reportDigest(report: Record<string, unknown>): string;
 export declare function readReceipt(paths: RunPaths): RunReceipt | null;
 export declare function writeReceipt(paths: RunPaths, receipt: RunReceipt): void;

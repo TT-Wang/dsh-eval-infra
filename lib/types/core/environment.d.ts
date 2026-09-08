@@ -2,6 +2,8 @@ import { type DockerOptions } from './docker.js';
 import type { DriverFactory, DriverInput } from './runner.js';
 /** The Node build mounted into task images. Official Linux builds need glibc; every Terminal-Bench 2.0 image has it. */
 export declare const NODE_VERSION = "v22.23.2";
+/** sha256 of the Node tarballs mounted into task containers (nodejs.org SHASUMS256.txt for v22.23.2); a download that does not match is discarded. */
+export declare const NODE_SHA256: Record<'x64' | 'arm64', string>;
 export declare const NODE_MOUNT = "/opt/dsh-node";
 export type ImagePlatform = 'amd64' | 'arm64';
 export interface ExecResult {
@@ -63,6 +65,8 @@ export declare function platformIsEmulated(platform: ImagePlatform): boolean;
 export declare function taskContainerMounts(input: DriverInput, options: ContainerTaskOptions): string[];
 /** The `docker run -d` arguments for a task container: image, resources, the runtime mounts, kept alive until removed. */
 export declare function taskContainerArgs(input: DriverInput, options: ContainerTaskOptions): string[];
+/** The environment `docker run` needs for the `-e NAME` entries of `taskContainerArgs`: the key and the arm's own variables. */
+export declare function taskContainerEnv(input: DriverInput): Record<string, string>;
 /** The host's proxy settings as a container sees them: loopback rewritten to the host gateway, both spellings kept. */
 export declare function proxyEnvForContainer(env: Record<string, string | undefined>): Array<[string, string]>;
 /** The runtime command inside a running task container: the mounted Node, dsh's CLI with the arm's overlays. */

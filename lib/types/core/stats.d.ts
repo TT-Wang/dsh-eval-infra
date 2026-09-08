@@ -116,6 +116,12 @@ export declare function asympCS(values: number[], alpha?: number, plannedN?: num
     t: number;
 };
 /**
+ * First time t (1-based) at which the hedged betting process rejects the mean m
+ * for the [0, 1] sequence xs at level alpha, or null when m survives every look.
+ * The single-mean core of `bettingCS`; also what an anytime-validity check runs.
+ */
+export declare function bettingRejectsAt(xs: number[], m: number, alpha?: number): number | null;
+/**
  * Betting confidence sequence for the mean of [0, 1] outcomes (Waudby-Smith &
  * Ramdas 2020, predictable-plug-in bets). Used on x = (d + 1) / 2 where d is
  * the per-scenario pass-rate difference in [−1, 1]; the null "no difference"
