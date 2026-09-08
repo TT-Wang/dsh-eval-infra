@@ -156,8 +156,6 @@ export interface TurnRow extends Usage {
   end: string
   /** Error message when the turn ended in error. */
   error?: string
-  /** `runtime` (default): the agent's process crashed or timed out — a failure of that arm. `infrastructure`: the trial could not be graded (the benchmark verifier never reached its tests) — excluded from every comparison, never a failure. */
-  errorKind?: 'runtime' | 'infrastructure'
 }
 
 /** Totals across the run. */
@@ -227,6 +225,8 @@ export interface RunLedger {
   behaviour: { toolErrors: number; repeatedCalls: number; noActionSteps: number; observationChars: number; compactions: number }
   /** Set when the run itself failed (runtime crash, timeout) — the verdict is then null. */
   error?: string
+  /** `runtime` (default): the agent's process crashed or timed out — a failure of that arm. `infrastructure`: the trial could not be graded (the benchmark verifier never reached its tests) — excluded from every comparison, never a failure. */
+  errorKind?: 'runtime' | 'infrastructure'
   /** Present when a human override replaced the machine verdict (the original is kept here). */
   machineVerdict?: Verdict | null
   overridden?: boolean
