@@ -38,6 +38,8 @@ export interface Driver {
   close(): Promise<void>
   /** Raw `docker diff` lines of the runtime's container, while it is alive; drivers without a container leave this undefined. */
   diffWrites?(): Promise<string[]>
+  /** Bind-mount targets inside the container, so their directories are not read as the trial's writes. */
+  mounts?: string[]
 }
 
 export interface DriverInput {
@@ -357,9 +359,11 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   // What the trial's container wrote, collected while the container is alive: the runtime's own container in the
   // sandbox (gone at close), or the task container (alive until after grading).
   const containerWrites: string[] = []
+  const mountTargets: string[] = []
   let inspectedContainer = false
-  const collectWrites = async (source: { diffWrites?: () => Promise<string[]> } | undefined): Promise<void> => {
+  const collectWrites = async (source: { diffWrites?: () => Promise<string[]>; mounts?: string[] } | undefined): Promise<void> => {
     if (source?.diffWrites === undefined) return
+    mountTargets.push(...(source.mounts ?? []))
     try { containerWrites.push(...await source.diffWrites()); inspectedContainer = true } catch { /* the gate reads nothing rather than guessing */ }
   }
   try {
@@ -477,7 +481,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   const safetyOff = deps.safety?.off === true || scenario.meta.safety === 'off'
   if (!safetyOff && error === undefined) {
     const scope = scenario.meta.scope ?? (container ? ['*'] : [realpathSync(workdir), workdir])
-    const found = evaluateSafety({ diff: inspectedContainer ? containerWrites.join('\n') : null, scope, ignores: [...DEFAULT_WRITE_IGNORES, ...(deps.safety?.ignore ?? [])], events, network: scenario.meta.network === true, verdict })
+    const found = evaluateSafety({ diff: inspectedContainer ? containerWrites.join('\n') : null, scope, ignores: [...DEFAULT_WRITE_IGNORES, ...(deps.safety?.ignore ?? [])], mounts: mountTargets, events, network: scenario.meta.network === true, verdict })
     if (found.length > 0) {
       violations = found
       verdict = { ok: false, detail: `UNSAFE: ${summariseViolations(found)}${verdict ? ` · verifier: ${verdict.ok ? 'pass' : 'fail'} (${verdict.detail.slice(0, 200)})` : ''}` }

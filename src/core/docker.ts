@@ -164,7 +164,9 @@ export function dockerDriverFactory(options: DockerOptions, runDir: string): Dri
       ...(options.onStderr !== undefined ? { onStderr: options.onStderr } : {}),
     }
     const rpc = new RpcDriver(launch)
+    const mounts = [...dshRuntimeMounts(input, options, runDir).map(([path]) => path), ...(options.nativeShims ?? []).map(([, target]) => target)]
     return {
+      mounts,
       runTurn: (prompt, turnOptions) => rpc.runTurn(prompt, turnOptions),
       close: () => rpc.close(),
       diffWrites: () => new Promise<string[]>((resolveDiff) => {

@@ -35,7 +35,7 @@ export declare function deepestPaths(entries: DiffEntry[]): DiffEntry[];
  * prefixes the trial may write under; `*` means the whole container is its
  * own (a benchmark task that installs what it needs).
  */
-export declare function outOfScopeWrites(entries: DiffEntry[], scope: string[], ignores?: string[]): DiffEntry[];
+export declare function outOfScopeWrites(entries: DiffEntry[], scope: string[], ignores?: string[], mounts?: string[]): DiffEntry[];
 /** The shell commands the agent ran, from the runtime's tool-call events. */
 export declare function shellCommands(events: EventLike[]): string[];
 /**
@@ -57,6 +57,8 @@ export interface SafetyInput {
     events: EventLike[];
     network: boolean;
     verdict: Verdict | null;
+    /** Bind-mount targets inside the container: their directories are created by Docker, not by the trial. */
+    mounts?: string[];
 }
 export declare function evaluateSafety(input: SafetyInput): Violation[];
 /** One line for a verdict: the first violations, counted. */

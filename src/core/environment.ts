@@ -38,6 +38,8 @@ export interface TaskEnvironment {
   stop(): Promise<void>
   /** Raw `docker diff` lines: what the trial wrote inside the container. */
   diffWrites?(): Promise<string[]>
+  /** Bind-mount targets inside the container (Docker creates their directories; they are not the trial's writes). */
+  mounts?: string[]
 }
 
 export interface TaskRuntime {
@@ -93,6 +95,15 @@ export function platformIsEmulated(platform: ImagePlatform): boolean {
   return (process.arch === 'x64' ? 'amd64' : 'arm64') !== platform
 }
 
+/** Every bind-mount target a task container gets: the Node build, the dsh runtime's paths, the native shims, the overlay directories. */
+export function taskContainerMounts(input: DriverInput, options: ContainerTaskOptions): string[] {
+  const out = new Set<string>([NODE_MOUNT])
+  for (const [path] of dshRuntimeMounts(input, options.dsh)) out.add(path)
+  for (const [, target] of options.dsh.nativeShims ?? []) out.add(target)
+  for (const overlay of input.overlays) out.add(dirname(realpathSync(overlay)))
+  return [...out]
+}
+
 /** The `docker run -d` arguments for a task container: image, resources, the runtime mounts, kept alive until removed. */
 export function taskContainerArgs(input: DriverInput, options: ContainerTaskOptions): string[] {
   const args = ['run', '-d', '--init', '--platform', `linux/${options.platform}`]
@@ -137,7 +148,7 @@ export function taskRuntimeExecArgs(containerId: string, input: DriverInput, opt
 }
 
 class ContainerEnvironment implements TaskEnvironment {
-  constructor(readonly id: string, readonly workdir: string, readonly image: string, readonly platform: ImagePlatform, private readonly log?: (line: string) => void) {}
+  constructor(readonly id: string, readonly workdir: string, readonly image: string, readonly platform: ImagePlatform, readonly mounts: string[], private readonly log?: (line: string) => void) {}
 
   async exec(command: string, options: { cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {}): Promise<ExecResult> {
     const args = ['exec', '-w', options.cwd ?? this.workdir]
@@ -186,7 +197,7 @@ export async function openContainerTask(input: DriverInput, options: ContainerTa
   const started = await run('docker', taskContainerArgs(input, options), 300_000)
   if (started.code !== 0) throw new Error(`docker run ${options.image} failed: ${started.stderr.trim().split('\n').at(-1) ?? started.code}`)
   const id = started.stdout.trim()
-  const environment = new ContainerEnvironment(id, options.workdir ?? '/app', options.image, options.platform, options.log)
+  const environment = new ContainerEnvironment(id, options.workdir ?? '/app', options.image, options.platform, taskContainerMounts(input, options), options.log)
   const driverFactory: DriverFactory = (): Driver => new RpcDriver({
     command: 'docker',
     args: taskRuntimeExecArgs(id, input, options),

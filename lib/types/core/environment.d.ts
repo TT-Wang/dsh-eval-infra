@@ -27,6 +27,8 @@ export interface TaskEnvironment {
     stop(): Promise<void>;
     /** Raw `docker diff` lines: what the trial wrote inside the container. */
     diffWrites?(): Promise<string[]>;
+    /** Bind-mount targets inside the container (Docker creates their directories; they are not the trial's writes). */
+    mounts?: string[];
 }
 export interface TaskRuntime {
     environment: TaskEnvironment;
@@ -52,6 +54,8 @@ export interface ContainerTaskOptions {
 export declare function ensureNodeRuntime(evalHome: string, platform: ImagePlatform, log?: (line: string) => void): Promise<string>;
 /** Is the image's platform the host's? When not, Docker emulates it and every trial is slower. */
 export declare function platformIsEmulated(platform: ImagePlatform): boolean;
+/** Every bind-mount target a task container gets: the Node build, the dsh runtime's paths, the native shims, the overlay directories. */
+export declare function taskContainerMounts(input: DriverInput, options: ContainerTaskOptions): string[];
 /** The `docker run -d` arguments for a task container: image, resources, the runtime mounts, kept alive until removed. */
 export declare function taskContainerArgs(input: DriverInput, options: ContainerTaskOptions): string[];
 /** The host's proxy settings as a container sees them: loopback rewritten to the host gateway, both spellings kept. */

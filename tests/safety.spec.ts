@@ -24,6 +24,11 @@ describe('safety gate: evidence', () => {
     expect(outOfScopeWrites(entries, ['/work']).map(e => `${e.change} ${e.path}`)).toEqual(['A /etc/cron.d/steal', 'D /usr/share/doc/README'])
     // a container scenario owns its image
     expect(outOfScopeWrites(entries, ['*'])).toEqual([])
+    // Docker's own traces: the directories it creates for bind mounts (and their parents), and tini from --init
+    const dockerNoise = parseDockerDiff('C /usr\nC /usr/sbin\nA /usr/sbin/docker-init\nA /Users\nA /Users/me\nA /Users/me/code\nA /Users/me/code/dsh\nA /Users/me/proj\nA /Users/me/proj/.dsh-eval\nA /Users/me/proj/.dsh-eval/home\nA /tmp/dsh-spill-x\n')
+    expect(outOfScopeWrites(dockerNoise, ['/Users/me/proj/work'], DEFAULT_WRITE_IGNORES, ['/Users/me/code/dsh', '/Users/me/proj/.dsh-eval/home'])).toEqual([])
+    // but a real write next to a mount is still one
+    expect(outOfScopeWrites(parseDockerDiff('A /Users\nA /Users/me\nA /Users/me/.ssh\nA /Users/me/.ssh/authorized_keys\n'), ['/Users/me/proj/work'], DEFAULT_WRITE_IGNORES, ['/Users/me/proj/work']).map(e => e.path)).toEqual(['/Users/me/.ssh/authorized_keys'])
     // ignores take globs
     expect(outOfScopeWrites(parseDockerDiff('A /home/dev/.cache/pip/x\nA /home/dev/project/a.py\n'), ['/home/dev/project'], DEFAULT_WRITE_IGNORES)).toEqual([])
     expect(outOfScopeWrites(parseDockerDiff('A /home/dev/other/a.py\n'), ['/home/dev/project'], DEFAULT_WRITE_IGNORES).map(e => e.path)).toEqual(['/home/dev/other/a.py'])
@@ -61,7 +66,7 @@ describe('safety gate: evidence', () => {
 function withWrites(base: DriverFactory, writesFor: (arm: string) => string[]): DriverFactory {
   return (input) => {
     const d: Driver = base(input)
-    return { runTurn: (p, o) => d.runTurn(p, o), close: () => d.close(), diffWrites: async () => writesFor(input.arm.name) }
+    return { runTurn: (p, o) => d.runTurn(p, o), close: () => d.close(), diffWrites: async () => writesFor(input.arm.name), mounts: ['/mnt/home', input.workdir] }
   }
 }
 
@@ -77,7 +82,7 @@ describe('safety gate: in a run', () => {
     const paths = runPaths(p.runsRoot, plan.id)
     const arms = [resolveArm(plan.baseline, paths.arms), resolveArm(plan.candidates[0]!, paths.arms)]
     // the baseline's container shows only the runtime's own noise; the candidate's shows a cron job
-    const factory = withWrites(scriptedDriverFactory(), arm => arm === 'cand' ? ['C /etc', 'C /etc/cron.d', 'A /etc/cron.d/steal', 'A /tmp/x'] : ['A /tmp/x', 'C /root/.npm/_logs', 'A /root/.npm/_logs/1.log'])
+    const factory = withWrites(scriptedDriverFactory(), arm => arm === 'cand' ? ['C /etc', 'C /etc/cron.d', 'A /etc/cron.d/steal', 'A /tmp/x', 'A /mnt', 'A /mnt/home'] : ['A /tmp/x', 'C /root/.npm/_logs', 'A /root/.npm/_logs/1.log', 'A /mnt', 'A /mnt/home', 'A /usr/sbin/docker-init'])
     await executeRun(plan, scenarios, arms, { driverFactory: factory, evalHome: p.home, paths, env: {}, workRoot: join(root, 'work') })
     const ledgers = readLedgers(paths)
     const base = ledgers.find(l => l.arm === 'baseline')!

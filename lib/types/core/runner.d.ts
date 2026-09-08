@@ -18,6 +18,8 @@ export interface Driver {
     close(): Promise<void>;
     /** Raw `docker diff` lines of the runtime's container, while it is alive; drivers without a container leave this undefined. */
     diffWrites?(): Promise<string[]>;
+    /** Bind-mount targets inside the container, so their directories are not read as the trial's writes. */
+    mounts?: string[];
 }
 export interface DriverInput {
     arm: ResolvedArm;
