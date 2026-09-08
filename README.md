@@ -149,12 +149,14 @@ a root explicitly.
 
 ## Reading the report
 
-1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no cost summary is offered.
-2. **Cost pairs.** Only repeat-pairs where both arms passed count. Δ$ and Δ% are per-scenario means over those pairs.
-3. **Interval.** Per-scenario Δ% is bootstrapped over scenarios as clusters, each carrying all its repeat pairs. *Cheaper* and *more expensive* need at least five comparable scenarios, an interval excluding zero, and an interval outside the measured A/A noise band; *equivalent* needs an interval inside ±10%; below ten scenarios the interval is Student-t rather than bootstrap; anything else is *inconclusive*. The notes state the minimum detectable effect and the resolution of the observed one.
-4. **Provenance.** A cost reading is withheld when the wire meter and the runtime disagree, when the two arms were served different models, or when a route probe says the served model changed.
-5. **Bands.** Runs straddling the DeepSeek peak and off-peak boundary get a note; use the fixed-band columns.
-6. **Repeats.** Three is the floor, five is recommended for binary outcomes. Run `--aa` first to see what "no change" looks like on your setup.
+1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no other reading is offered.
+2. **Reliability.** The first line of every report: pass^k per arm, the share of scenarios that pass on every one of the k repeats, compared on the scenarios where only one arm is reliable. A component that turns "always" into "usually" has changed something, whatever it did to the cost. k is 3 by default; set it per run.
+3. **North star.** The one reading the run is registered for, chosen before the data and sealed into the receipt: cost per solved task (default), steps per solved task, or the blinded judge's preference. The grade, the verdict and the forest plot follow it; everything else in the report is diagnostic.
+4. **Cost pairs.** Only repeat-pairs where both arms passed count. Δ$ and Δ% are per-scenario means over those pairs; steps are paired the same way.
+5. **Interval.** Per-scenario Δ% is bootstrapped over scenarios as clusters, each carrying all its repeat pairs. *Cheaper* and *more expensive* need at least five comparable scenarios, an interval excluding zero, and an interval outside the measured A/A noise band; *equivalent* needs an interval inside ±10%; below ten scenarios the interval is Student-t rather than bootstrap; anything else is *inconclusive*. The notes state the minimum detectable effect and the resolution of the observed one.
+6. **Provenance.** A cost reading is withheld when the wire meter and the runtime disagree, when the two arms were served different models, or when a route probe says the served model changed.
+7. **Bands.** Runs straddling the DeepSeek peak and off-peak boundary get a note; use the fixed-band columns.
+8. **Repeats.** Three is the floor, five is recommended for binary outcomes. Run `--aa` first to see what "no change" looks like on your setup.
 
 ## Inside dsh
 
