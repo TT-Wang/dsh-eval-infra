@@ -270,7 +270,7 @@ async function cmdRun(project: Project, args: Args): Promise<number> {
   out(`ledgers: ${runPaths(project.runsRoot, launched.id).dir}`)
   out(`total $${progress.usd.toFixed(4)} · ${((Date.now() - started) / 60000).toFixed(1)} min · ${progress.status}`)
   if (progress.status !== 'done') return 2
-  if (report.candidates.some(c => c.gate === 'regressions')) return 1
+  if (report.candidates.some(c => c.gate === 'regressions' || c.gate === 'unsafe')) return 1
   if (report.candidates.some(c => c.gate === 'incomplete')) return 2
   return 0
 }
@@ -297,7 +297,7 @@ async function cmdReport(project: Project, args: Args): Promise<number> {
   const report = rebuildReport(project, id)
   if (args.flags['json'] === true) out(JSON.stringify(report, null, 2))
   else printReport(report)
-  return report.candidates.some(c => c.gate === 'regressions') ? 1 : 0
+  return report.candidates.some(c => c.gate === 'regressions' || c.gate === 'unsafe') ? 1 : 0
 }
 
 async function cmdPerturb(project: Project, args: Args): Promise<number> {

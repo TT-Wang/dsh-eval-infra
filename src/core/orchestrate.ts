@@ -291,6 +291,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
   if (hooks.onProgress !== undefined) deps.onProgress = hooks.onProgress
   if (hooks.onLedger !== undefined) deps.onLedger = hooks.onLedger
   if (hooks.onEvent !== undefined) deps.onEvent = hooks.onEvent
+  if (project.config.safety !== undefined) deps.safety = project.config.safety
   if (request.keepWorkdirs) deps.keepWorkdirs = true
   const prices = projectPrices(project.config)
   if (prices) deps.prices = prices
@@ -537,7 +538,7 @@ export function analysisContract(plan: RunPlan): AnalysisContract {
     minScenarios: 5,
     bootstrapDraws: 2000,
     seed: 42,
-    gateOrder: 'correctness gate first: any regression blocks the cost reading',
+    gateOrder: 'gates first: any safety-gate violation, then any regression, blocks every reading',
     costRule: 'cost compared only on repeat-pairs where both arms passed; a direction also needs >= 5 comparable scenarios, an interval excluding zero, and no overlap with a measured A/A floor',
     northStar: plan.northStar ?? 'cost',
     k: plan.repeats,

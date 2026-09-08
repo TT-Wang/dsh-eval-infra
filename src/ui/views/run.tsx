@@ -6,9 +6,9 @@ import { LiveRun, type StreamEvent } from './live.js'
 import type { CandidateReport, PairedScenario, PairClass, Grade } from '../../core/report.js'
 import type { Progress } from '../../core/store.js'
 
-type Filter = 'all' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'flaky'
-const ORDER: Record<PairClass, number> = { regression: 0, improvement: 1, 'both-fail': 2, incomplete: 3, same: 4, unrun: 5 }
-const LABEL: Record<PairClass, string> = { regression: 'regression', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }
+type Filter = 'all' | 'unsafe' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'flaky'
+const ORDER: Record<PairClass, number> = { unsafe: 0, regression: 1, improvement: 2, 'both-fail': 3, incomplete: 4, same: 5, unrun: 6 }
+const LABEL: Record<PairClass, string> = { unsafe: 'unsafe', regression: 'regression', improvement: 'improvement', same: 'same', 'both-fail': 'both fail', incomplete: 'incomplete', unrun: 'not run' }
 const GRADE_TONE: Record<Grade, string> = { improvement: 'good', regression: 'bad', tradeoff: 'warn', tie: 'neutral', inconclusive: 'neutral' }
 
 export function RunView({ id }: { id: string }) {
@@ -148,7 +148,7 @@ export function RunView({ id }: { id: string }) {
             <h2>{c.arm} vs {report.baseline}</h2>
             <div class="row">
               <div class="chips">
-                {(['all', 'regression', 'improvement', 'flaky', 'same', 'both-fail', 'incomplete'] as Filter[]).map(f => {
+                {(['all', 'unsafe', 'regression', 'improvement', 'flaky', 'same', 'both-fail', 'incomplete'] as Filter[]).map(f => {
                   const n = f === 'all' ? c.scenarios.length : f === 'flaky' ? c.scenarios.filter(p => p.flaky).length : c.scenarios.filter(p => p.class === f).length
                   return <button class={`chip ${filter === f ? 'on' : ''} ${f}`} onClick={() => setFilter(f)}>{f === 'all' ? 'all' : f === 'flaky' ? 'flaky' : LABEL[f]} {n}</button>
                 })}
@@ -262,6 +262,8 @@ function Forest({ c }: { c: CandidateReport }) {
 function plainVerdict(c: CandidateReport): string {
   const pct = (x: number): string => `${Math.abs(x).toFixed(0)}%`
   const regressions = c.scenarios.filter(p => p.class === 'regression')
+  const unsafe = c.scenarios.filter(p => p.class === 'unsafe')
+  if (c.gate === 'unsafe') return `${c.arm} did something it was not asked to on ${unsafe.length} scenario${unsafe.length === 1 ? '' : 's'}: ${unsafe[0]?.violations.evidence ?? 'a safety-gate violation'}. Nothing else is compared until that is fixed.`
   const ns: CandidateReport['northStar'] = c.northStar ?? { metric: 'cost', reading: c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading, ci: c.costPctCI, unit: '%', text: c.verdict }
   const noun = ns.metric === 'cost' ? 'cost' : ns.metric === 'efficiency' ? 'steps' : 'quality'
   if (c.gate === 'regressions') return `${c.arm} breaks ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} the baseline passes. ${noun[0]!.toUpperCase()}${noun.slice(1)} is not compared until that is fixed.`
@@ -298,6 +300,8 @@ function Decay({ r }: { r: CandidateReport['reliability'] }) {
 /** The single most useful thing to do next, with the command that does it. */
 function nextStep(c: CandidateReport, runId: string, baseline: string): { text: string; cmd?: string } {
   const comparable = c.scenarios.filter(p => p.costDiffPct !== null).length
+  const unsafe = c.scenarios.find(p => p.class === 'unsafe')
+  if (unsafe) return { text: `Open the trace of ${unsafe.scenario} and find the step behind "${unsafe.violations.evidence ?? 'the violation'}"; the trial's ledger lists every violation and every path the container wrote.`, cmd: `dsh-eval report ${runId} --json | jq '.candidates[0].scenarios[] | select(.scenario=="${unsafe.scenario}") | .violations'` }
   const regression = c.scenarios.find(p => p.class === 'regression')
   if (regression) return { text: `Look at where the two arms diverge on ${regression.scenario}, then confirm the failure is real and not luck.`, cmd: `dsh-eval rerun ${runId} ${regression.scenario} --fork` }
   const nsReading = c.northStar?.reading ?? (c.costReading === 'cheaper' ? 'better' : c.costReading === 'more-expensive' ? 'worse' : c.costReading === 'equivalent' ? 'same' : c.costReading)

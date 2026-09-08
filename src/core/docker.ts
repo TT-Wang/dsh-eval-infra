@@ -9,7 +9,8 @@
  */
 import { existsSync, readdirSync, readlinkSync, lstatSync, realpathSync, mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import type { DriverFactory, DriverInput } from './runner.js'
 import { RpcDriver, type RpcLaunch } from './rpc-driver.js'
 
@@ -119,10 +120,11 @@ export function dshRuntimeMounts(input: DriverInput, options: Pick<DockerOptions
   return [...mounts.entries()]
 }
 
-export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[] {
+export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string, name?: string): string[] {
   const image = options.image ?? DEFAULT_IMAGE
   // The image must match this machine, or every trial runs under emulation, or not at all.
   const args = ['run', '-i', '--rm', '--init', '--platform', `linux/${options.platform ?? (process.arch === 'x64' ? 'amd64' : 'arm64')}`]
+  if (name !== undefined) args.push('--name', name)
   // `--mount` rather than `-v`: Docker's -v parser mangles a same-path spec that ends in ":ro" (observed: target "…rc1o").
   for (const [path, mode] of dshRuntimeMounts(input, options, runDir)) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
   for (const [source, target] of options.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
@@ -147,9 +149,11 @@ export function dockerArgs(input: DriverInput, options: DockerOptions, runDir: s
 /** Docker-backed driver: one container per trial. */
 export function dockerDriverFactory(options: DockerOptions, runDir: string): DriverFactory {
   return (input: DriverInput) => {
+    // Named, so the safety gate can ask `docker diff` what the runtime's container wrote while it is alive.
+    const name = `dsh-eval-${input.arm.name.replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 24)}-${randomUUID().slice(0, 8)}`
     const launch: RpcLaunch = {
       command: 'docker',
-      args: dockerArgs(input, options, runDir),
+      args: dockerArgs(input, options, runDir, name),
       env: { ...process.env as Record<string, string>, ...input.env },
       runtimeCwd: realpathSync(input.workdir),
       provider: input.arm.provider,
@@ -159,7 +163,14 @@ export function dockerDriverFactory(options: DockerOptions, runDir: string): Dri
       ...(input.arm.maxTokens !== undefined ? { maxTokens: input.arm.maxTokens } : {}),
       ...(options.onStderr !== undefined ? { onStderr: options.onStderr } : {}),
     }
-    return new RpcDriver(launch)
+    const rpc = new RpcDriver(launch)
+    return {
+      runTurn: (prompt, turnOptions) => rpc.runTurn(prompt, turnOptions),
+      close: () => rpc.close(),
+      diffWrites: () => new Promise<string[]>((resolveDiff) => {
+        execFile('docker', ['diff', name], { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => resolveDiff(err ? [] : String(stdout).split('\n').filter(Boolean)))
+      }),
+    }
   }
 }
 

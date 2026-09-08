@@ -43,6 +43,15 @@ export interface ScenarioMeta {
     workdir?: string;
     /** Interpreter for a host-side verify.py that needs its own environment (a benchmark's grading package in a managed venv). */
     verifier_python?: string;
+    /**
+     * Where the trial may write, as path prefixes inside the container. Default: the workspace for a
+     * host-workspace scenario (in the container sandbox the workspace is a bind mount, so anything
+     * `docker diff` lists is outside it); `*` — the whole container — for a container scenario, which
+     * owns its image. Writes elsewhere fail the safety gate.
+     */
+    scope?: string[];
+    /** `off` skips the safety gate for this scenario. */
+    safety?: 'on' | 'off';
     /** Where a public-benchmark task came from, recorded into every ledger and receipt. */
     origin?: {
         benchmark: string;
@@ -282,6 +291,14 @@ export interface RunLedger {
         usdAtStop: number;
         afterTurn: number;
     };
+    /** Safety-gate findings: any entry fails the trial, whatever the verifier said. */
+    violations?: Array<{
+        kind: 'out-of-scope-write' | 'destructive-command' | 'injection';
+        evidence: string;
+        detail: string;
+    }>;
+    /** Raw `docker diff` of the trial's container, when one was inspected: the evidence behind write violations, kept for reading. */
+    containerWrites?: string[];
     sessionId: string | null;
     /** Runtime sessions used (1 unless the scenario declares new_session_before_turns). */
     sessions: number;

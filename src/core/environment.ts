@@ -36,6 +36,8 @@ export interface TaskEnvironment {
   upload(localDir: string, target: string): Promise<void>
   readFile(path: string): Promise<string | null>
   stop(): Promise<void>
+  /** Raw `docker diff` lines: what the trial wrote inside the container. */
+  diffWrites?(): Promise<string[]>
 }
 
 export interface TaskRuntime {
@@ -153,6 +155,11 @@ class ContainerEnvironment implements TaskEnvironment {
   async readFile(path: string): Promise<string | null> {
     const r = await this.exec(`cat ${JSON.stringify(path)}`, { timeoutMs: 30_000 })
     return r.code === 0 ? r.stdout : null
+  }
+
+  async diffWrites(): Promise<string[]> {
+    const r = await run('docker', ['diff', this.id], 60_000)
+    return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : []
   }
 
   async stop(): Promise<void> {

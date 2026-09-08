@@ -18,6 +18,11 @@ export interface ProjectConfig {
         apiKeyEnv?: string;
         family?: string;
     }>;
+    /** Safety gate: extra write-ignore prefixes (over the built-in caches, tmp and logs), or `off` for the whole project. */
+    safety?: {
+        ignore?: string[];
+        off?: boolean;
+    };
     /** Extra or overriding prices (USD per million tokens, peak/off-peak) merged over the built-in DeepSeek table. */
     prices?: {
         asOf?: string;

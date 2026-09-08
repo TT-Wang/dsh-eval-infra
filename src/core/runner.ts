@@ -5,7 +5,7 @@
  * scripted driver. Scheduling order is fixed — scenario → repeat → arm — so
  * baseline and candidate always run back to back under the same conditions.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -16,6 +16,7 @@ import type { ResolvedArm, RunLedger, RunPlan, Scenario, Verdict } from './types
 import { armOverlays } from './arms.js'
 import { buildLedger, type EventLike } from './ledger.js'
 import { hostVerifierEnvWithTimeout, INFRA_PREFIX, verifyInEnvironment, type TaskRuntime } from './environment.js'
+import { evaluateSafety, summariseViolations, DEFAULT_WRITE_IGNORES } from './safety.js'
 import type { PriceTable } from './pricing.js'
 import { scenarioSetup, scenarioVerify } from './scenario.js'
 import { ledgerPath, writeJsonAtomic, writeLedger, type Progress, type RunPaths } from './store.js'
@@ -35,6 +36,8 @@ export interface TurnOptions {
 export interface Driver {
   runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult>
   close(): Promise<void>
+  /** Raw `docker diff` lines of the runtime's container, while it is alive; drivers without a container leave this undefined. */
+  diffWrites?(): Promise<string[]>
 }
 
 export interface DriverInput {
@@ -108,6 +111,8 @@ export interface RunDeps {
   onEvent?: (trial: { scenario: string; arm: string; rep: number }, event: EventLike) => void
   /** Container scenarios (public benchmarks): opens the task's own environment for one trial; the runtime runs inside it and its tests grade it there. */
   taskRuntimeFactory?: (input: DriverInput, scenario: Scenario) => Promise<TaskRuntime>
+  /** Safety gate settings: extra write ignores, or off. */
+  safety?: { ignore?: string[]; off?: boolean }
   log?: (line: string) => void
   /** Override the per-turn timeout for every scenario (ms). */
   turnTimeoutMs?: number
@@ -349,6 +354,14 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   const container = scenario.meta.runtime === 'container'
   let taskRuntime: TaskRuntime | undefined
   let infrastructure = false
+  // What the trial's container wrote, collected while the container is alive: the runtime's own container in the
+  // sandbox (gone at close), or the task container (alive until after grading).
+  const containerWrites: string[] = []
+  let inspectedContainer = false
+  const collectWrites = async (source: { diffWrites?: () => Promise<string[]> } | undefined): Promise<void> => {
+    if (source?.diffWrites === undefined) return
+    try { containerWrites.push(...await source.diffWrites()); inspectedContainer = true } catch { /* the gate reads nothing rather than guessing */ }
+  }
   try {
     if (!container) {
       await scenarioSetup(scenario, workdir)
@@ -399,6 +412,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
       for (let i = 0; i < prompts.length; i += 1) {
         if (capped) break
         if (i > 0 && breaks.has(i + 1)) {
+          if (!container) await collectWrites(driver)
           await driver.close()
           sessions += 1
           turnOffset = i
@@ -421,6 +435,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
         if (Number.isFinite(capUsd)) { const spent = spentSoFar(); if (spent > capUsd) capped = { maxUsd: capUsd, usdAtStop: spent, afterTurn: i + 1 } }
         if (result.sessionId !== null) sessionId = sessionId === null || sessionId === result.sessionId ? result.sessionId : `${sessionId},${result.sessionId}`
       }
+      await collectWrites(container ? taskRuntime?.environment : driver)
     } finally {
       await driver.close()
     }
@@ -455,6 +470,18 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     }
   } catch (e) {
     verdict = { ok: false, detail: `verify failed: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  // The safety gate: writes outside the scope, destructive commands, obeyed injections. Any finding fails the trial,
+  // whatever the verifier said; the verifier's own reason is kept beside it.
+  let violations: RunLedger['violations']
+  const safetyOff = deps.safety?.off === true || scenario.meta.safety === 'off'
+  if (!safetyOff && error === undefined) {
+    const scope = scenario.meta.scope ?? (container ? ['*'] : [realpathSync(workdir), workdir])
+    const found = evaluateSafety({ diff: inspectedContainer ? containerWrites.join('\n') : null, scope, ignores: [...DEFAULT_WRITE_IGNORES, ...(deps.safety?.ignore ?? [])], events, network: scenario.meta.network === true, verdict })
+    if (found.length > 0) {
+      violations = found
+      verdict = { ok: false, detail: `UNSAFE: ${summariseViolations(found)}${verdict ? ` · verifier: ${verdict.ok ? 'pass' : 'fail'} (${verdict.detail.slice(0, 200)})` : ''}` }
+    }
   }
   // The task container outlives the runtime process only until its tests have run.
   if (taskRuntime !== undefined) { try { await taskRuntime.environment.stop() } catch { /* best effort */ } }
@@ -498,6 +525,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   if (deps.perturb) ledger.promptVariant = variantIndex
   if (infrastructure) ledger.errorKind = 'infrastructure'
+  if (violations !== undefined) ledger.violations = violations
+  if (inspectedContainer && containerWrites.length > 0) ledger.containerWrites = containerWrites.slice(0, 500)
   if (capped) ledger.capped = capped
   const verifierPath = join(scenario.dir, 'verify.py')
   if (existsSync(verifierPath)) ledger.verifierSha = createHash('sha256').update(readFileSync(verifierPath)).digest('hex')

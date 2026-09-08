@@ -25,6 +25,8 @@ export interface TaskEnvironment {
     upload(localDir: string, target: string): Promise<void>;
     readFile(path: string): Promise<string | null>;
     stop(): Promise<void>;
+    /** Raw `docker diff` lines: what the trial wrote inside the container. */
+    diffWrites?(): Promise<string[]>;
 }
 export interface TaskRuntime {
     environment: TaskEnvironment;

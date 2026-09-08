@@ -36,7 +36,7 @@ export declare function prepareNativeShims(evalHome: string, dshSource: string, 
  * carries the overlays; a task container gets them through its own mounts.
  */
 export declare function dshRuntimeMounts(input: DriverInput, options: Pick<DockerOptions, 'dshSource' | 'mounts'>, runDir?: string): Array<[string, 'ro' | 'rw']>;
-export declare function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string): string[];
+export declare function dockerArgs(input: DriverInput, options: DockerOptions, runDir: string, name?: string): string[];
 /** Docker-backed driver: one container per trial. */
 export declare function dockerDriverFactory(options: DockerOptions, runDir: string): DriverFactory;
 /** Overlay rows that make a profile run inside a container: the in-process sandbox off, the plain bash executor on. */

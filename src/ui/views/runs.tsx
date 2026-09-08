@@ -48,7 +48,7 @@ export function RunsView() {
                 <td>{r.arms.join(' vs ')}{r.sandbox === 'docker' ? <span class="tag">docker</span> : null}</td>
                 <td class="num">{r.completed}/{r.total}<div class="muted small">{r.scenarios} scen × {r.repeats}</div></td>
                 <td class="num">{fmt.usd(r.usd, 3)}</td>
-                <td>{(r.verdicts ?? []).map(v => <div><span class={`cls ${v.gate === 'regressions' ? 'regression' : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'cheaper' ? 'improvement' : 'same'}`}>{v.arm}: {v.gate === 'regressions' ? `${v.regressions} regression${v.regressions === 1 ? '' : 's'}` : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'none' ? 'no pairs' : `${v.costReading} ${fmt.pct(v.costPct)}`}</span>{v.improvements ? <span class="muted small"> +{v.improvements} improved</span> : null}</div>)}</td>
+                <td>{(r.verdicts ?? []).map(v => <div><span class={`cls ${v.gate === 'unsafe' ? 'unsafe' : v.gate === 'regressions' ? 'regression' : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'cheaper' ? 'improvement' : 'same'}`}>{v.arm}: {v.gate === 'unsafe' ? 'unsafe' : v.gate === 'regressions' ? `${v.regressions} regression${v.regressions === 1 ? '' : 's'}` : v.gate === 'incomplete' ? 'incomplete' : v.costReading === 'none' ? 'no pairs' : `${v.costReading} ${fmt.pct(v.costPct)}`}</span>{v.improvements ? <span class="muted small"> +{v.improvements} improved</span> : null}</div>)}</td>
               </tr>
             ))}
           </tbody>

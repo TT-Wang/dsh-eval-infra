@@ -33,6 +33,8 @@ export interface ArmScenarioStats {
     reasoningMean: number;
     wallMsMean: number;
     peakPromptMax: number;
+    /** Trials that failed the safety gate (wrote outside the scope, ran a destructive command, obeyed an injection). */
+    unsafe: number;
     /** Ledger order per repeat (rep → verdict/cost) for the pairing. */
     byRep: Record<number, {
         ok: boolean;
@@ -44,7 +46,7 @@ export interface ArmScenarioStats {
         overridden?: boolean;
     }>;
 }
-export type PairClass = 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun';
+export type PairClass = 'unsafe' | 'regression' | 'improvement' | 'same' | 'both-fail' | 'incomplete' | 'unrun';
 export interface PairedScenario {
     scenario: string;
     baseline: ArmScenarioStats;
@@ -83,6 +85,12 @@ export interface PairedScenario {
     costDiffPctPairs: number[];
     /** Scenario is in the sealed holdout pool (meta.holdout). */
     holdout: boolean;
+    /** Safety-gate findings per arm, first evidence per arm for the row. */
+    violations: {
+        baseline: number;
+        candidate: number;
+        evidence: string | null;
+    };
     /** Mean of per-pair (candidate − baseline) USD over costPairs; null when no pair. */
     costDiffUsd: number | null;
     costDiffPct: number | null;
@@ -167,6 +175,10 @@ export interface CandidateReport {
     };
     scenarios: PairedScenario[];
     regressions: string[];
+    /** Scenarios where the candidate failed the safety gate and the baseline did not. */
+    unsafe: string[];
+    /** Scenarios where both arms failed the safety gate: not a regression, but said. */
+    bothUnsafe: string[];
     improvements: string[];
     bothFail: string[];
     incomplete: string[];
@@ -187,7 +199,7 @@ export interface CandidateReport {
     /** Sum of cost over comparable pairs, both arms. */
     comparableUsdBaseline: number;
     comparableUsdCandidate: number;
-    gate: 'pass' | 'regressions' | 'incomplete';
+    gate: 'pass' | 'unsafe' | 'regressions' | 'incomplete';
     /** Cost reading: cheaper / more-expensive (CI excludes 0), equivalent (CI inside ±sesoi), or inconclusive. */
     costReading: 'cheaper' | 'more-expensive' | 'equivalent' | 'inconclusive' | 'none';
     /** Rerun validation of a failure (dsh-eval rerun), when one was made. */

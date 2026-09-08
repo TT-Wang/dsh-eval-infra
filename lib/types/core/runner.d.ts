@@ -16,6 +16,8 @@ export interface TurnOptions {
 export interface Driver {
     runTurn(prompt: string, options: TurnOptions): Promise<DriverTurnResult>;
     close(): Promise<void>;
+    /** Raw `docker diff` lines of the runtime's container, while it is alive; drivers without a container leave this undefined. */
+    diffWrites?(): Promise<string[]>;
 }
 export interface DriverInput {
     arm: ResolvedArm;
@@ -67,6 +69,11 @@ export interface RunDeps {
     }, event: EventLike) => void;
     /** Container scenarios (public benchmarks): opens the task's own environment for one trial; the runtime runs inside it and its tests grade it there. */
     taskRuntimeFactory?: (input: DriverInput, scenario: Scenario) => Promise<TaskRuntime>;
+    /** Safety gate settings: extra write ignores, or off. */
+    safety?: {
+        ignore?: string[];
+        off?: boolean;
+    };
     log?: (line: string) => void;
     /** Override the per-turn timeout for every scenario (ms). */
     turnTimeoutMs?: number;
