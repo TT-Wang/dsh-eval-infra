@@ -1,5 +1,10 @@
-# Example GitHub Actions job: gate a dsh plugin PR on a paired A/B against stock dsh.
-# Needs a self-hosted runner (or a job) where `dsh` is installed and DEEPSEEK_API_KEY is a secret.
+# Two jobs worth copying into your own repository.
+#
+# 1. `ab`: gate a dsh plugin PR on a paired A/B against stock dsh. Needs a runner where `dsh` is
+#    installed and DEEPSEEK_API_KEY is a secret.
+# 2. `bench-smoke`: this repository's own job, .github/workflows/bench-smoke.yml — on a plain
+#    ubuntu-latest (amd64) runner it fetches one Terminal-Bench task and one SWE-bench Verified task
+#    and checks them inside their images. No API key, no dsh checkout: grading needs neither.
 name: dsh-eval
 on:
   pull_request:
@@ -14,7 +19,7 @@ jobs:
       - run: npx dsh-eval init --plugin .
       - run: npx dsh-eval selfcheck --strict
       - run: npx dsh-eval diff baseline candidate
-      # exit 0 = no regressions, 1 = regressions, 2 = incomplete/cancelled; the cost cap keeps a runaway PR cheap
+      # exit 0 = no regressions, 1 = regressions or a safety-gate violation, 2 = incomplete/cancelled; the cost cap keeps a runaway PR cheap
       - run: npx dsh-eval run --baseline baseline --arm candidate --repeats 3 --max-usd 5 --label "pr-${{ github.event.number }}"
       - if: always()
         run: npx dsh-eval export "$(ls .dsh-eval/runs | tail -1)" --html report.html
@@ -26,19 +31,3 @@ jobs:
             report.html
             .dsh-eval/runs/*/report.md
             .dsh-eval/runs/*/report.json
-
-  # Public-benchmark smoke on the platform the benchmarks publish for (linux/amd64): the task's own
-  # tests must fail on the untouched image and pass after its reference solution, inside the image.
-  # No model call is made, so no API key is needed; Docker and a dsh checkout are.
-  bench-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci && npm run build
-      - run: git clone --depth 1 https://github.com/deepseek-ai/dsh ~/.dsh/source/checkout && ln -s ~/.dsh/source/checkout ~/.dsh/source/current && (cd ~/.dsh/source/checkout && npm ci)
-      - run: npx dsh-eval init
-      - run: npx dsh-eval bench get terminal-bench build-pmars
-      - run: npx dsh-eval selfcheck build-pmars

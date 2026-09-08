@@ -960,8 +960,7 @@ export async function containerTaskRuntimeFactory(project: Project, log: (line: 
     return openContainerTask(input, {
       image: scenario.meta.image!,
       platform,
-      nodeDir,
-      dsh: { dshSource, nativeShims, onStderr: (line) => log(`  [${scenario.name}/${input.arm.name}] ${line}`) },
+      runtime: { nodeDir, dsh: { dshSource, nativeShims, onStderr: (line) => log(`  [${scenario.name}/${input.arm.name}] ${line}`) } },
       ...(scenario.meta.cpus !== undefined ? { cpus: scenario.meta.cpus } : {}),
       ...(scenario.meta.memory_mb !== undefined ? { memoryMb: scenario.meta.memory_mb } : {}),
       ...(scenario.meta.workdir !== undefined ? { workdir: scenario.meta.workdir } : {}),
@@ -970,11 +969,28 @@ export async function containerTaskRuntimeFactory(project: Project, log: (line: 
   }
 }
 
-/** The selfcheck's environment for a container scenario: the untouched image, started, with nothing of ours inside but Node. */
+/**
+ * The selfcheck's environment for a container scenario: the untouched image, started as it is. Grading needs no
+ * runtime inside, so neither the dsh checkout nor Node is required — a machine with Docker alone can check tasks.
+ */
 export async function containerSelfcheckEnvironment(project: Project, log: (line: string) => void): Promise<(scenario: Scenario) => Promise<import('./environment.js').TaskEnvironment>> {
-  const factory = await containerTaskRuntimeFactory(project, log)
+  const { dockerAvailable } = await import('./docker.js')
+  const { openContainerTask, platformIsEmulated } = await import('./environment.js')
+  const avail = await dockerAvailable()
+  if (!avail.ok) throw new LaunchError(`container scenarios need Docker: ${avail.detail}`, 'env')
+  const noted = new Set<string>()
   return async (scenario) => {
+    const platform = scenario.meta.platform ?? 'amd64'
+    if (platformIsEmulated(platform) && !noted.has(platform)) { noted.add(platform); log(`note: linux/${platform} images run under emulation on this ${process.arch} machine; every check is slower than on a native host`) }
     const input: DriverInput = { arm: { name: 'selfcheck', profile: project.config.profile, provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, overlayPath: '', patchFilePaths: [] }, scenario, workdir: project.evalDir, evalHome: project.home, overlays: [], env: {} }
-    return (await factory(input, scenario)).environment
+    const opened = await openContainerTask(input, {
+      image: scenario.meta.image!,
+      platform,
+      ...(scenario.meta.cpus !== undefined ? { cpus: scenario.meta.cpus } : {}),
+      ...(scenario.meta.memory_mb !== undefined ? { memoryMb: scenario.meta.memory_mb } : {}),
+      ...(scenario.meta.workdir !== undefined ? { workdir: scenario.meta.workdir } : {}),
+      log,
+    })
+    return opened.environment
   }
 }

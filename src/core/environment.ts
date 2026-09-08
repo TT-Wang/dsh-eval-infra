@@ -52,9 +52,11 @@ export interface ContainerTaskOptions {
   image: string
   /** Platform of the image; amd64 for every published Terminal-Bench image. Emulated when it is not the host's. */
   platform: ImagePlatform
-  /** Directory holding the Linux Node build for `platform` (see ensureNodeRuntime). */
-  nodeDir: string
-  dsh: Pick<DockerOptions, 'dshSource' | 'nativeShims' | 'mounts' | 'onStderr'>
+  /**
+   * What the dsh runtime needs inside the container: the Linux Node build and the checkout's mounts. Absent for an
+   * environment that only grades (a selfcheck): the image is opened as it is, and asking it for a driver is an error.
+   */
+  runtime?: { nodeDir: string; dsh: Pick<DockerOptions, 'dshSource' | 'nativeShims' | 'mounts' | 'onStderr'> }
   cpus?: number
   memoryMb?: number
   workdir?: string
@@ -97,9 +99,10 @@ export function platformIsEmulated(platform: ImagePlatform): boolean {
 
 /** Every bind-mount target a task container gets: the Node build, the dsh runtime's paths, the native shims, the overlay directories. */
 export function taskContainerMounts(input: DriverInput, options: ContainerTaskOptions): string[] {
+  if (options.runtime === undefined) return []
   const out = new Set<string>([NODE_MOUNT])
-  for (const [path] of dshRuntimeMounts(input, options.dsh)) out.add(path)
-  for (const [, target] of options.dsh.nativeShims ?? []) out.add(target)
+  for (const [path] of dshRuntimeMounts(input, options.runtime.dsh)) out.add(path)
+  for (const [, target] of options.runtime.dsh.nativeShims ?? []) out.add(target)
   for (const overlay of input.overlays) out.add(dirname(realpathSync(overlay)))
   return [...out]
 }
@@ -109,14 +112,16 @@ export function taskContainerArgs(input: DriverInput, options: ContainerTaskOpti
   const args = ['run', '-d', '--init', '--platform', `linux/${options.platform}`]
   if (options.cpus !== undefined) args.push('--cpus', String(options.cpus))
   if (options.memoryMb !== undefined) args.push('--memory', `${options.memoryMb}m`)
-  args.push('--mount', `type=bind,source=${realpathSync(options.nodeDir)},target=${NODE_MOUNT},readonly`)
-  const mounts = new Map<string, 'ro' | 'rw'>(dshRuntimeMounts(input, options.dsh))
-  // The arm's overlays (base rows, the arm's patch, the meter row, any patch files) are host files the runtime reads by
-  // path: their directories are mounted read-only, as the container sandbox mounts the run directory.
-  for (const overlay of input.overlays) { const dir = dirname(realpathSync(overlay)); if (!mounts.has(dir)) mounts.set(dir, 'ro') }
-  for (const [path, mode] of mounts) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
-  for (const [source, target] of options.dsh.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
-  args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`, '-e', 'DSH_TELEMETRY_DISABLED=1', '-e', 'NODE_OPTIONS=--max-old-space-size=2048')
+  if (options.runtime !== undefined) {
+    args.push('--mount', `type=bind,source=${realpathSync(options.runtime.nodeDir)},target=${NODE_MOUNT},readonly`)
+    const mounts = new Map<string, 'ro' | 'rw'>(dshRuntimeMounts(input, options.runtime.dsh))
+    // The arm's overlays (base rows, the arm's patch, the meter row, any patch files) are host files the runtime reads by
+    // path: their directories are mounted read-only, as the container sandbox mounts the run directory.
+    for (const overlay of input.overlays) { const dir = dirname(realpathSync(overlay)); if (!mounts.has(dir)) mounts.set(dir, 'ro') }
+    for (const [path, mode] of mounts) args.push('--mount', `type=bind,source=${path},target=${path}${mode === 'ro' ? ',readonly' : ''}`)
+    for (const [source, target] of options.runtime.dsh.nativeShims ?? []) args.push('--mount', `type=bind,source=${source},target=${target},readonly`)
+    args.push('-e', `DSH_HOME=${realpathSync(input.evalHome)}`, '-e', 'DSH_TELEMETRY_DISABLED=1', '-e', 'NODE_OPTIONS=--max-old-space-size=2048')
+  }
   args.push('--add-host', 'host.docker.internal:host-gateway')
   // A task's verifier or oracle often installs its own tooling (apt, uv, pip) from inside the container. Behind a
   // proxy that traffic has to go the same way the host's does, so the host's proxy variables are forwarded with a
@@ -141,7 +146,8 @@ export function proxyEnvForContainer(env: Record<string, string | undefined>): A
 
 /** The runtime command inside a running task container: the mounted Node, dsh's CLI with the arm's overlays. */
 export function taskRuntimeExecArgs(containerId: string, input: DriverInput, options: ContainerTaskOptions): string[] {
-  const src = realpathSync(options.dsh.dshSource)
+  if (options.runtime === undefined) throw new Error(`${options.image}: opened for grading only, with no runtime inside; a run needs the dsh checkout and Node`)
+  const src = realpathSync(options.runtime.dsh.dshSource)
   const args = ['exec', '-i', '-w', options.workdir ?? '/app', containerId, `${NODE_MOUNT}/bin/node`, '--expose-internals', join(src, 'apps', 'cli', 'lib', 'bin.js'), '--profile', input.arm.profile]
   for (const overlay of input.overlays) args.push('--patch', realpathSync(overlay))
   return args
@@ -208,7 +214,7 @@ export async function openContainerTask(input: DriverInput, options: ContainerTa
     initializeTimeoutMs: 180_000,
     ...(input.arm.effort !== undefined ? { effort: input.arm.effort } : {}),
     ...(input.arm.maxTokens !== undefined ? { maxTokens: input.arm.maxTokens } : {}),
-    ...(options.dsh.onStderr !== undefined ? { onStderr: options.dsh.onStderr } : {}),
+    ...(options.runtime?.dsh.onStderr !== undefined ? { onStderr: options.runtime.dsh.onStderr } : {}),
   })
   return { environment, driverFactory }
 }

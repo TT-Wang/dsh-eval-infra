@@ -39,9 +39,14 @@ export interface ContainerTaskOptions {
     image: string;
     /** Platform of the image; amd64 for every published Terminal-Bench image. Emulated when it is not the host's. */
     platform: ImagePlatform;
-    /** Directory holding the Linux Node build for `platform` (see ensureNodeRuntime). */
-    nodeDir: string;
-    dsh: Pick<DockerOptions, 'dshSource' | 'nativeShims' | 'mounts' | 'onStderr'>;
+    /**
+     * What the dsh runtime needs inside the container: the Linux Node build and the checkout's mounts. Absent for an
+     * environment that only grades (a selfcheck): the image is opened as it is, and asking it for a driver is an error.
+     */
+    runtime?: {
+        nodeDir: string;
+        dsh: Pick<DockerOptions, 'dshSource' | 'nativeShims' | 'mounts' | 'onStderr'>;
+    };
     cpus?: number;
     memoryMb?: number;
     workdir?: string;

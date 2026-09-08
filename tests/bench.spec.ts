@@ -215,13 +215,17 @@ describe('container scenarios', () => {
     const overlayDir = mkdtempSync(join(tmpdir(), 'overlays-'))
     writeFileSync(join(overlayDir, 'b.patch.yml'), '[]\n')
     const input = { arm: resolveArm({ name: 'b' }, join(p.evalDir, 'arms')), scenario: { name: 's', dir: '', meta: { name: 's', turns: 1 }, prompts: ['x'], hasOracle: false, hasSetup: false }, workdir: p.evalDir, evalHome: p.home, overlays: [join(overlayDir, 'b.patch.yml')], env: {} }
-    const args = taskContainerArgs(input, { image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', nodeDir, dsh: { dshSource: src }, cpus: 2, memoryMb: 2048 })
+    const args = taskContainerArgs(input, { image: 'alexgshaw/alpha-task:20251031', platform: 'amd64', runtime: { nodeDir, dsh: { dshSource: src } }, cpus: 2, memoryMb: 2048 })
     expect(args.slice(0, 5)).toEqual(['run', '-d', '--init', '--platform', 'linux/amd64'])
     expect(args).toContain('--cpus'); expect(args).toContain('2048m')
     expect(args.some(a => a.includes('target=/opt/dsh-node'))).toBe(true)
     expect(args.slice(-4)).toEqual(['alexgshaw/alpha-task:20251031', 'tail', '-f', '/dev/null'])
     expect(args.some(a => a.startsWith(`type=bind,source=${realpathSync(overlayDir)},target=`) && a.endsWith(',readonly'))).toBe(true)   // the overlay's directory rides along
-    const exec = taskRuntimeExecArgs('cid123', input, { image: 'x', platform: 'amd64', nodeDir, dsh: { dshSource: src } })
+    const exec = taskRuntimeExecArgs('cid123', input, { image: 'x', platform: 'amd64', runtime: { nodeDir, dsh: { dshSource: src } } })
+    // grading only: the image as it is, no runtime mounts, and no driver
+    const bare = taskContainerArgs(input, { image: 'x', platform: 'amd64' })
+    expect(bare.some(a => a.includes('dsh-node') || a.includes('DSH_HOME'))).toBe(false)
+    expect(() => taskRuntimeExecArgs('cid123', input, { image: 'x', platform: 'amd64' })).toThrow(/grading only/)
     expect(exec.slice(0, 6)).toEqual(['exec', '-i', '-w', '/app', 'cid123', '/opt/dsh-node/bin/node'])
     expect(exec).toContain('--expose-internals')
     rmSync(p.root, { recursive: true, force: true }); rmSync(src, { recursive: true, force: true }); rmSync(nodeDir, { recursive: true, force: true })

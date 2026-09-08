@@ -285,5 +285,8 @@ export declare function regradeRun(project: Project, id: string, options?: {
 }): Promise<RegradeResult>;
 /** A task-runtime factory for the run: one container per trial, from the scenario's own image. */
 export declare function containerTaskRuntimeFactory(project: Project, log: (line: string) => void): Promise<NonNullable<RunDeps['taskRuntimeFactory']>>;
-/** The selfcheck's environment for a container scenario: the untouched image, started, with nothing of ours inside but Node. */
+/**
+ * The selfcheck's environment for a container scenario: the untouched image, started as it is. Grading needs no
+ * runtime inside, so neither the dsh checkout nor Node is required — a machine with Docker alone can check tasks.
+ */
 export declare function containerSelfcheckEnvironment(project: Project, log: (line: string) => void): Promise<(scenario: Scenario) => Promise<import('./environment.js').TaskEnvironment>>;
