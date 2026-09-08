@@ -69,10 +69,13 @@ export declare const SOLUTION_DIR = "/solution";
  * test.sh, read the reward. Reward 1 is a pass; anything else, or no reward
  * file at all, is a fail with the test output as the reason.
  */
-export declare function verifyInEnvironment(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<{
+export interface EnvironmentVerdict {
     ok: boolean;
     detail: string;
     reward: number | null;
-}>;
+    /** False when the verifier never reached its tests (its own bootstrap — apt, uv, pip — failed): an infrastructure failure, not the agent's. */
+    testsRan: boolean;
+}
+export declare function verifyInEnvironment(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<EnvironmentVerdict>;
 /** Apply the benchmark's reference solution inside the environment (the oracle). */
 export declare function solveInEnvironment(environment: TaskEnvironment, solutionDir: string, timeoutMs: number): Promise<ExecResult>;

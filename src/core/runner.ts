@@ -348,6 +348,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   let meterFile: string | undefined
   const container = scenario.meta.runtime === 'container'
   let taskRuntime: TaskRuntime | undefined
+  let infrastructure = false
   try {
     if (!container) {
       await scenarioSetup(scenario, workdir)
@@ -428,9 +429,15 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   try {
     restoreTruth?.()
-    verdict = capped ? { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` }
-      : taskRuntime !== undefined ? await verifyInEnvironment(taskRuntime.environment, join(scenario.dir, 'tests'), (scenario.meta.verifier_timeout_s ?? 900) * 1000)
-      : await scenarioVerify(scenario, workdir)
+    if (capped) verdict = { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` }
+    else if (taskRuntime !== undefined) {
+      const graded = await verifyInEnvironment(taskRuntime.environment, join(scenario.dir, 'tests'), (scenario.meta.verifier_timeout_s ?? 900) * 1000)
+      // A verifier that never reached its tests says nothing about the agent: the trial is an infrastructure
+      // error, which makes its pair incomplete rather than a regression.
+      if (!graded.ok && !graded.testsRan) { error = `verifier could not run its tests: ${graded.detail.slice(0, 400)}`; infrastructure = true; verdict = null }
+      else verdict = { ok: graded.ok, detail: graded.detail }
+    }
+    else verdict = await scenarioVerify(scenario, workdir)
     // Judge artifacts: copy the listed files out before the workspace is discarded.
     if (scenario.meta.judge && scenario.meta.judge.artifacts.length > 0) {
       const dest = join(deps.paths.dir, 'ledgers', scenario.name, arm.name, `rep${job.rep}.artifacts`)
@@ -484,6 +491,7 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
     ledger.usageProvenance = { source: 'self-reported' }
   }
   if (deps.perturb) ledger.promptVariant = variantIndex
+  if (infrastructure) ledger.errorKind = 'infrastructure'
   if (capped) ledger.capped = capped
   const verifierPath = join(scenario.dir, 'verify.py')
   if (existsSync(verifierPath)) ledger.verifierSha = createHash('sha256').update(readFileSync(verifierPath)).digest('hex')

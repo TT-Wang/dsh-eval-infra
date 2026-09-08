@@ -201,9 +201,31 @@ export const SOLUTION_DIR = '/solution'
  * test.sh, read the reward. Reward 1 is a pass; anything else, or no reward
  * file at all, is a fail with the test output as the reason.
  */
-export async function verifyInEnvironment(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<{ ok: boolean; detail: string; reward: number | null }> {
+export interface EnvironmentVerdict {
+  ok: boolean
+  detail: string
+  reward: number | null
+  /** False when the verifier never reached its tests (its own bootstrap — apt, uv, pip — failed): an infrastructure failure, not the agent's. */
+  testsRan: boolean
+}
+
+/** Did a pytest session happen? Harbor's test.sh templates write a CTRF report; the session banner is the fallback signal. */
+function testsRanIn(output: string, ctrf: string | null): boolean {
+  if (ctrf !== null && ctrf.trim() !== '') return true
+  return /test session starts|\b\d+ (passed|failed|errors?)\b|\bcollected \d+ items?\b|\bPASSED\b|\bFAILED\b|\bno tests ran\b/.test(output)
+}
+
+export async function verifyInEnvironment(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<EnvironmentVerdict> {
+  const first = await verifyOnce(environment, testsDir, timeoutMs)
+  if (first.ok || first.testsRan) return first
+  // The tests never ran: usually the verifier's own download failed. One more try before calling it infrastructure.
+  const second = await verifyOnce(environment, testsDir, timeoutMs)
+  return second.ok || second.testsRan ? second : { ...second, detail: `verifier did not reach its tests (twice): ${second.detail}` }
+}
+
+async function verifyOnce(environment: TaskEnvironment, testsDir: string, timeoutMs: number): Promise<EnvironmentVerdict> {
   await environment.upload(testsDir, TESTS_DIR)
-  await environment.exec(`mkdir -p ${VERIFIER_DIR} && rm -f ${VERIFIER_DIR}/reward.txt ${VERIFIER_DIR}/reward.json && chmod +x ${TESTS_DIR}/test.sh`, { timeoutMs: 30_000 })
+  await environment.exec(`mkdir -p ${VERIFIER_DIR} && rm -f ${VERIFIER_DIR}/reward.txt ${VERIFIER_DIR}/reward.json ${VERIFIER_DIR}/ctrf.json && chmod +x ${TESTS_DIR}/test.sh`, { timeoutMs: 30_000 })
   // Run from the task's working directory, as Harbor does: a test.sh may check $PWD or read the agent's files relatively.
   const r = await environment.exec(`bash ${TESTS_DIR}/test.sh > ${VERIFIER_DIR}/test-stdout.txt 2>&1`, { cwd: environment.workdir, timeoutMs })
   const rewardText = await environment.readFile(`${VERIFIER_DIR}/reward.txt`)
@@ -213,8 +235,9 @@ export async function verifyInEnvironment(environment: TaskEnvironment, testsDir
   else if (rewardJson !== null) { try { const parsed = JSON.parse(rewardJson) as unknown; reward = typeof parsed === 'number' ? parsed : parsed !== null && typeof parsed === 'object' ? Number(Object.values(parsed as Record<string, unknown>)[0]) : null } catch { reward = null } }
   const output = ((await environment.readFile(`${VERIFIER_DIR}/test-stdout.txt`)) ?? '').trim()
   const tail = output.split('\n').slice(-12).join('\n').slice(-1200)
-  if (reward === null || !Number.isFinite(reward)) return { ok: false, detail: `verifier wrote no reward${r.code === 124 ? ' (timed out)' : ''}: ${tail || r.stderr.trim().slice(-400)}`, reward: null }
-  return { ok: reward >= 1, detail: reward >= 1 ? 'reward 1' : `reward ${reward}: ${tail}`, reward }
+  const testsRan = testsRanIn(output, await environment.readFile(`${VERIFIER_DIR}/ctrf.json`))
+  if (reward === null || !Number.isFinite(reward)) return { ok: false, detail: `verifier wrote no reward${r.code === 124 ? ' (timed out)' : ''}: ${tail || r.stderr.trim().slice(-400)}`, reward: null, testsRan }
+  return { ok: reward >= 1, detail: reward >= 1 ? 'reward 1' : `reward ${reward}: ${tail}`, reward, testsRan: reward >= 1 || testsRan }
 }
 
 /** Apply the benchmark's reference solution inside the environment (the oracle). */

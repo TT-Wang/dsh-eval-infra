@@ -125,6 +125,16 @@ describe('container scenarios', () => {
     expect(zero.detail).toMatch(/^reward 0/)
     const none = await verifyInEnvironment(fakeEnvironment(() => ''), '/nowhere/tests', 5000)
     expect(none).toMatchObject({ ok: false, reward: null })
+    // reward 0 with a pytest session behind it is a fail; reward 0 with no session (the verifier's download failed) is infrastructure, after one retry
+    const failed = fakeEnvironment(() => '0')
+    failed.readFile = async (path: string) => path.endsWith('reward.txt') ? '0' : path.endsWith('test-stdout.txt') ? '=== 2 failed, 1 passed in 0.3s ===' : null
+    expect(await verifyInEnvironment(failed, '/nowhere/tests', 5000)).toMatchObject({ ok: false, testsRan: true })
+    const noBootstrap = fakeEnvironment(() => '0')
+    noBootstrap.readFile = async (path: string) => path.endsWith('reward.txt') ? '0' : path.endsWith('test-stdout.txt') ? 'E: Some index files failed to download.\ncurl: (35) SSL_ERROR_SYSCALL' : null
+    const infra = await verifyInEnvironment(noBootstrap, '/nowhere/tests', 5000)
+    expect(infra).toMatchObject({ ok: false, testsRan: false })
+    expect(infra.detail).toMatch(/did not reach its tests \(twice\)/)
+    expect(noBootstrap.uploads).toEqual(['/tests', '/tests'])
   })
 
   it('selfchecks a container scenario in its environment: nop must fail, the oracle must pass', async () => {
@@ -159,15 +169,40 @@ describe('container scenarios', () => {
     const scripted = scriptedDriverFactory()
     const progress = await executeRun(plan, [scenario], arms, {
       driverFactory: scripted, evalHome: p.home, paths, env: {}, workRoot: join(p.root, 'work'),
-      taskRuntimeFactory: async (input) => { const env = fakeEnvironment(() => (input.arm.name === 'cand' ? '0' : '1')); envs.push(env); return { environment: env, driverFactory: scripted } },
+      taskRuntimeFactory: async (input) => {
+        const env = fakeEnvironment(() => (input.arm.name === 'cand' ? '0' : '1'))
+        // the candidate's verifier ran its tests and failed them; that is a fail, not an error
+        env.readFile = async (path: string) => path.endsWith('reward.txt') ? (input.arm.name === 'cand' ? '0' : '1') : path.endsWith('ctrf.json') ? '{"results":{}}' : path.endsWith('test-stdout.txt') ? '=== 1 failed ===' : null
+        envs.push(env); return { environment: env, driverFactory: scripted }
+      },
     })
     expect(progress.status).toBe('done')
     const ledgers = readLedgers(paths)
     expect(ledgers.find(l => l.arm === 'baseline')!.verdict).toMatchObject({ ok: true })
     expect(ledgers.find(l => l.arm === 'cand')!.verdict?.ok).toBe(false)
+    expect(ledgers.find(l => l.arm === 'cand')!.error).toBeUndefined()
     expect(envs).toHaveLength(2)
     expect(envs.every(e => e.stopped)).toBe(true)
     expect(envs.every(e => e.uploads.includes('/tests'))).toBe(true)
+    // a verifier that never reached its tests is infrastructure: the trial is an error of that kind, the pair incomplete, no regression
+    const plan2: RunPlan = { ...plan, id: 'c2' }
+    const paths2 = runPaths(p.runsRoot, plan2.id)
+    const arms2 = [resolveArm(plan2.baseline, paths2.arms), resolveArm(plan2.candidates[0]!, paths2.arms)]
+    await executeRun(plan2, [scenario], arms2, {
+      driverFactory: scripted, evalHome: p.home, paths: paths2, env: {}, workRoot: join(p.root, 'work'),
+      taskRuntimeFactory: async (input) => {
+        const env = fakeEnvironment(() => '1')
+        if (input.arm.name === 'cand') env.readFile = async (path: string) => path.endsWith('reward.txt') ? '0' : path.endsWith('test-stdout.txt') ? 'E: Some index files failed to download' : null
+        return { environment: env, driverFactory: scripted }
+      },
+    })
+    const l2 = readLedgers(paths2)
+    expect(l2.find(l => l.arm === 'cand')).toMatchObject({ errorKind: 'infrastructure' })
+    const { buildReport } = await import('../src/core/report.js')
+    const rep = buildReport(plan2, l2)
+    expect(rep.candidates[0]!.scenarios[0]!.class).toBe('incomplete')
+    expect(rep.candidates[0]!.gate).toBe('incomplete')
+    expect(rep.notes.join(' ')).toMatch(/could not be graded/)
     rmSync(p.root, { recursive: true, force: true })
   })
 

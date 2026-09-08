@@ -163,6 +163,8 @@ export interface TurnRow extends Usage {
     end: string;
     /** Error message when the turn ended in error. */
     error?: string;
+    /** `runtime` (default): the agent's process crashed or timed out — a failure of that arm. `infrastructure`: the trial could not be graded (the benchmark verifier never reached its tests) — excluded from every comparison, never a failure. */
+    errorKind?: 'runtime' | 'infrastructure';
 }
 /** Totals across the run. */
 export interface Totals extends Usage {

@@ -315,7 +315,9 @@ export interface Report {
 }
 
 function armScenarioStats(arm: string, scenario: string, ledgers: RunLedger[]): ArmScenarioStats {
-  const rows = ledgers.filter(l => l.arm === arm && l.scenario === scenario).sort((a, b) => a.rep - b.rep)
+  // A trial the infrastructure could not grade is not evidence about the arm: it is left out here, so the
+  // scenario reads incomplete for that pair instead of counting against whichever arm's container broke.
+  const rows = ledgers.filter(l => l.arm === arm && l.scenario === scenario && l.errorKind !== 'infrastructure').sort((a, b) => a.rep - b.rep)
   const passed = rows.filter(r => r.verdict?.ok === true && r.error === undefined)
   const usd = rows.map(r => r.totals.usd)
   const byRep: ArmScenarioStats['byRep'] = {}
@@ -662,8 +664,10 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     if (c.noiseFloor !== null) notes.push(`${c.arm}: the A/A ${(c.noiseFloor?.kind ?? 'rerun') === 'perturbation' ? 'perturbation-floor ' : ''}run ${c.noiseFloor.runId} on this baseline showed |Δ%| averaging ${c.noiseFloor.meanAbsPct.toFixed(1)}% (interval ${fmtPct(c.noiseFloor.lo)} to ${fmtPct(c.noiseFloor.hi)}) with no real change; treat differences inside that band as noise.`)
     if (c.cuped !== null) notes.push(`${c.arm}: CUPED with each scenario's archived baseline cost as covariate removes ${(c.cuped.varianceRemoved * 100).toFixed(0)}% of the variance on ${c.cuped.n} scenarios; adjusted Δ% ${fmtPct(c.cuped.ci.mean)} (${fmtPct(c.cuped.ci.lo)} to ${fmtPct(c.cuped.ci.hi)}). Shown beside the raw interval, not instead of it.`)
   }
-  const errors = ledgers.filter(l => l.error !== undefined).length
+  const infrastructure = ledgers.filter(l => l.errorKind === 'infrastructure').length
+  const errors = ledgers.filter(l => l.error !== undefined && l.errorKind !== 'infrastructure').length
   if (errors > 0) notes.push(`${errors} run(s) ended with a runtime error (timeout or crash); they count as failures.`)
+  if (infrastructure > 0) notes.push(`${infrastructure} trial(s) could not be graded (the benchmark verifier never reached its tests); they are excluded from every comparison and count as neither pass nor fail — their scenarios read incomplete for that repeat.`)
   const overridden = ledgers.filter(l => l.overridden).length
   if (overridden > 0) notes.push(`${overridden} verdict(s) were overridden by a human annotation; the machine verdicts are kept in the ledgers.`)
   {
