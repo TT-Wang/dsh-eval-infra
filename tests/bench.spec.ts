@@ -40,9 +40,11 @@ function fakeFetcher(): (url: string) => Promise<string> {
     if (url.endsWith('/instruction.md')) return '<!-- canary GUID 123 -->\n\nWrite a sampler to /app/sampler.py.\n'
     if (url.includes('/contents/') && url.includes('/tests?')) return JSON.stringify([{ type: 'file', name: 'test.sh', download_url: 'https://raw/tests/test.sh', path: 'x' }, { type: 'file', name: 'test_outputs.py', download_url: 'https://raw/tests/test_outputs.py', path: 'y' }])
     if (url.includes('/contents/') && url.includes('/solution?')) return JSON.stringify([{ type: 'file', name: 'solve.sh', download_url: 'https://raw/solution/solve.sh', path: 'z' }])
-    if (url === 'https://raw/tests/test.sh') return '#!/usr/bin/env bash\npytest /tests && echo 1 > /logs/verifier/reward.txt || echo 0 > /logs/verifier/reward.txt\n'
-    if (url === 'https://raw/tests/test_outputs.py') return 'def test_it(): assert True\n'
-    if (url === 'https://raw/solution/solve.sh') return '#!/usr/bin/env bash\ncp /solution/sampler.py /app/\n'
+    if (url.endsWith('/tests/test.sh')) return '#!/usr/bin/env bash\npytest /tests && echo 1 > /logs/verifier/reward.txt || echo 0 > /logs/verifier/reward.txt\n'
+    if (url.endsWith('/tests/test_outputs.py')) return 'def test_it(): assert True\n'
+    if (url.endsWith('/solution/solve.sh')) return '#!/usr/bin/env bash\ncp /solution/sampler.py /app/\n'
+    if (url.includes('huggingface.co/api/datasets/') && url.endsWith('/tests')) return JSON.stringify([{ type: 'file', path: 'alpha-task/tests/test.sh' }, { type: 'file', path: 'alpha-task/tests/test_outputs.py' }])
+    if (url.includes('huggingface.co/api/datasets/') && url.endsWith('/solution')) return JSON.stringify([{ type: 'file', path: 'alpha-task/solution/solve.sh' }])
     throw new Error(`unexpected fetch ${url}`)
   }
 }
@@ -73,6 +75,11 @@ describe('terminal-bench adapter', () => {
     const p = project()
     const pulled: string[][] = []
     const r = await terminalBench.materialize(p, 'alpha-task', { fetcher: fakeFetcher(), docker: async (args) => { pulled.push(args); return { code: 0, stderr: '' } } })
+    // the same task materialises when GitHub's listing is unavailable (anonymous limit): names come from the mirror, files from the pinned commit
+    const gh = fakeFetcher()
+    const noApi = async (url: string): Promise<string> => { if (url.startsWith('https://api.github.com/')) throw new Error(`${url}: HTTP 403`); return gh(url) }
+    const viaMirror = await terminalBench.materialize(project(), 'alpha-task', { fetcher: noApi, pull: false })
+    expect(viaMirror.taskHash).toBe(r.taskHash)
     expect(pulled).toEqual([['pull', '--platform', 'linux/amd64', 'alexgshaw/alpha-task:20251031']])
     expect(r.dir).toBe(join(p.benchRoot, 'terminal-bench-2.0', 'alpha-task'))
     const meta = JSON.parse(readFileSync(join(r.dir, 'meta.json'), 'utf8')) as Record<string, unknown>

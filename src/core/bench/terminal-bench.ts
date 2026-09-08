@@ -64,6 +64,26 @@ function contentsUrl(t: RegistryTask, dir: string): string {
   return `https://api.github.com/repos/${repo}/contents/${t.path}/${dir}?ref=${t.git_commit_id}`
 }
 
+/** The dataset's mirror on Hugging Face: the same task directories, listable without a token. */
+const MIRROR = 'harborframework/terminal-bench-2.0'
+
+/**
+ * File names under a task's subdirectory. GitHub's contents API is asked first
+ * (it lists the pinned commit exactly); when it will not answer — the anonymous
+ * limit is 60 requests an hour — the mirror's tree is used for the names, and
+ * the contents still come from GitHub at the pinned commit.
+ */
+async function listDir(t: RegistryTask, dir: string, fetcher: Fetcher, log?: (line: string) => void): Promise<string[]> {
+  try {
+    const listing = JSON.parse(await fetcher(contentsUrl(t, dir))) as Array<{ type: string; name: string }>
+    return listing.filter(f => f.type === 'file').map(f => f.name)
+  } catch (e) {
+    log?.(`GitHub would not list ${t.path}/${dir} (${e instanceof Error ? e.message.slice(0, 80) : String(e)}); using the mirror's listing`)
+    const tree = JSON.parse(await fetcher(`https://huggingface.co/api/datasets/${MIRROR}/tree/main/${t.path}/${dir}`)) as Array<{ type: string; path: string }>
+    return tree.filter(f => f.type === 'file').map(f => f.path.split('/').pop()!)
+  }
+}
+
 async function registryTasks(fetcher: Fetcher): Promise<RegistryTask[]> {
   const parsed = JSON.parse(await fetcher(REGISTRY)) as unknown
   const list = Array.isArray(parsed) ? parsed : Object.values(parsed as Record<string, unknown>).find(v => Array.isArray(v)) as unknown[] | undefined
@@ -174,10 +194,9 @@ export const terminalBench: BenchAdapter = {
     files.set('instruction.md', await fetcher(rawUrl(reg, 'instruction.md')))
     files.set('task.toml', await fetcher(rawUrl(reg, 'task.toml')))
     for (const sub of ['tests', 'solution']) {
-      const listing = JSON.parse(await fetcher(contentsUrl(reg, sub))) as Array<{ type: string; name: string; download_url: string | null; path: string }>
-      for (const f of listing) {
-        if (f.type !== 'file' || f.download_url === null) continue
-        files.set(`${sub}/${f.name}`, await fetcher(f.download_url))
+      for (const name of await listDir(reg, sub, fetcher, log)) {
+        try { files.set(`${sub}/${name}`, await fetcher(rawUrl(reg, `${sub}/${name}`))) }
+        catch (e) { if (!String(e).includes('HTTP 404')) throw e }   // a mirror-only file is not at the pinned commit; skip it
       }
     }
     if (!files.has('tests/test.sh')) throw new Error(`${DATASET}/${id}: no tests/test.sh at commit ${task.source.commit.slice(0, 10)}`)
@@ -186,7 +205,9 @@ export const terminalBench: BenchAdapter = {
     const taskHash = hash.digest('hex')
     if (options.pull !== false) {
       log(`pulling ${task.image} (linux/amd64${task.imageMb ? `, ${task.imageMb} MB compressed` : ''})…`)
-      const pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image])
+      // Registries drop connections; one retry covers the usual EOF without hiding a real failure.
+      let pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image])
+      if (pulled.code !== 0) { await new Promise(r => setTimeout(r, 2000)); pulled = await (options.docker ?? dockerRun)(['pull', '--platform', 'linux/amd64', task.image]) }
       if (pulled.code !== 0) throw new Error(`docker pull ${task.image} failed: ${pulled.stderr.trim().split('\n').at(-1) ?? pulled.code}`)
     }
     rmSync(dir, { recursive: true, force: true })

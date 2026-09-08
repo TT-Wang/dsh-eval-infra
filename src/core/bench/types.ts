@@ -67,7 +67,9 @@ export async function defaultFetch(url: string): Promise<string> {
   let last: unknown
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const res = await fetch(url, { headers: { 'user-agent': 'dsh-eval' } })
+      // A GitHub token, when the environment has one (CI usually does), lifts the API's 60-an-hour anonymous limit.
+      const token = url.startsWith('https://api.github.com/') ? (process.env['GITHUB_TOKEN'] ?? process.env['GH_TOKEN']) : undefined
+      const res = await fetch(url, { headers: { 'user-agent': 'dsh-eval', ...(token ? { authorization: `Bearer ${token}` } : {}) } })
       if (res.status === 404) throw new Error(`${url}: HTTP 404`)
       if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
       return await res.text()
