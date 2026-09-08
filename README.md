@@ -147,6 +147,21 @@ a root explicitly.
 
 `new_session_before_turns` ends the runtime process and starts a fresh one on the same workspace, which is the way to test what a memory plugin actually stored. `meta.judge` names a rubric and the artifacts a judge should read, `meta.holdout` seals a scenario into the confirmation pool, and `prompts.variants.json` supplies the paraphrases `--perturb` uses.
 
+### Public benchmarks
+
+The library above is the **default bench**. Public benchmarks are separate pools beside it, integrated lightly: the index is a few kilobytes and nothing else is downloaded until you pick a task.
+
+```bash
+dsh-eval bench list terminal-bench                    # the 89-task index of Terminal-Bench 2.0 (Apache-2.0)
+dsh-eval bench get terminal-bench build-pmars         # this task's files at the pinned commit + its prebuilt image
+dsh-eval selfcheck build-pmars                        # its tests must fail on the untouched image and pass after its solution
+dsh-eval run --baseline baseline --arm candidate build-pmars --repeats 3
+```
+
+A benchmark task is a scenario that ships its own image (`meta.runtime: container`). It runs the way the benchmark's own harness runs it: the image is started and kept alive for the trial, the dsh runtime runs inside it, and the task's own `tests/test.sh` grades the same container before it is removed. The task's commit, hash and license go into the receipt; the task's files are never edited.
+
+Two things to know. Every published Terminal-Bench image is linux/amd64: on an amd64 host it runs natively, elsewhere Docker emulates it and every trial is slower. And many verifiers install their own tooling at grading time (uv, pytest), so they are as reliable as the container's network. A slice of a public benchmark run here is a paired comparison of your two arms on those tasks — not a leaderboard score.
+
 ## Reading the report
 
 1. **Gate.** Any scenario the baseline passes by majority and the candidate fails is a regression; the candidate fails the gate and no other reading is offered.

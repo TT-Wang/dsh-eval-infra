@@ -26,3 +26,19 @@ jobs:
             report.html
             .dsh-eval/runs/*/report.md
             .dsh-eval/runs/*/report.json
+
+  # Public-benchmark smoke on the platform the benchmarks publish for (linux/amd64): the task's own
+  # tests must fail on the untouched image and pass after its reference solution, inside the image.
+  # No model call is made, so no API key is needed; Docker and a dsh checkout are.
+  bench-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm run build
+      - run: git clone --depth 1 https://github.com/deepseek-ai/dsh ~/.dsh/source/checkout && ln -s ~/.dsh/source/checkout ~/.dsh/source/current && (cd ~/.dsh/source/checkout && npm ci)
+      - run: npx dsh-eval init
+      - run: npx dsh-eval bench get terminal-bench build-pmars
+      - run: npx dsh-eval selfcheck build-pmars

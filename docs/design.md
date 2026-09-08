@@ -164,6 +164,14 @@ Tests inject a scripted driver (`tests/helpers.ts`) so the whole engine — sche
 
 **Patterns.** `src/core/patterns.ts` mines the archive without a model: verifier reasons are reduced to signatures (paths, numbers and quoted strings normalised away) so like failures collapse, and behaviour regimes are thresholded on the archive's own quartiles so "many tool errors" means many for this project. Patterns are ranked by arm skew first, because a pattern that hits one arm far more than the other is the one a change caused.
 
+## 6i. Public benchmarks as pools
+
+The default bench is ours. A public benchmark is a separate pool under `bench/public/<dataset>-<version>/`, filled one task at a time: an adapter (`src/core/bench/`) reads the dataset's index (Terminal-Bench 2.0: the Harbor registry plus one `task.toml` per task, cached in `.dsh-eval/bench/`), and `bench get` fetches a task's own files at the registry's pinned commit, pulls its prebuilt image and writes a scenario whose `meta.json` says `runtime: container` and records the origin (benchmark, version, commit, task hash, license). The task's files are kept verbatim; only `prompts.json` (the instruction, canary line stripped) and `meta.json` are ours.
+
+A container scenario runs under the benchmark's own harness contract (`src/core/environment.ts`): `docker run -d … <image> tail -f /dev/null` with the task's cpus and memory, a pinned Node 22 Linux build bind-mounted at `/opt/dsh-node`, the dsh checkout, the eval home and the linked plugins mounted at their host paths as in the container sandbox; the runtime runs through `docker exec -i … node --expose-internals …` and the RPC driver is unchanged; after the turns the task's `tests/` are uploaded to `/tests`, `test.sh` runs from the task's working directory and `/logs/verifier/reward.txt` decides the verdict (1 = pass); then the container is removed. Selfcheck uses the same environment: the tests must fail on the untouched image and pass after `solution/solve.sh`. The wire meter reaches the container through the host gateway as in the container sandbox.
+
+Platform: every published Terminal-Bench image is linux/amd64, which is the target; on another architecture Docker emulates the image and the run notes it. Verifiers that install their own tooling at grading time depend on the container's network. A public-benchmark slice is still a paired A/B of two arms, reported in its own pool, never a leaderboard score.
+
 ## 7. What it does not do (yet)
 
 - A same-family judge is refused by default; a cross-family panel needs endpoints the user configures (the mechanism exists, the models are the user's).

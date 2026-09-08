@@ -144,6 +144,21 @@ bench/scenarios/<name>/
 
 `new_session_before_turns` 让运行时在指定轮之前退出并在同一工作区上重新启动,这就是测记忆插件"到底存了什么"的方法。`meta.judge` 声明评分标准和交给判卷模型看的产出文件,`meta.holdout` 把场景封进确认池,`prompts.variants.json` 提供 `--perturb` 用的同义改写。
 
+### 公开 benchmark
+
+上面的库是 **default bench**。公开 benchmark 是它旁边独立的 pool，轻接入:索引只有几 KB,你选中某道题之前什么都不下载。
+
+```bash
+dsh-eval bench list terminal-bench                    # Terminal-Bench 2.0 的 89 题索引(Apache-2.0)
+dsh-eval bench get terminal-bench build-pmars         # 取这道题在固定 commit 下的文件 + 它的预构建镜像
+dsh-eval selfcheck build-pmars                        # 它的测试必须在未动过的镜像上失败、在参考解之后通过
+dsh-eval run --baseline baseline --arm candidate build-pmars --repeats 3
+```
+
+一道 benchmark 题就是一个自带镜像的场景(`meta.runtime: container`),按该 benchmark 自己的 harness 方式运行:镜像启动并在整个 trial 期间保活,dsh 运行时在里面跑,题目自带的 `tests/test.sh` 在同一个容器里评分,然后容器才被删除。题目的 commit、hash 和许可证写进回执;题目文件从不修改。
+
+两点要知道。Terminal-Bench 发布的镜像全部是 linux/amd64:在 amd64 主机上原生运行,其它平台由 Docker 模拟,每个 trial 都会慢。其次,很多验证器在评分时自行安装工具(uv、pytest),它们的可靠性取决于容器的网络。在这里跑公开 benchmark 的一个切片,得到的是你两个臂在这些题上的配对比较——不是排行榜分数。
+
 ## 怎么读报告
 
 1. **闸门**。基线多数通过而候选多数不过的场景是退化;候选有退化就不给任何读数。
