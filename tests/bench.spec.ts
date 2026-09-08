@@ -249,6 +249,7 @@ describe('swebench-verified adapter', () => {
   const page = (rows: unknown[], total: number): string => JSON.stringify({ num_rows_total: total, features: [], rows: rows.map(row => ({ row })) })
   const fetcher = async (url: string): Promise<string> => {
     const u = new URL(url)
+    if (u.hostname === 'huggingface.co') return JSON.stringify({ sha: 'abcdef1234567890' })
     if (!u.hostname.startsWith('datasets-server')) throw new Error(`unexpected ${url}`)
     const offset = Number(u.searchParams.get('offset')); const length = Number(u.searchParams.get('length'))
     const all = [{ ...ROW, instance_id: 'astropy__astropy-1', repo: 'astropy/astropy', image: 'swebench/sweb.eval.x86_64.astropy_1776_astropy-1:latest' }, ROW]
@@ -267,7 +268,7 @@ describe('swebench-verified adapter', () => {
     expect(r.dir).toBe(join(p.benchRoot, 'swebench-verified', 'psf__requests-2317'))
     const meta = JSON.parse(readFileSync(join(r.dir, 'meta.json'), 'utf8')) as Record<string, unknown>
     expect(meta).toMatchObject({ runtime: 'container', image: ROW.image, platform: 'amd64', workdir: '/testbed', verifier_python: 'python3', turn_timeout_s: 1800, verifier_timeout_s: 1800, category: 'public' })
-    expect(meta['origin']).toMatchObject({ benchmark: 'swebench-verified', id: 'psf__requests-2317', commit: ROW.base_commit, license: 'MIT', taskHash: r.taskHash })
+    expect(meta['origin']).toMatchObject({ benchmark: 'swebench-verified', version: 'abcdef123456', id: 'psf__requests-2317', commit: ROW.base_commit, license: 'MIT', taskHash: r.taskHash })
     expect(existsSync(join(r.dir, 'verify.py'))).toBe(true)
     expect(existsSync(join(r.dir, 'tests', 'test.sh'))).toBe(false)              // host-side grading, no in-container test.sh
     expect(readFileSync(join(r.dir, 'solution', 'patch.diff'), 'utf8')).toBe(ROW.patch)

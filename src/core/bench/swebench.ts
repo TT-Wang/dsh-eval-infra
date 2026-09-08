@@ -19,7 +19,8 @@ import { defaultFetch, dockerHubImage, ensureImage, type BenchAdapter, type Benc
 
 const DATASET = 'swebench-verified'
 const HF_DATASET = 'SWE-bench/SWE-bench_Verified'
-const VERSION = 'test'
+/** The dataset has no version of its own; the index records the Hugging Face revision it was read at. */
+const VERSION = ''
 const LICENSE = 'MIT'
 /** The grading package, pinned: it is the benchmark's own harness, so a version is a protocol. */
 export const SWEBENCH_PACKAGE = 'swebench==5.0.2'
@@ -312,7 +313,10 @@ export const swebenchVerified: BenchAdapter = {
       if (page.rows.length === 0) break
       offset += page.rows.length
     }
-    const index: BenchIndex = { dataset: DATASET, version: VERSION, license: LICENSE, fetchedAt: new Date().toISOString(), tasks }
+    // Best effort: the revision the rows were read at, so a receipt can say which data it was.
+    let revision = 'main'
+    try { const meta = JSON.parse(await fetcher(`https://huggingface.co/api/datasets/${HF_DATASET}`)) as { sha?: string }; if (typeof meta.sha === 'string') revision = meta.sha.slice(0, 12) } catch { /* the rows are what matter */ }
+    const index: BenchIndex = { dataset: DATASET, version: revision, license: LICENSE, fetchedAt: new Date().toISOString(), tasks }
     mkdirSync(cacheDir, { recursive: true })
     writeFileSync(cache, JSON.stringify(index, null, 2))
     return index
@@ -351,7 +355,7 @@ export const swebenchVerified: BenchAdapter = {
       turns: 1,
       category: 'public',
       tags: [DATASET, row.repo.split('/')[1] ?? row.repo, ...(row.difficulty ? [row.difficulty] : [])],
-      stressor: `SWE-bench Verified · ${row.repo} ${row.version} · ${row.difficulty ?? 'unrated'}`,
+      stressor: `SWE-bench Verified (${index.version}) · ${row.repo} ${row.version} · ${row.difficulty ?? 'unrated'}`,
       runtime: 'container',
       image: row.image,
       platform: 'amd64',
@@ -363,7 +367,7 @@ export const swebenchVerified: BenchAdapter = {
       verifier_python: python,
       network: true,
       oracle: 'required',
-      origin: { benchmark: DATASET, version: VERSION, id, gitUrl: `https://github.com/${row.repo}`, commit: row.base_commit, path: `${HF_DATASET}#${task.row ?? '?'}`, license: LICENSE, taskHash },
+      origin: { benchmark: DATASET, version: index.version, id, gitUrl: `https://github.com/${row.repo}`, commit: row.base_commit, path: `${HF_DATASET}#${task.row ?? '?'}`, license: LICENSE, taskHash },
     }
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2) + '\n')
     writeFileSync(join(dir, 'prompts.json'), JSON.stringify([instructionFor(row)], null, 2) + '\n')

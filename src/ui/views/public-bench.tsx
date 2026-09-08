@@ -44,7 +44,7 @@ export function PublicBench({ onChanged }: { onChanged: () => void }) {
             <div key={d.id} class="rounded-md border border-border">
               <button class="w-full flex items-center gap-3 px-3 py-2 text-left" onClick={() => setOpen(isOpen ? null : d.id)}>
                 <span class="text-muted-foreground text-xs">{isOpen ? '▾' : '▸'}</span>
-                <b class="text-sm">{d.title} {d.version}</b>
+                <b class="text-sm">{d.title}{d.version ? ` ${d.version}` : ''}</b>
                 <span class="text-xs text-muted-foreground">{tasks.length} tasks · {d.license} · {present.size} in this project</span>
               </button>
               {d.note && <p class="px-3 pb-2 -mt-1 text-xs text-muted-foreground">{d.note}</p>}

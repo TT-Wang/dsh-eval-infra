@@ -507,9 +507,9 @@ async function cmdBench(project: Project, args: Args): Promise<number> {
   if (sub === 'list') {
     const index = await adapter.index(project, { refresh: args.flags['refresh'] === true, log: err })
     const present = new Set(existsSync(adapter.poolDir(project)) ? readdirSync(adapter.poolDir(project)) : [])
-    out(`${adapter.title} ${index.version} · ${index.tasks.length} tasks · ${index.license} · index fetched ${index.fetchedAt.slice(0, 10)}`)
+    out(`${adapter.title}${index.version ? ` ${index.version}` : ''} · ${index.tasks.length} tasks · ${index.license} · index fetched ${index.fetchedAt.slice(0, 10)}`)
     for (const t of index.tasks) out(`${present.has(t.id) ? '✓' : ' '} ${t.id.padEnd(36)} ${(t.category ?? '').padEnd(22)} ${(t.difficulty ?? '').padEnd(8)} ${t.image}`)
-    out(`\n✓ = in this project (bench/public/${adapter.id}-${index.version}). Get one: dsh-eval bench get ${adapter.id} <task>`)
+    out(`\n✓ = in this project (${adapter.poolDir(project).replace(project.root + '/', '')}). Get one: dsh-eval bench get ${adapter.id} <task>`)
     return 0
   }
   if (sub === 'get') {
