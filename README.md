@@ -1,5 +1,7 @@
 # dsh-eval-infra
 
+[![bench-smoke](https://github.com/TT-Wang/dsh-eval-infra/actions/workflows/bench-smoke.yml/badge.svg)](https://github.com/TT-Wang/dsh-eval-infra/actions/workflows/bench-smoke.yml)
+
 Paired A/B evaluation for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) components: plugins, system prompts, loop and context designs, tool sets, memory backends, safety guards.
 
 Two configurations of the agent run the same scenarios back to back through the real dsh SDK runtime. The tool checks the verifiers before the first trial, refuses comparisons that change more than one thing, gates on regressions before it talks about cost, prices every call the way DeepSeek bills it, meters usage on the wire, and rebuilds every number from the ledgers on disk. When the evidence does not support a conclusion, it says so instead of producing one.
