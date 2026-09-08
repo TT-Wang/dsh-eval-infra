@@ -155,7 +155,13 @@ dsh-eval selfcheck build-pmars                        # 它的测试必须在未
 dsh-eval run --baseline baseline --arm candidate build-pmars --repeats 3
 ```
 
-一道 benchmark 题就是一个自带镜像的场景(`meta.runtime: container`),按该 benchmark 自己的 harness 方式运行:镜像启动并在整个 trial 期间保活,dsh 运行时在里面跑,题目自带的 `tests/test.sh` 在同一个容器里评分,然后容器才被删除。题目的 commit、hash 和许可证写进回执;题目文件从不修改。
+一道 benchmark 题就是一个自带镜像的场景(`meta.runtime: container`),按该 benchmark 自己的 harness 方式运行:镜像启动并在整个 trial 期间保活,dsh 运行时在里面跑,由 benchmark 自己的评分方式裁决——Terminal-Bench 是题目自带的 `tests/test.sh` 在同一个容器里跑;SWE-bench Verified 是官方 `swebench` harness:把 agent 的 diff 应用到同镜像的新容器,执行数据集自带的评测脚本,用该仓库的解析器读结果。题目的 commit、hash 和许可证写进回执;题目文件从不修改。
+
+```bash
+dsh-eval bench list swebench-verified                 # 12 个 Python 仓库的 500 个 issue
+dsh-eval bench get swebench-verified psf__requests-2317   # 取该行、建评分环境(一次)、拉镜像(约 1 GB)
+dsh-eval selfcheck psf__requests-2317                 # 参考修复必须 resolve,空改动必须不 resolve
+```
 
 两点要知道。Terminal-Bench 发布的镜像全部是 linux/amd64:在 amd64 主机上原生运行,其它平台由 Docker 模拟,每个 trial 都会慢。其次,很多验证器在评分时自行安装工具(uv、pytest),它们的可靠性取决于容器的网络。在这里跑公开 benchmark 的一个切片,得到的是你两个臂在这些题上的配对比较——不是排行榜分数。
 

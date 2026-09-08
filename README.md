@@ -158,7 +158,13 @@ dsh-eval selfcheck build-pmars                        # its tests must fail on t
 dsh-eval run --baseline baseline --arm candidate build-pmars --repeats 3
 ```
 
-A benchmark task is a scenario that ships its own image (`meta.runtime: container`). It runs the way the benchmark's own harness runs it: the image is started and kept alive for the trial, the dsh runtime runs inside it, and the task's own `tests/test.sh` grades the same container before it is removed. The task's commit, hash and license go into the receipt; the task's files are never edited.
+A benchmark task is a scenario that ships its own image (`meta.runtime: container`). It runs the way the benchmark's own harness runs it: the image is started and kept alive for the trial, the dsh runtime runs inside it, and the benchmark's own grading decides — for Terminal-Bench the task's `tests/test.sh` in the same container; for SWE-bench Verified the official `swebench` harness, which applies the agent's diff to a fresh container of the same image, runs the dataset's evaluation script and reads the result with the repository's parser. The task's commit, hash and license go into the receipt; the task's files are never edited.
+
+```bash
+dsh-eval bench list swebench-verified                 # 500 issues from 12 Python repositories
+dsh-eval bench get swebench-verified psf__requests-2317   # the row, the grading environment (once), the image (about 1 GB)
+dsh-eval selfcheck psf__requests-2317                 # the reference fix must resolve the issue, an empty change must not
+```
 
 Two things to know. Every published Terminal-Bench image is linux/amd64: on an amd64 host it runs natively, elsewhere Docker emulates it and every trial is slower. And many verifiers install their own tooling at grading time (uv, pytest), so they are as reliable as the container's network. A slice of a public benchmark run here is a paired comparison of your two arms on those tasks — not a leaderboard score.
 
