@@ -206,12 +206,28 @@ direction — never as a direction.
 | `status` | above |
 | `scenarios.list` | name, category, turns, oracle, judge rubric, selfcheck state |
 | `scenarios.add` | writes a scenario, runs selfcheck, returns structured failures |
-| `scenarios.selfcheck` | per scenario: `blankPasses`, `oraclePasses`, strict mutation results, each failure as a code — the loop an agent uses to iterate on a `verify.py` |
+| `scenarios.selfcheck` | per scenario: `blankPasses`, `oraclePasses`, and `findings` — the loop an agent uses to iterate on a `verify.py` (`dsh-eval selfcheck --json`) |
 | `arms.diff` | rows, variables, sources; `multi_variable` as a code |
 | `run.start` | run id; takes `aa`, `repeats`, `scenarios`, `northStar`, `maxUsd` — and no gate override |
 | `run.status` | progress, spend, active trials, early-stop decision |
 | `report.read` | above |
 | `verify` | sealed hashes, report re-derivation, receipt status, trusted-key state |
+
+### Selfcheck findings
+
+Four ways a scenario fails its check, each a code with the parameters needed to fix it:
+
+| code | means | carries |
+|---|---|---|
+| `blank.accepted` | the verifier passed a workspace the agent never touched, so it would pass every trial | `detail`: what the verifier said while accepting it |
+| `oracle.rejected` | the verifier refused the reference answer: it asks for something the oracle does not produce | `detail`: the verifier's own reason |
+| `strict.blind_to_output` | under `--strict`, oracle outputs whose deletion or blanking the verifier does not notice | `files`, `mutated` |
+| `scenario.threw` | the scenario's own code raised | `phase` (`setup` / `verify` / `oracle` / `environment`), `message` |
+
+`detail` inside a finding is always the verifier's own words, never a sentence
+this tool composed: it belongs to whoever wrote the scenario. The findings are
+kept in the checks record too, so a caller can read why a scenario last failed
+without paying to run the check again.
 
 `scenarios.selfcheck` is the one that makes importing a user's existing eval
 practical: the target is machine-checkable (an untouched workspace must fail, the

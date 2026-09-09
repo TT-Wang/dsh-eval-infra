@@ -146,3 +146,91 @@ describe('status: where the project is and what to do next', () => {
     expect(st.readings['northStar.cost']!.attainable).toBe(false)               // but a direction still needs the floor
   })
 })
+
+describe('selfcheck findings: the loop an agent iterates on', () => {
+  /** A scenario built from parts, so each way of being broken can be checked on its own. */
+  function scenario(root: string, name: string, files: Record<string, string>, meta: Record<string, unknown> = {}) {
+    const dir = join(root, name)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ name, title: name, turns: 1, category: 'tools', ...meta }))
+    writeFileSync(join(dir, 'prompts.json'), JSON.stringify(['write answer.txt containing 42']))
+    for (const [f, text] of Object.entries(files)) writeFileSync(join(dir, f), text)
+    return dir
+  }
+  const load = async (dir: string) => (await import('../src/core/scenario.js')).loadScenario(dir)
+  const check = async (dir: string, strict = false) => (await import('../src/core/selfcheck.js')).selfcheckScenario(await load(dir), tmpdir(), { strict })
+
+  const GOOD_VERIFY = 'import os\ndef verify(root):\n    p = os.path.join(root, "answer.txt")\n    if not os.path.isfile(p):\n        return False, "answer.txt missing"\n    return open(p).read().strip() == "42", "checked answer.txt"\n'
+  const GOOD_ORACLE = 'import os\ndef solve(root):\n    open(os.path.join(root, "answer.txt"), "w").write("42\\n")\n'
+
+  it('names a verifier that accepts an untouched workspace, with what it said', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-findings-')); tmp.push(root)
+    const dir = scenario(root, 'always_ok', { 'verify.py': 'def verify(root):\n    return True, "always ok"\n' }, { oracle: 'none' })
+    const r = await check(dir)
+    expect(r.ok).toBe(false)
+    expect(r.blankPasses).toBe(true)
+    expect(r.findings).toEqual([{ code: 'blank.accepted', detail: 'always ok' }])
+  })
+
+  it('names a verifier that rejects the reference answer, with the verifier\'s own reason', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-findings-')); tmp.push(root)
+    // the verifier wants 43; the oracle writes 42, so the scenario cannot be solved as written
+    const dir = scenario(root, 'wants_43', {
+      'verify.py': GOOD_VERIFY.replace('"42"', '"43"'),
+      'oracle.py': GOOD_ORACLE,
+    })
+    const r = await check(dir)
+    expect(r.ok).toBe(false)
+    expect(r.blankPasses).toBe(false)
+    expect(r.oraclePasses).toBe(false)
+    expect(r.findings).toEqual([{ code: 'oracle.rejected', detail: 'checked answer.txt' }])
+  })
+
+  it('says which of the scenario\'s own files raised, so the fix has an address', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-findings-')); tmp.push(root)
+    const bad = scenario(root, 'setup_throws', {
+      'verify.py': GOOD_VERIFY,
+      'oracle.py': GOOD_ORACLE,
+      'setup.py': 'def setup(root):\n    raise RuntimeError("the fixture generator is broken")\n',
+    })
+    const r = await check(bad)
+    expect(r.ok).toBe(false)
+    expect(r.findings![0]).toMatchObject({ code: 'scenario.threw', phase: 'setup' })
+    expect((r.findings![0] as { message: string }).message).toContain('the fixture generator is broken')
+
+    const badOracle = scenario(root, 'oracle_throws', {
+      'verify.py': GOOD_VERIFY,
+      'oracle.py': 'def solve(root):\n    raise RuntimeError("no reference answer yet")\n',
+    })
+    const r2 = await check(badOracle)
+    expect(r2.findings![0]).toMatchObject({ code: 'scenario.threw', phase: 'oracle' })
+  })
+
+  it('names the oracle outputs a verifier is blind to under --strict', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-findings-')); tmp.push(root)
+    // the verifier only looks at answer.txt; the oracle also writes notes.md, which nothing checks
+    const dir = scenario(root, 'half_checked', {
+      'verify.py': GOOD_VERIFY,
+      'oracle.py': GOOD_ORACLE + 'def _extra(root):\n    pass\n',
+    })
+    writeFileSync(join(dir, 'oracle.py'), 'import os\ndef solve(root):\n    open(os.path.join(root, "answer.txt"), "w").write("42\\n")\n    open(os.path.join(root, "notes.md"), "w").write("working notes\\n")\n')
+    const plain = await check(dir)
+    expect(plain.ok).toBe(true)                                   // without --strict the scenario looks fine
+    const strict = await check(dir, true)
+    expect(strict.ok).toBe(false)
+    const finding = strict.findings!.find(f => f.code === 'strict.blind_to_output') as { files: string[]; mutated: number }
+    expect(finding.files.join(' ')).toContain('notes.md')
+    expect(finding.mutated).toBeGreaterThanOrEqual(2)
+  })
+
+  it('passes a sound scenario with no findings, and the record keeps the reasons for a failing one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-findings-')); tmp.push(root)
+    const good = scenario(root, 'sound', { 'verify.py': GOOD_VERIFY, 'oracle.py': GOOD_ORACLE })
+    const r = await check(good)
+    expect(r.ok).toBe(true)
+    expect(r.findings).toBeUndefined()
+    const p = project()
+    recordSelfcheck(p, [await check(scenario(root, 'always_ok2', { 'verify.py': 'def verify(root):\n    return True, "yes"\n' }, { oracle: 'none' }))], { always_ok2: join(root, 'always_ok2') })
+    expect(readChecks(p).selfcheck['always_ok2']!.findings).toEqual([{ code: 'blank.accepted', detail: 'yes' }])
+  })
+})

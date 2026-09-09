@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import type { Project } from './project.js'
-import type { SelfcheckResult } from './selfcheck.js'
+import type { SelfcheckFinding, SelfcheckResult } from './selfcheck.js'
 import { writeJsonAtomic } from './store.js'
 
 export interface SelfcheckEntry {
@@ -23,6 +23,8 @@ export interface SelfcheckEntry {
   checkedAt: string
   /** The verifier's own words on failure, kept for a caller that wants to show them. */
   detail?: string
+  /** Why it did not pass, as codes: a caller can act on the last failure without running the check again. */
+  findings?: SelfcheckFinding[]
 }
 
 export interface ChecksFile {
@@ -81,6 +83,7 @@ export function recordSelfcheck(project: Project, results: SelfcheckResult[], di
       checkedAt: at,
       ...(options.strict && r.mutated !== undefined ? { strict: { mutated: r.mutated, nonDiscriminating: r.nonDiscriminating ?? [] } } : {}),
       ...(r.ok ? {} : { detail: r.detail.slice(0, 400) }),
+      ...(r.findings && r.findings.length > 0 ? { findings: r.findings } : {}),
     }
     checks.selfcheck[r.name] = entry
   }

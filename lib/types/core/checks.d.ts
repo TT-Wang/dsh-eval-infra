@@ -1,5 +1,5 @@
 import type { Project } from './project.js';
-import type { SelfcheckResult } from './selfcheck.js';
+import type { SelfcheckFinding, SelfcheckResult } from './selfcheck.js';
 export interface SelfcheckEntry {
     /** sha256 over the scenario directory's contents; what makes `stale` meaningful. */
     sha: string;
@@ -14,6 +14,8 @@ export interface SelfcheckEntry {
     checkedAt: string;
     /** The verifier's own words on failure, kept for a caller that wants to show them. */
     detail?: string;
+    /** Why it did not pass, as codes: a caller can act on the last failure without running the check again. */
+    findings?: SelfcheckFinding[];
 }
 export interface ChecksFile {
     schema: 'dsh-eval-checks/1';

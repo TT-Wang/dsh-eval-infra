@@ -220,6 +220,10 @@ async function cmdSelfcheck(project: Project, args: Args): Promise<number> {
   const results = await selfcheckAll(scenarios, 4, { strict, ...containerEnv, ...(verifierTimeoutS !== undefined ? { verifierTimeoutS } : {}) })
   const { recordSelfcheck } = await import('./core/checks.js')
   recordSelfcheck(project, results, Object.fromEntries(scenarios.map(s => [s.name, s.dir])), { strict })
+  if (args.flags['json'] === true) {
+    out(JSON.stringify({ schema: 'dsh-eval-selfcheck/1', strict, scenarios: results.map(r => ({ name: r.name, ok: r.ok, blankPasses: r.blankPasses, oraclePasses: r.oraclePasses, turns: r.turns, bytes: r.bytes, ...(r.findings ? { findings: r.findings } : {}) })) }, null, 2))
+    return results.every(r => r.ok) ? 0 : 1
+  }
   let ok = true
   for (const r of results) {
     ok &&= r.ok
@@ -646,7 +650,7 @@ SET UP
   status [--json]                     where the project is, what it can claim, and the next call (the agent entry point)
   scenarios [globs] [--category c]    list scenarios
   scenarios new <name>                write a working scenario from the template into the project's own library and selfcheck it
-  selfcheck [globs] [--strict]        oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
+  selfcheck [globs] [--strict] [--json]   oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
   diff <baseline> <candidate>...      composed-tree diff between arms
   perturb <globs> [--n N]             draft paraphrases of a scenario's prompts (prompts.variants.json) for --perturb
   preflight <arm> [--scenario S] [--dry]   compose the arm, check its rows mounted, then boot a runtime and run one turn (--dry stops before spending)
