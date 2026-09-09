@@ -92,7 +92,7 @@ to do next.
   "runs": [
     { "id": "20260909-044603-a9fm", "state": "done", "arms": ["baseline", "candidate"],
       "scenarios": 1, "repeats": 1, "completed": 2, "total": 2, "usd": 0.0166,
-      "gate": "pass", "sealed": true, "receipt": "PASS" }
+      "gate": "pass", "sealed": true }
   ],
 
   "next": {
@@ -115,7 +115,18 @@ Every state is read off the project on disk. Nothing here runs a model or spends
 | `scenarios` | `ok` / `none` | scenarios matching the project's filter | `scenarios.add` |
 | `selfcheck` | `ok` / `stale` / `never` / `failing` | the selfcheck cache (below) against each scenario's content hash | `scenarios.selfcheck` |
 | `floor` | `ok` / `missing` / `thin` | `archiveNoiseFloors(project)[baseline]`: present, and `scenarios >= minScenarios` | `run.start {aa: true}` |
-| `run` | `none` / `running` / `done` / `cancelled` | the run index | `run.start` |
+| `run` | `none` / `running` / `done` | the run index, and the progress file's age | `run.start`, or `run.status` while one is live |
+
+A run that claims to be running but whose progress file has not been written for
+`ABANDONED_AFTER_MS` (30 minutes) belongs to a process that is gone: it is listed
+under `abandoned` with its idle time and does not make the phase `running`.
+Without that, one crashed run tells every later caller to keep polling it forever.
+A live run outranks every setup blocker in `next` — "how is it going" is actionable,
+"go measure a floor" is not, until it ends.
+
+Container scenarios are named apart under `needsDocker` and kept out of `next`:
+checking one opens its own image, which means Docker and a pull of some gigabytes.
+The caller decides when to pay for that.
 
 Two deliberate omissions:
 
@@ -125,8 +136,9 @@ Two deliberate omissions:
   `ok` / `missing` / `thin` only; `stale` appears in `report.read`, where the
   comparison exists. Status must not guess it.
 - **`one_variable: unchecked` is a real state**, not an error. The diff composes
-  both arms through dsh and costs a second or two; status reports the last
-  computed result if the arm files are unchanged and `unchecked` otherwise.
+  both arms through dsh and costs a second or two, so status never runs it and
+  never caches it: it reports `unchecked` and names `arms.diff`, the tool that
+  answers. Status stays free to call.
 
 ### The selfcheck cache (new)
 

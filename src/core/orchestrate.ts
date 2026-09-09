@@ -9,9 +9,10 @@ import { loadArmFile, type ArmError, applyRoute, type RunRoute, DEFAULT_PROVIDER
 import { evalInfraVersion, resolveApiKey } from './env.js'
 import { describeDiff, evalProfileManifest, prepareArms, recordEnvironment, type ArmDiff } from './plan.js'
 import { projectPrices, type Project, benchPools } from './project.js'
-import { buildReport, noiseFloorOf, readingAlpha, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
+import { buildReport, MIN_SCENARIOS, noiseFloorOf, readingAlpha, renderMarkdown, type NoiseFloor, type Report, gradeOf, qualityReading } from './report.js'
 import { fileSha, keyFingerprint, readManifest, readReceipt, receiptSignatureValid, reportDigest, sameKey, sealRun, signingKey, signReceipt, verifyRun, writeReceipt, type AnalysisContract, type ReceiptStatus, type RunReceipt, type VerifyResult } from './manifest.js'
 import { archiveSignalOrder } from './signal.js'
+import { recordSelfcheck } from './checks.js'
 import { driftTest } from './drift.js'
 import { PROBES as PROBE_LIST, type ProbeReference, type ProbeVerdict } from './probe.js'
 import { deepseekChat } from './judge.js'
@@ -261,6 +262,7 @@ export async function launchRun(project: Project, request: RunRequest, hooks: La
     log(`selfcheck: ${scenarios.length} scenario(s)…`)
     const containerSelfcheck = scenarios.some(s => s.meta.runtime === 'container') && hooks.driverFactory === undefined ? { taskEnvironment: await containerSelfcheckEnvironment(project, log) } : {}
     selfcheck = await selfcheckAll(scenarios, 4, containerSelfcheck)
+    recordSelfcheck(project, selfcheck, Object.fromEntries(scenarios.map(s => [s.name, s.dir])))
     const broken = selfcheck.filter(r => !r.ok)
     for (const r of selfcheck) log(`  ${r.ok ? 'OK ' : 'BAD'} ${r.name.padEnd(28)} blank→${r.blankPasses === null ? '?' : r.blankPasses ? 'PASS?!' : 'fail'} oracle→${r.oraclePasses === null ? 'n/a' : r.oraclePasses ? 'pass' : 'FAIL'} ${r.error ?? r.detail}`)
     if (broken.length > 0) throw new LaunchError(`${broken.length} scenario(s) failed selfcheck: ${broken.map(b => b.name).join(', ')} (fix them or pass --skip-selfcheck)`, 'selfcheck')
@@ -586,7 +588,7 @@ export function analysisContract(plan: RunPlan): AnalysisContract {
     estimator: 'mean over scenarios with a Student-t interval (exact quantile) below 10 scenarios and a percentile bootstrap from 10; sequential mode replaces it with a hedged betting confidence sequence on the winsorized cost ratio, a pass-difference sequence and a reliability sequence, all at the same alpha; other intervals on optionally-stopped data are descriptive',
     alpha: readingAlpha(plan),
     sesoiPct: 10,
-    minScenarios: 5,
+    minScenarios: MIN_SCENARIOS,
     bootstrapDraws: 2000,
     seed: 42,
     gateOrder: 'gates first: any safety-gate violation, then any consistent regression (baseline all repeats pass, candidate all fail), then any suspected regression (majority-fail without consistency), blocks every reading; the gate is a screening rule and states its chance level',

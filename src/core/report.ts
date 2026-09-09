@@ -309,6 +309,9 @@ export function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[], alpha = readin
 }
 
 /** The alpha every planned claim is read at: two claims per candidate (north-star direction, reliability direction) share 5%; sequential mode runs three sequences. */
+/** Comparable scenarios a direction needs, wherever that figure is read: the report, the contract, the agent status. */
+export const MIN_SCENARIOS = 5
+
 export function readingAlpha(plan: { candidates: Array<{ name: string }>; sequential?: boolean }): number {
   if (plan.sequential) return 0.05 / 3
   return 0.05 / (2 * Math.max(1, plan.candidates.length))
@@ -487,7 +490,7 @@ function pairScenario(scenario: string, b: ArmScenarioStats, c: ArmScenarioStats
 
 export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: ReportOptions = {}): Report {
   const sesoi = options.sesoiPct ?? 10
-  const minScenarios = options.minScenarios ?? 5
+  const minScenarios = options.minScenarios ?? MIN_SCENARIOS
   const scenarios = [...new Set([...plan.scenarios, ...ledgers.map(l => l.scenario)])]
   const notes: string[] = []
   // Joint bound across the planned claims: two claims per candidate (cost direction, pass-rate direction) for m candidates,

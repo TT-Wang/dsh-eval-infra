@@ -419,6 +419,8 @@ export declare function qualityReading(c: CandidateReport, wins: number, losses:
 /** Noise floor of an A/A run: the same statistics the candidate report uses, applied to two copies of one arm. */
 export declare function noiseFloorOf(plan: RunPlan, ledgers: RunLedger[], alpha?: number): NoiseFloor | null;
 /** The alpha every planned claim is read at: two claims per candidate (north-star direction, reliability direction) share 5%; sequential mode runs three sequences. */
+/** Comparable scenarios a direction needs, wherever that figure is read: the report, the contract, the agent status. */
+export declare const MIN_SCENARIOS = 5;
 export declare function readingAlpha(plan: {
     candidates: Array<{
         name: string;
