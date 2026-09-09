@@ -103,9 +103,16 @@ dsh-eval init --plugin .            # .dsh-eval/home with an `eval` profile, you
 $EDITOR bench/arms/candidate.yml    # the candidate inserts your plugin row; the baseline is stock dsh
 dsh-eval selfcheck                  # every scenario: untouched → fail, oracle → pass
 dsh-eval diff baseline candidate    # composed-tree diff; must be exactly one variable
+dsh-eval run --baseline baseline --aa --repeats 3     # once per baseline: what "no change" looks like here
 dsh-eval run --baseline baseline --arm candidate --repeats 3
 dsh-eval ui --open                  # browse runs, traces, compare arms
 ```
+
+The A/A run is not optional housekeeping: it runs the baseline against a copy of itself, and its interval is the band a
+later reading has to clear before *cheaper*, *more expensive*, *fewer steps* or *more steps* is said at all. Without one
+on file for that baseline — or with one covering fewer than five scenarios, or measured before a detected drift — every
+run reports its interval and then declines the direction, naming which of the three applies. Measure it once per baseline
+on the same scenarios you plan to compare on, and re-measure it when the baseline changes.
 
 `dsh-eval` is `lib/cli.js`; during development run `node_modules/.bin/tsx src/cli.ts …`. The API key is read from `DEEPSEEK_API_KEY`, then `$DSH_HOME/.env`, then `~/.dsh/.env`, and only ever passed to the runtime subprocess.
 

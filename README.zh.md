@@ -103,9 +103,12 @@ dsh-eval init --plugin .            # 建 .dsh-eval/home 与 eval profile,装入
 $EDITOR bench/arms/candidate.yml    # candidate 插入你的插件行;baseline 是原生 dsh
 dsh-eval selfcheck                  # 每个场景:空工作区→不过,标准答案→过
 dsh-eval diff baseline candidate    # 合成树 diff;必须恰好一处不同
+dsh-eval run --baseline baseline --aa --repeats 3     # 每个基线一次:先量出"没变化"在你这儿长什么样
 dsh-eval run --baseline baseline --arm candidate --repeats 3
 dsh-eval ui --open                  # 浏览运行、trace、对比
 ```
+
+A/A 不是可有可无的例行公事:它让基线和自己的副本跑一遍,得出的区间就是后面读数必须避开的带子,避不开就不说"更便宜/更贵/步数更少/更多"。同一基线没有底噪在档、或者底噪覆盖不足五个场景、或者测于一次已检出的漂移之前,每次运行照常给出区间,然后拒绝给方向,并说明是三种情况里的哪一种。每个基线量一次,用你打算比较的那批场景量;基线变了就重量。
 
 `dsh-eval` 即 `lib/cli.js`;开发期用 `node_modules/.bin/tsx src/cli.ts …`。API key 依次从 `DEEPSEEK_API_KEY`、`$DSH_HOME/.env`、`~/.dsh/.env` 读取,只传给运行时子进程,不打印。
 
