@@ -240,8 +240,8 @@ export interface RunLedger {
   errorKind?: 'runtime' | 'infrastructure'
   /** The model had no entry in the price table: usd figures are 0 and the report withholds cost readings. */
   unpriced?: boolean
-  /** Tool calls that read the harness's own session store, where this trial's transcript sits: a recall or context-pressure reading is not one if the answer was read back off disk. */
-  harnessStateReads?: string[]
+  /** Tool calls that opened the evaluation's own files — the scenario directory (prompts, verifier) or the run directory (evidence) — rather than the task's. */
+  evalFileReads?: string[]
   /** What the safety gate could check on this trial: the write scope it enforced ('*' = unrestricted, a benchmark task's own container) and whether container writes were inspected at all. */
   safety?: { scope: string[]; writesInspected: boolean; checked: Array<'writes' | 'commands' | 'injection'> }
   /** Present when a human override replaced the machine verdict (the original is kept here). */

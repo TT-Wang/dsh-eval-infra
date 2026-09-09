@@ -56,19 +56,6 @@ export declare function planJobs(scenarios: Scenario[], arms: ResolvedArm[], rep
  * is the boundary. The docs say so.
  */
 export declare function stashTruth(workdir: string, stashRoot?: string): (() => void) | undefined;
-/**
- * The runtime's own session store for one trial, moved out of the eval home when
- * a scenario ends a session on purpose. `new_session_before_turns` exists so the
- * turns after it run with no memory of the ones before; dsh keeps every session's
- * full transcript under `<eval home>/sessions/<workspace slug>/<session id>/`,
- * which sits beside the workspace on the host and is mounted into the container,
- * so without this a fresh agent could read back the very fact the scenario asked
- * it to remember and "recall" would measure file reading. The plaintext project
- * cache (`storages/session_projcache/sessions/<id>.json`), which keeps each
- * session's first prompt verbatim, moves with it. Moved, not deleted: the trial
- * restores both when it ends, merging into whatever the new session wrote.
- */
-export declare function stashSessionStore(evalHome: string, workdir: string): (() => void) | undefined;
 export interface RunDeps {
     driverFactory: DriverFactory;
     evalHome: string;

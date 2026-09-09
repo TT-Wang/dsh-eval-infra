@@ -5,7 +5,7 @@
  * scripted driver. Scheduling order is fixed — scenario → repeat → arm — so
  * baseline and candidate always run back to back under the same conditions.
  */
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -16,7 +16,7 @@ import type { ResolvedArm, RunLedger, RunPlan, Scenario, Verdict } from './types
 import { armOverlays } from './arms.js'
 import { buildLedger, type EventLike } from './ledger.js'
 import { hostVerifierEnvWithTimeout, INFRA_PREFIX, verifyInEnvironment, type TaskRuntime } from './environment.js'
-import { evaluateSafety, harnessStateReads, summariseViolations, DEFAULT_WRITE_IGNORES } from './safety.js'
+import { evaluateSafety, evaluationFileReads, summariseViolations, DEFAULT_WRITE_IGNORES } from './safety.js'
 import type { PriceTable } from './pricing.js'
 import { scenarioSetup, scenarioVerify } from './scenario.js'
 import { ledgerPath, writeJsonAtomic, writeLedger, type Progress, type RunPaths } from './store.js'
@@ -104,59 +104,6 @@ export function stashTruth(workdir: string, stashRoot?: string): (() => void) | 
   return () => {
     if (existsSync(stash)) renameSync(stash, truth)
     if (stashRoot === undefined) rmSync(root, { recursive: true, force: true })
-  }
-}
-
-/**
- * The runtime's own session store for one trial, moved out of the eval home when
- * a scenario ends a session on purpose. `new_session_before_turns` exists so the
- * turns after it run with no memory of the ones before; dsh keeps every session's
- * full transcript under `<eval home>/sessions/<workspace slug>/<session id>/`,
- * which sits beside the workspace on the host and is mounted into the container,
- * so without this a fresh agent could read back the very fact the scenario asked
- * it to remember and "recall" would measure file reading. The plaintext project
- * cache (`storages/session_projcache/sessions/<id>.json`), which keeps each
- * session's first prompt verbatim, moves with it. Moved, not deleted: the trial
- * restores both when it ends, merging into whatever the new session wrote.
- */
-export function stashSessionStore(evalHome: string, workdir: string): (() => void) | undefined {
-  const store = join(evalHome, 'sessions')
-  if (!existsSync(store)) return undefined
-  // The slug dsh derives for a session directory contains the workspace path, and the workspace
-  // basename is unique per trial — enough to find this trial's sessions without copying dsh's rule.
-  const key = basename(workdir)
-  const moved = readdirSync(store).filter(name => name.includes(key))
-  if (moved.length === 0) return undefined
-  const stash = mkdtempSync(join(tmpdir(), 'dsh-eval-sessions-'))
-  // The transcripts themselves.
-  const ids: string[] = []
-  for (const name of moved) {
-    for (const id of readdirSync(join(store, name))) ids.push(id)
-    renameSync(join(store, name), join(stash, name))
-  }
-  // And the plaintext project cache beside them, which keeps each session's first prompt in full.
-  const cache = join(evalHome, 'storages', 'session_projcache', 'sessions')
-  const cached: string[] = []
-  if (existsSync(cache)) {
-    mkdirSync(join(stash, 'cache'), { recursive: true })
-    for (const id of ids) {
-      const file = `${id}.json`
-      if (!existsSync(join(cache, file))) continue
-      renameSync(join(cache, file), join(stash, 'cache', file))
-      cached.push(file)
-    }
-  }
-  return () => {
-    for (const name of moved) {
-      const from = join(stash, name)
-      const to = join(store, name)
-      if (!existsSync(from)) continue
-      // The new session recreates the same slug, so merge the stashed sessions back under it.
-      if (!existsSync(to)) { renameSync(from, to); continue }
-      for (const child of readdirSync(from)) { const target = join(to, child); if (!existsSync(target)) renameSync(join(from, child), target) }
-    }
-    for (const file of cached) { const from = join(stash, 'cache', file); const to = join(cache, file); if (existsSync(from) && !existsSync(to)) renameSync(from, to) }
-    rmSync(stash, { recursive: true, force: true })
   }
 }
 
@@ -419,7 +366,6 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   const variantIndex = deps.perturb ? pickVariant(deps.perturb.seed, scenario.name, job.rep, scenario.variants?.length ?? 0) : 0
   const prompts: string[] = variantIndex > 0 ? scenario.variants![variantIndex - 1]! : scenario.prompts
   let restoreTruth: (() => void) | undefined
-  const restoreSessions: Array<() => void> = []
   let capped: RunLedger['capped'] | undefined
   let replaySource: string | undefined
   let meter: import('./meter.js').Meter | undefined
@@ -489,10 +435,6 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
         if (i > 0 && breaks.has(i + 1)) {
           if (!container) await collectWrites(driver)
           await driver.close()
-          // The session is over on purpose: its transcript leaves the eval home before the next one starts,
-          // so what the scenario asked the agent to remember cannot be read back off the disk.
-          const restore = stashSessionStore(deps.evalHome, workdir)
-          if (restore !== undefined) restoreSessions.push(restore)
           sessions += 1
           turnOffset = i
           driver = makeDriver()
@@ -523,7 +465,6 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   try {
     restoreTruth?.()
-    for (const restore of restoreSessions.reverse()) restore()
     if (capped) verdict = { ok: false, detail: `per-trial spend cap $${capped.maxUsd.toFixed(4)} exceeded after turn ${capped.afterTurn} ($${capped.usdAtStop.toFixed(4)} observed); the workspace was not graded` }
     else if (taskRuntime !== undefined && existsSync(join(scenario.dir, 'verify.py'))) {
       // A host-side verifier (a benchmark's own grading package) is handed the container; it says INFRA: when the grade could not be made.
@@ -609,8 +550,8 @@ async function runJob(job: JobSpec, plan: RunPlan, deps: RunDeps, base: { noNetw
   }
   if (deps.perturb) ledger.promptVariant = variantIndex
   if (infrastructure) ledger.errorKind = 'infrastructure'
-  const readHarnessState = harnessStateReads(events, { evalHome: deps.evalHome, scenarioDir: scenario.dir, runDir: deps.paths.dir, workdir })
-  if (readHarnessState.length > 0) ledger.harnessStateReads = readHarnessState
+  const readEvalFiles = evaluationFileReads(events, { scenarioDir: scenario.dir, runDir: deps.paths.dir, workdir })
+  if (readEvalFiles.length > 0) ledger.evalFileReads = readEvalFiles
   if (violations !== undefined) ledger.violations = violations
   if (safetyRecord !== undefined) ledger.safety = safetyRecord
   if (inspectedContainer && containerWrites.length > 0) ledger.containerWrites = containerWrites.slice(0, 500)

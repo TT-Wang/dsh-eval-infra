@@ -38,29 +38,30 @@ export declare function deepestPaths(entries: DiffEntry[]): DiffEntry[];
 export declare function outOfScopeWrites(entries: DiffEntry[], scope: string[], ignores?: string[], mounts?: string[]): DiffEntry[];
 /** The shell commands the agent ran, from the runtime's tool-call events. */
 export declare function shellCommands(events: EventLike[]): string[];
-/** Files a trial has no business opening, because they are the evaluation's own. */
-export interface HarnessPaths {
+/** The evaluation's own files: not part of any task, and not dsh's either. */
+export interface EvalPaths {
     /** The trial's workspace: a file under it is the task's own, whatever it is called. */
     workdir?: string;
-    /** The eval home: the runtime's session store lives here (`sessions/<slug>/<id>/session.jsonl.zstd`) with the whole transcript. */
-    evalHome?: string;
-    /** The scenario's own directory: `prompts.json` holds every turn's text and `verify.py` the grading criteria. */
+    /** The scenario's directory: `prompts.json` holds every turn's text, `verify.py` the grading criteria. */
     scenarioDir?: string;
     /** The run directory: ledgers, events, traces — the evidence this run is about to seal. */
     runDir?: string;
 }
 /**
- * Tool calls that reached into the evaluation's own files rather than the task's.
- * Three kinds, all of which make a verdict mean something other than it says:
- * the runtime's session store (this trial's transcript, so a recall question can
- * be read back off disk instead of remembered), the scenario's directory (whose
- * `prompts.json` carries every turn's text — including the one the agent is
- * supposed to remember — and whose `verify.py` carries the grading criteria), and
- * the run directory (the evidence). Ending a session moves its transcript out of
- * reach (`stashSessionStore`); the rest cannot be moved while trials share them,
- * so they are detected, recorded on the ledger and named in the report.
+ * Tool calls that opened one of the evaluation's own files rather than the task's.
+ * Two places, and no component has business in either: the scenario's directory,
+ * whose `prompts.json` carries every turn's text — including one the agent may be
+ * asked to remember — and whose `verify.py` carries the grading criteria; and the
+ * run directory, which holds the evidence. A verdict from a trial that read them
+ * may reflect what it found rather than what it did, so the trial records it and
+ * the report says so. Under `--sandbox docker` neither is mounted.
+ *
+ * dsh's own state is deliberately not here. The runtime's session store belongs to
+ * the harness under test, and a memory component may legitimately read it; a scale
+ * does not hide the thing it is weighing. What that costs a scenario is the
+ * scenario's business — see `bench/scenarios/m1_cross_session_recall`.
  */
-export declare function harnessStateReads(events: EventLike[], paths: HarnessPaths): string[];
+export declare function evaluationFileReads(events: EventLike[], paths: EvalPaths): string[];
 /**
  * Commands no task should need: recursive deletion outside the scope (or of
  * anything root-like), pushing to a remote, and reaching the network when the
