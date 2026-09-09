@@ -231,21 +231,36 @@ cannot be trusted are withheld before any question of floors or intervals.
 
 ## Tool surface, first cut
 
-Each maps to a CLI form today and to an MCP tool of the same name once the server
-is in place; the shapes are the same either way.
+`dsh-eval mcp` serves these over stdio as an MCP server, which is how the dsh host
+reaches them (`mcp/mcp-client`, `transport: stdio`) and how any other agent can.
+Tool names there use underscores (`scenarios_list`), since some clients validate
+names against `[A-Za-z0-9_-]`. Each also has a CLI form, and the shapes are the
+same either way.
 
-| tool | CLI | returns |
-|---|---|---|
-| `status` | `dsh-eval status --json` | above |
-| `scenarios.list` | `scenarios --json` | name, category, turns, tags, oracle, setup, judge, holdout, runtime, and each one's selfcheck state |
-| `scenarios.add` | — (server `POST /api/scenarios`) | writes a scenario, runs selfcheck, returns structured failures |
-| `scenarios.selfcheck` | `selfcheck --json` | per scenario: `blankPasses`, `oraclePasses`, and `findings` — the loop an agent uses to iterate on a `verify.py` |
-| `arms.diff` | `diff a b --json` | rows, variables, route, patch sources; `state` is `ok` / `identical` / `multi_variable` |
-| `run.start` | — (server `POST /api/runs`) | run id, at once. A run takes minutes to hours, so it is never held open in a tool call: the server owns it and the caller polls. Takes `aa`, `repeats`, `scenarios`, `northStar`, `maxUsd` — and no gate override |
-| `run.status` | `progress <id> --json` | status, trials done, spend, active trials, early-stop decision, and `abandoned` when the process behind a "running" run is gone |
-| `report.read` | `report <id> --claims` | above |
-| `verify` | `verify <id> --json` | sealed hashes, report re-derivation, receipt status, trusted-key state |
-| `runs.list` | `runs --json` | the run index, each with `sealed` and its gate |
+Written against the wire rather than an SDK: MCP over stdio is newline-delimited
+JSON-RPC with five methods, this repository already speaks that protocol in
+`rpc-driver.ts`, and its entire runtime dependency list is one YAML parser.
+
+Two properties of that server are worth stating, because they are contract, not
+implementation. **A refusal is a normal result**: a gate, a missing floor, a
+scenario that needs Docker all come back as data with `isError: false`, and only a
+fault in the tool itself is an error — an agent must not read a refusal as a
+failure to route around. **A run outlives no client**: `run_start` returns its id
+at once and the run belongs to the server process, so closing the connection ends
+it, exactly as interrupting the CLI would.
+
+| tool | MCP | CLI | returns |
+|---|---|---|---|
+| `status` | `status` | `dsh-eval status --json` | above |
+| `scenarios.list` | `scenarios_list` | `scenarios --json` | name, category, turns, tags, oracle, setup, judge, holdout, runtime, and each one's selfcheck state |
+| `scenarios.add` | — | server `POST /api/scenarios` | writes a scenario, runs selfcheck, returns structured failures |
+| `scenarios.selfcheck` | `scenarios_selfcheck` | `selfcheck --json` | per scenario: `blankPasses`, `oraclePasses`, and `findings` — the loop an agent uses to iterate on a `verify.py` |
+| `arms.diff` | `arms_diff` | `diff a b --json` | rows, variables, route, patch sources; `state` is `ok` / `identical` / `multi_variable` |
+| `run.start` | `run_start` | server `POST /api/runs` | run id, at once. A run takes minutes to hours, so it is never held open in a tool call: the server owns it and the caller polls. Takes `aa`, `repeats`, `scenarios`, `northStar`, `maxUsd` — and no gate override |
+| `run.status` | `run_status` | `progress <id> --json` | status, trials done, spend, active trials, early-stop decision, and `abandoned` when the process behind a "running" run is gone |
+| `report.read` | `report_read` | `report <id> --claims` | above |
+| `verify` | `verify` | `verify <id> --json` | sealed hashes, report re-derivation, receipt status, trusted-key state |
+| `runs.list` | `runs_list` | `runs --json` | the run index, each with `sealed` and its gate |
 
 ### Selfcheck findings
 

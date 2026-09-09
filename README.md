@@ -221,6 +221,7 @@ The full UI is then at `<host>/eval/`, `/eval runs` works as a slash command, an
 | `judge <id> [--model M]… [--mode pairwise\|absolute\|both]` | blinded judge over scenarios with `meta.judge` |
 | `probe [--model M] [--samples N] [--enroll]` | fingerprint the route's served model; exit 1 when it differs |
 | `report <id> [--json] [--claims]` | the report; `--claims` gives what the evidence licenses and what it withholds, with the reason and the call that would settle it |
+| `mcp` | serve the agent interface over stdio as an MCP server: what the agent in your dsh conversation drives the evaluation through ([docs/agent-interface.md](docs/agent-interface.md)) |
 | `status [--json]` | where the project is, what it can claim and the next call — the entry point for an agent driving the evaluation ([docs/agent-interface.md](docs/agent-interface.md)) |
 | `verify <id \| dir> [--json] [--key <public.pem>]` | sealed hashes from the bytes on disk, whole-report re-derivation against the receipted digest, signature against a trusted key: PASS (0), INVALID (1), INCONCLUSIVE (2) |
 | `regrade <id>` | re-run verifiers on kept workspaces, rebuild the report, re-seal |
