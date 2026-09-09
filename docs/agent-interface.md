@@ -199,6 +199,36 @@ it would be its own dishonesty. What is withheld is the *claim*, not the
 measurement, and the agent must relay it as a measurement that does not support a
 direction — never as a direction.
 
+**A closed gate withholds both readings**, whatever they computed to. The contract
+says "gates first: any safety-gate violation, then any consistent regression, then
+any suspected regression, blocks every reading", so `gate.unsafe`,
+`gate.regressions`, `gate.suspect` and `gate.incomplete` appear as the `reason` on
+both `reliability.direction` and `northStar.direction`, and the reading each would
+have been is kept in `observed`. A gate that is *open* is itself a licensed claim —
+`gate.nothing_broke` — because "nothing broke" is a finding, not an absence.
+
+### Blocker codes
+
+Every reason a direction is not read, recorded where the rule applies rather than
+parsed back out of a sentence:
+
+| code | carries |
+|---|---|
+| `gate.unsafe` / `gate.regressions` / `gate.suspect` / `gate.incomplete` | `scenarios` |
+| `scenarios.below_minimum` | `have`, `need` |
+| `floor.missing` / `floor.thin` / `floor.stale` | `baseline`, `have`, `need`, `runId` |
+| `floor.no_step_band` | `runId` — the A/A run had no pair to measure steps on |
+| `reading.inside_noise_band` | `interval`, `band`, `floorRun` |
+| `reading.interval_covers_zero` | `interval`, `sesoiPct` |
+| `provenance.unreconciled` | `trials`, `of` — the runtime's usage disagreed with the wire meter |
+| `served_model.mismatch` / `probe.route_differs` | `findings` |
+| `cost.unpriced` | `trials`, `models` |
+| `cost.no_comparable_pairs` / `steps.no_comparable_pairs` | — |
+| `judge.not_run` | `runId` |
+
+Provenance and served-model failures are unshifted to the front: figures that
+cannot be trusted are withheld before any question of floors or intervals.
+
 ## Tool surface, first cut
 
 | tool | returns |

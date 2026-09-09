@@ -168,6 +168,11 @@ export interface ArmSummary {
     usdPerSolved: number | null;
     cacheHitShare: number;
 }
+/** Why a reading is not a direction, as a code the caller renders. Set where the decision is made, never parsed back out of a sentence. */
+export interface ReadingBlocker {
+    code: string;
+    [param: string]: unknown;
+}
 export interface CandidateReport {
     arm: string;
     summary: {
@@ -183,6 +188,8 @@ export interface CandidateReport {
     regressionChance: number | null;
     /** Trials of the two arms whose model has no price-table entry (usd recorded as 0): cost readings are withheld while any exist. */
     unpriced: number;
+    /** Why the north-star reading is not a direction, in the order the rules applied; empty when it is one. */
+    blockers: ReadingBlocker[];
     /** Why the A/A floor did or did not apply: ok = applied; missing = none on file for this baseline; thin = fewer scenarios than the minimum; stale = the baseline drifted since it was measured. A direction is read only when it is ok. */
     floor: 'ok' | 'missing' | 'thin' | 'stale';
     /** Scenarios where the candidate failed the safety gate and the baseline did not. */

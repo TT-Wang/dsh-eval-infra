@@ -131,6 +131,12 @@ export interface ArmSummary {
   cacheHitShare: number
 }
 
+/** Why a reading is not a direction, as a code the caller renders. Set where the decision is made, never parsed back out of a sentence. */
+export interface ReadingBlocker {
+  code: string
+  [param: string]: unknown
+}
+
 export interface CandidateReport {
   arm: string
   summary: { baseline: ArmSummary; candidate: ArmSummary }
@@ -143,6 +149,8 @@ export interface CandidateReport {
   regressionChance: number | null
   /** Trials of the two arms whose model has no price-table entry (usd recorded as 0): cost readings are withheld while any exist. */
   unpriced: number
+  /** Why the north-star reading is not a direction, in the order the rules applied; empty when it is one. */
+  blockers: ReadingBlocker[]
   /** Why the A/A floor did or did not apply: ok = applied; missing = none on file for this baseline; thin = fewer scenarios than the minimum; stale = the baseline drifted since it was measured. A direction is read only when it is ok. */
   floor: 'ok' | 'missing' | 'thin' | 'stale'
   /** Scenarios where the candidate failed the safety gate and the baseline did not. */
@@ -602,18 +610,37 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     const gains = improvements.length ? ` Improves correctness on ${improvements.join(', ')}.` : ''
     let insideNoise = false
     let floorBlocked = false
-    if (unpricedTrials.length > 0) costReading = 'none'
-    else if (comparable.length > 0) {
-      if (comparable.length < minScenarios) costReading = 'inconclusive'
+    // Every reason a direction is not read, recorded where the rule applies.
+    const blockers: ReadingBlocker[] = []
+    if (unpricedTrials.length > 0) {
+      costReading = 'none'
+      blockers.push({ code: 'cost.unpriced', trials: unpricedTrials.length, models: [...new Set(unpricedTrials.map(l => l.model))] })
+    } else if (comparable.length === 0) {
+      blockers.push({ code: 'cost.no_comparable_pairs', scenariosBothPassed: pairs.filter(p => p.costPairs > 0).length })
+    } else {
+      if (comparable.length < minScenarios) {
+        costReading = 'inconclusive'
+        blockers.push({ code: 'scenarios.below_minimum', have: comparable.length, need: minScenarios })
+      }
       else if (costPctCI.significant) {
         costReading = costPctCI.mean < 0 ? 'cheaper' : 'more-expensive'
         // A direction is judged against what "no change" looks like on this baseline: the A/A run's own interval at the
         // same alpha and estimator. No usable floor, no direction; an interval that reaches into the band is not a call.
-        if (noiseFloor === null) { costReading = 'inconclusive'; floorBlocked = true }
-        else if (withinNoise(costPctCI, noiseFloor)) { costReading = 'inconclusive'; insideNoise = true }
+        if (noiseFloor === null) {
+          costReading = 'inconclusive'
+          floorBlocked = true
+          blockers.push({ code: `floor.${floorStatus}`, baseline: plan.baseline.name, need: minScenarios, ...(floorOnFile ? { have: floorOnFile.scenarios, runId: floorOnFile.runId } : {}) })
+        } else if (withinNoise(costPctCI, noiseFloor)) {
+          costReading = 'inconclusive'
+          insideNoise = true
+          blockers.push({ code: 'reading.inside_noise_band', interval: [costPctCI.lo, costPctCI.hi], band: [noiseFloor.lo, noiseFloor.hi], floorRun: noiseFloor.runId })
+        }
       }
       else if (costPctCI.lo > -sesoi && costPctCI.hi < sesoi) costReading = 'equivalent'
-      else costReading = 'inconclusive'
+      else {
+        costReading = 'inconclusive'
+        blockers.push({ code: 'reading.interval_covers_zero', interval: [costPctCI.lo, costPctCI.hi], sesoiPct: sesoi })
+      }
     }
     // Usage provenance: a directional or equivalence cost call needs the runtime's usage figures to match the independent wire meter on every comparable trial.
     const pairLedgers = ledgers.filter(l => (l.arm === plan.baseline.name || l.arm === cand.name) && comparable.some(c => c.scenario === l.scenario))
@@ -621,7 +648,13 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     let provenanceBlocked = false
     // Provenance and served-model failures outrank the floor: figures that cannot be trusted are withheld whether or not a floor exists.
     const wouldRead = (): boolean => costReading === 'cheaper' || costReading === 'more-expensive' || costReading === 'equivalent' || floorBlocked || insideNoise
-    if (unreconciled.length > 0 && wouldRead()) { costReading = 'inconclusive'; provenanceBlocked = true; floorBlocked = false; insideNoise = false }
+    if (unreconciled.length > 0 && wouldRead()) {
+      costReading = 'inconclusive'
+      provenanceBlocked = true
+      floorBlocked = false
+      insideNoise = false
+      blockers.unshift({ code: 'provenance.unreconciled', trials: unreconciled.length, of: pairLedgers.length })
+    }
     // Served-model check: every metered response must report the model the arm requested, and both arms the same one.
     const servedMismatch: string[] = []
     const servedByArm = new Map<string, Set<string>>()
@@ -636,7 +669,13 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
     if (servedByArm.size === 1) { const unchecked = [plan.baseline.name, cand.name].find(a => !servedByArm.has(a) && pairLedgers.some(l => l.arm === a)); if (unchecked !== undefined) servedMismatch.push(`no served-model record on ${unchecked}'s comparable trials; the arms were not verified to share a served model`) }
     if (options.probe?.verdict === 'differs') servedMismatch.unshift(`the route's answer distribution differs from the enrolled reference for ${options.probe.model} (probe distance ${options.probe.distance.toFixed(3)}, p = ${options.probe.p.toFixed(3)})`)
     let servedBlocked = false
-    if (servedMismatch.length > 0 && (wouldRead() || provenanceBlocked)) { costReading = 'inconclusive'; servedBlocked = true; floorBlocked = false; insideNoise = false }
+    if (servedMismatch.length > 0 && (wouldRead() || provenanceBlocked)) {
+      costReading = 'inconclusive'
+      servedBlocked = true
+      floorBlocked = false
+      insideNoise = false
+      blockers.unshift({ code: options.probe?.verdict === 'differs' ? 'probe.route_differs' : 'served_model.mismatch', findings: servedMismatch.slice(0, 5) })
+    }
     // Reliability: pass^k per arm over the scenarios with complete repeats on both sides, and the paired
     // comparison of "reliable here" — the same McNemar / Beta machinery as the per-trial pairing, one unit per scenario.
     const k = plan.repeats
@@ -682,21 +721,26 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       const stepsText = `${fmtPct(stepsCI.mean)} steps, 95% CI ${fmtPct(stepsCI.lo)} to ${fmtPct(stepsCI.hi)}, ${withSteps.length} scenario${withSteps.length === 1 ? '' : 's'}`
       let reading: NorthStarReading['reading']
       let text: string
-      if (withSteps.length === 0) { reading = 'none'; text = 'No scenario where both arms passed; nothing to compare on steps.' }
-      else if (withSteps.length < minScenarios) { reading = 'inconclusive'; text = withSteps.length < 2 ? `Single comparable scenario: ${fmtPct(stepsCI.mean)} on steps, no interval possible; add scenarios or repeats before reading this as an effect.` : `Only ${withSteps.length} comparable scenarios (${stepsText}); fewer than ${minScenarios} scenarios cannot support a direction.` }
+      // The north star is steps, so the reasons a direction is not read are the step path's, not the cost path's.
+      blockers.length = 0
+      if (withSteps.length === 0) { blockers.push({ code: 'steps.no_comparable_pairs' }); reading = 'none'; text = 'No scenario where both arms passed; nothing to compare on steps.' }
+      else if (withSteps.length < minScenarios) { blockers.push({ code: 'scenarios.below_minimum', have: withSteps.length, need: minScenarios }); reading = 'inconclusive'; text = withSteps.length < 2 ? `Single comparable scenario: ${fmtPct(stepsCI.mean)} on steps, no interval possible; add scenarios or repeats before reading this as an effect.` : `Only ${withSteps.length} comparable scenarios (${stepsText}); fewer than ${minScenarios} scenarios cannot support a direction.` }
       else if (stepsCI.significant) {
-        if (noiseFloor === null) { reading = 'inconclusive'; text = `Step interval (${stepsText}) excludes zero, but ${floorText}; a direction is not read until one is: dsh-eval run --baseline ${plan.baseline.name} --aa.` }
-        else if (noiseFloor.steps === undefined) { reading = 'inconclusive'; text = `Step interval (${stepsText}) excludes zero, but the A/A run ${noiseFloor.runId} has no step band (no pair with both arms passing); re-measure the floor before reading a direction on steps.` }
-        else if (withinNoise(stepsCI, noiseFloor.steps)) { reading = 'inconclusive'; text = `Step interval (${stepsText}) reaches into the A/A noise band on steps (${fmtPct(noiseFloor.steps.lo)} to ${fmtPct(noiseFloor.steps.hi)}) measured on this baseline; not read as a real difference.` }
+        if (noiseFloor === null) { blockers.push({ code: `floor.${floorStatus}`, baseline: plan.baseline.name, need: minScenarios, ...(floorOnFile ? { have: floorOnFile.scenarios, runId: floorOnFile.runId } : {}) }); reading = 'inconclusive'; text = `Step interval (${stepsText}) excludes zero, but ${floorText}; a direction is not read until one is: dsh-eval run --baseline ${plan.baseline.name} --aa.` }
+        else if (noiseFloor.steps === undefined) { blockers.push({ code: 'floor.no_step_band', runId: noiseFloor.runId }); reading = 'inconclusive'; text = `Step interval (${stepsText}) excludes zero, but the A/A run ${noiseFloor.runId} has no step band (no pair with both arms passing); re-measure the floor before reading a direction on steps.` }
+        else if (withinNoise(stepsCI, noiseFloor.steps)) { blockers.push({ code: 'reading.inside_noise_band', interval: [stepsCI.lo, stepsCI.hi], band: [noiseFloor.steps.lo, noiseFloor.steps.hi], floorRun: noiseFloor.runId }); reading = 'inconclusive'; text = `Step interval (${stepsText}) reaches into the A/A noise band on steps (${fmtPct(noiseFloor.steps.lo)} to ${fmtPct(noiseFloor.steps.hi)}) measured on this baseline; not read as a real difference.` }
         else { reading = stepsCI.mean < 0 ? 'better' : 'worse'; text = `${stepsCI.mean < 0 ? 'Fewer' : 'More'} steps by ${fmtPct(Math.abs(stepsCI.mean))} (${stepsText}), no regressions.` }
       }
       else if (stepsCI.lo > -sesoi && stepsCI.hi < sesoi) { reading = 'same'; text = `Steps equivalent within ±${sesoi}% (${stepsText}), no regressions.` }
-      else { reading = 'inconclusive'; text = `Step difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${stepsText}); more repeats or scenarios needed.` }
+      else { blockers.push({ code: 'reading.interval_covers_zero', interval: [stepsCI.lo, stepsCI.hi], sesoiPct: sesoi }); reading = 'inconclusive'; text = `Step difference inconclusive: the interval covers zero and is wider than ±${sesoi}% (${stepsText}); more repeats or scenarios needed.` }
       northStar = { metric, reading, ci: stepsCI, unit: '%', text }
     } else {
       // Quality is the blinded judge's preference; it is attached after `dsh-eval judge` runs and read there (see judgeReading).
+      blockers.length = 0
+      blockers.push({ code: 'judge.not_run', runId: plan.id })
       northStar = { metric, reading: 'none', ci: null, unit: 'wins', text: 'Quality is read from the blinded judge: run `dsh-eval judge <run>` to make this reading.' }
     }
+    if (gate !== 'pass') blockers.unshift({ code: `gate.${gate}`, ...(gate === 'regressions' ? { scenarios: regressions } : gate === 'suspect' ? { scenarios: suspected } : gate === 'unsafe' ? { scenarios: unsafe } : { scenarios: incomplete }) })
     let grade: Grade = gradeOf(gate, improvements.length, northStar.reading)
     if (gate === 'unsafe') verdict = `UNSAFE on ${unsafe.length} scenario${unsafe.length === 1 ? '' : 's'} (${unsafe.join(', ')}): ${pairs.find(p => p.class === 'unsafe')?.violations.evidence ?? 'a safety-gate violation'}; nothing else is compared until this is fixed.`
     else if (gate === 'regressions') verdict = `REGRESSION on ${regressions.length} scenario${regressions.length === 1 ? '' : 's'} (${regressions.join(', ')}): the baseline passed every repeat there and ${cand.name} failed every one${regressionChance !== null && regressionChance >= 0.05 ? ` (screening rule: given this pool's flakiness a consistent regression arises by chance with probability ${(regressionChance * 100).toFixed(0)}%; confirm with dsh-eval rerun)` : ''}; ${metric} is not compared until this is fixed.`
@@ -726,6 +770,7 @@ export function buildReport(plan: RunPlan, ledgers: RunLedger[], options: Report
       summary: { baseline: armSummary(plan.baseline.name, pairs, 'baseline', ledgers, plan.repeats), candidate: armSummary(cand.name, pairs, 'candidate', ledgers, plan.repeats) },
       scenarios: pairs,
       regressions,
+      blockers,
       suspected,
       regressionChance,
       unpriced: unpricedTrials.length,

@@ -44,7 +44,7 @@ function parseNorthStar(value: string): NorthStar {
   throw new LaunchError(`--north-star must be one of ${NORTH_STARS.join(', ')} (got ${value})`, 'usage')
 }
 
-const BOOLEAN_FLAGS = new Set(['refresh', 'no-pull', 'aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
+const BOOLEAN_FLAGS = new Set(['claims', 'refresh', 'no-pull', 'aa', 'allow-multi', 'skip-selfcheck', 'keep-workdirs', 'dry-run', 'json', 'open', 'help', 'strict', 'include-holdout', 'sequential', 'rebuild-ledgers', 'allow-same-family', 'no-meter', 'perturb', 'docker-keep-sandbox', 'probe', 'enroll', 'fork', 'dry', 'activate', 'keep-paths'])
 
 export function parseArgs(argv: string[]): Args {
   const [command = 'help', ...rest] = argv
@@ -327,9 +327,14 @@ async function cmdJudge(project: Project, args: Args): Promise<number> {
 
 async function cmdReport(project: Project, args: Args): Promise<number> {
   const id = args.positional[0]
-  if (id === undefined) { err('usage: dsh-eval report <runId> [--json] [--rebuild-ledgers]'); return 3 }
+  if (id === undefined) { err('usage: dsh-eval report <runId> [--json] [--claims] [--rebuild-ledgers]'); return 3 }
   if (args.flags['rebuild-ledgers'] === true) out(`re-derived ${await rebuildLedgers(project, id)} ledgers from events`)
   const report = rebuildReport(project, id)
+  if (args.flags['claims'] === true) {
+    const { claimsOf } = await import('./core/claims.js')
+    out(JSON.stringify(claimsOf(report), null, 2))
+    return 0
+  }
   if (args.flags['json'] === true) out(JSON.stringify(report, null, 2))
   else printReport(report)
   return report.candidates.some(c => c.gate === 'regressions' || c.gate === 'unsafe') ? 1 : 0
@@ -670,7 +675,7 @@ RUN
     replay      [--replay <runId> [--fork-at N]]             re-execute a recorded run keylessly; fork to live calls after N responses
 
 READ AND CHECK
-  report <runId> [--json] [--rebuild-ledgers]   rebuild the report; --rebuild-ledgers re-derives ledgers from the stored events first
+  report <runId> [--json] [--claims] [--rebuild-ledgers]   rebuild the report; --claims gives what the evidence licenses and what it withholds (the agent reading); --rebuild-ledgers re-derives ledgers from the stored events first
   judge <runId> [--model M]... [--mode pairwise|absolute|both] [--arm A] [--seed N] [--allow-same-family]
                                       blinded judge over scenarios that declare meta.judge; several --model form a panel, absolute mode
                                       grades each trial and rectifies pass rates with human annotations (PPI++). Same-family judges are refused
