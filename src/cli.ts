@@ -16,7 +16,7 @@
  */
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, cpSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, cpSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { launchRun, LaunchError, collectScenarios, rebuildLedgers, rebuildReport, regradeRun, resolveArmPath, runJudge, verifyRunDir, verifyRunIntegrity } from './core/orchestrate.js'
 import { loadArmFile } from './core/arms.js'
@@ -24,7 +24,7 @@ import { describeDiff, prepareArms } from './core/plan.js'
 import { ensureEvalProfile, loadProject, profileBundles, saveProjectConfig, setProfileBundles, STARTER_BASELINE, starterCandidate, withPreviewArms, type Project } from './core/project.js'
 import { fmtPct, fmtUsd, renderMarkdown, type Report } from './core/report.js'
 import { selfcheckAll } from './core/selfcheck.js'
-import { listRuns, readJson, readLedgers, readPlan, runPaths } from './core/store.js'
+import { listRuns, readJson, readLedgers, readPlan, runPaths, type Progress } from './core/store.js'
 import { toAtif } from './core/atif.js'
 import { evalInfraVersion, tilde } from './core/env.js'
 import type { TraceRow } from './core/ledger.js'
@@ -171,8 +171,30 @@ async function cmdScenarioNew(project: Project, args: Args): Promise<number> {
   } catch (e) { err(e instanceof Error ? e.message : String(e)); return 2 }
 }
 
-function cmdScenarios(project: Project, args: Args): number {
+async function cmdScenarios(project: Project, args: Args): Promise<number> {
   const { scenarios, invalid } = collectScenarios(project, scenarioFilter(args))
+  if (args.flags['json'] === true) {
+    const { readChecks, selfcheckStateOf } = await import('./core/checks.js')
+    const checks = readChecks(project)
+    out(JSON.stringify({
+      schema: 'dsh-eval-scenarios/1',
+      root: project.scenarioRoot,
+      scenarios: scenarios.map(sc => ({
+        name: sc.name,
+        turns: sc.prompts.length,
+        category: sc.meta.category ?? null,
+        tags: sc.meta.tags ?? [],
+        oracle: sc.hasOracle,
+        setup: sc.hasSetup,
+        judge: sc.meta.judge !== undefined,
+        holdout: sc.meta.holdout === true,
+        runtime: sc.meta.runtime ?? 'host',
+        selfcheck: selfcheckStateOf(checks.selfcheck[sc.name], sc.dir),
+      })),
+      invalid,
+    }, null, 2))
+    return 0
+  }
   out(`root: ${project.scenarioRoot}`)
   for (const s of scenarios) out(`  ${s.name.padEnd(28)} turns=${String(s.prompts.length).padStart(2)} ${(s.meta.category ?? '-').padEnd(10)} oracle=${s.hasOracle ? 'yes' : 'no '}${s.meta.holdout ? ' HOLDOUT' : ''} ${s.meta.stressor ?? ''}`)
   for (const i of invalid) out(`  !! ${i.dir}: ${i.error}`)
@@ -240,6 +262,21 @@ async function cmdDiff(project: Project, args: Args): Promise<number> {
   const candidates = cs.map(c => loadArmFile(resolveArmPath(project, c)))
   // Private scratch: a UI server on the same project may be composing arms right now.
   const prepared = await withPreviewArms(project, armsDir => prepareArms(baseline, candidates, { evalHome: project.home, armsDir }))
+  if (args.flags['json'] === true) {
+    out(JSON.stringify({
+      schema: 'dsh-eval-armsdiff/1',
+      baseline: baseline.name,
+      candidates: prepared.diffs.map(d => ({
+        candidate: d.candidate,
+        variables: d.variables,
+        state: d.variables === 1 ? 'ok' : d.variables === 0 ? 'identical' : 'multi_variable',
+        rows: d.rows,
+        route: d.route,
+        ...(d.patchSources ? { patchSources: d.patchSources } : {}),
+      })),
+    }, null, 2))
+    return prepared.diffs.every(d => d.variables === 1) ? 0 : 1
+  }
   for (const d of prepared.diffs) {
     out(`${d.candidate} vs ${baseline.name}: ${d.variables} variable(s)`)
     for (const line of describeDiff(d)) out(`  ${line}`)
@@ -526,8 +563,55 @@ function cmdPatterns(project: Project): number {
   return 0
 }
 
-function cmdRuns(project: Project): number {
+/** How one run is going: what an agent polls after starting one. */
+function cmdProgress(project: Project, args: Args): number {
+  const id = args.positional[0]
+  if (id === undefined) { err('usage: dsh-eval progress <runId> [--json]'); return 3 }
+  const paths = runPaths(project.runsRoot, id)
+  if (!existsSync(paths.plan)) { err(`run ${id} not found`); return 3 }
+  if (!existsSync(paths.progress)) { err(`run ${id} has no progress file`); return 3 }
+  const progress = readJson<Progress>(paths.progress)
+  const idleMs = Date.now() - statSync(paths.progress).mtimeMs
+  const seqFile = join(paths.dir, 'sequential.json')
+  const sequential = existsSync(seqFile) ? readJson<{ decisions?: unknown[] }>(seqFile) : null
+  const body = {
+    schema: 'dsh-eval-progress/1',
+    runId: id,
+    status: progress.status,
+    completed: progress.completed,
+    total: progress.total,
+    failed: progress.failed,
+    usd: progress.usd,
+    active: progress.active,
+    idleMs,
+    // A run publishes on every turn, so silence this long means the process is gone (see status.ts).
+    ...(progress.status === 'running' && idleMs > 30 * 60 * 1000 ? { abandoned: true } : {}),
+    ...(progress.error !== undefined ? { error: progress.error } : {}),
+    ...(progress.stoppedEarly !== undefined ? { stoppedEarly: progress.stoppedEarly } : {}),
+    ...(sequential?.decisions ? { sequentialDecisions: sequential.decisions.length } : {}),
+  }
+  if (args.flags['json'] === true) { out(JSON.stringify(body, null, 2)); return 0 }
+  out(`${id}: ${body.status} ${body.completed}/${body.total} trials · $${body.usd.toFixed(4)}${body.failed ? ` · ${body.failed} failed` : ''}`)
+  for (const a of progress.active) out(`  running ${a.scenario}/${a.arm}#${a.rep} turn ${a.turn}/${a.turns}`)
+  if ('abandoned' in body) out(`  no progress for ${(idleMs / 60000).toFixed(0)} min: the process is gone`)
+  return 0
+}
+
+function cmdRuns(project: Project, args: Args): number {
   const runs = listRuns(project.runsRoot)
+  if (args.flags['json'] === true) {
+    out(JSON.stringify({
+      schema: 'dsh-eval-runs/1',
+      runs: runs.map((r) => {
+        const paths = runPaths(project.runsRoot, r.id)
+        const sealed = existsSync(join(paths.dir, 'manifest.json'))
+        let gate: string | undefined
+        if (existsSync(paths.report)) { try { gate = readJson<Report>(paths.report).candidates[0]?.gate } catch { /* unreadable report */ } }
+        return { ...r, sealed, ...(gate !== undefined ? { gate } : {}) }
+      }),
+    }, null, 2))
+    return 0
+  }
   if (runs.length === 0) { out(`no runs under ${project.runsRoot}/runs`); return 0 }
   for (const r of runs) {
     let summary = ''
@@ -653,10 +737,10 @@ SET UP
   init [--plugin <path|pkg>]...       create .dsh-eval/home + eval profile, add plugins, write starter arms
   add <path|pkg> [--activate]         install a plugin into the eval profile; a bundle plugin is left inert so an arm can be the thing that adds it (--activate puts it in every arm)
   status [--json]                     where the project is, what it can claim, and the next call (the agent entry point)
-  scenarios [globs] [--category c]    list scenarios
+  scenarios [globs] [--category c] [--json]   list scenarios, with each one's selfcheck state
   scenarios new <name>                write a working scenario from the template into the project's own library and selfcheck it
   selfcheck [globs] [--strict] [--json]   oracle must pass, untouched workspace must fail; --strict also deletes/blanks each oracle output
-  diff <baseline> <candidate>...      composed-tree diff between arms
+  diff <baseline> <candidate>... [--json]   composed-tree diff between arms; the one-variable check
   perturb <globs> [--n N]             draft paraphrases of a scenario's prompts (prompts.variants.json) for --perturb
   preflight <arm> [--scenario S] [--dry]   compose the arm, check its rows mounted, then boot a runtime and run one turn (--dry stops before spending)
   probe [--model M] [--samples N] [--enroll]   fingerprint the route's served model against an enrolled reference (exit 1 when it differs)
@@ -682,7 +766,8 @@ READ AND CHECK
   verify <runId | dir> [--json]       recompute the sealed hashes, re-derive the report, check the signed receipt: PASS / INVALID / INCONCLUSIVE
   regrade <runId>                     re-run verifiers on kept workspaces (no agent re-run), rebuild the report, re-seal
   rerun <runId> <scenario> [--repeats N] [--fork]   re-run a failing pair to tell a cause from resampling luck (--fork replays the identical prefix)
-  runs                                list runs
+  runs [--json]                       list runs
+  progress <runId> [--json]           how a run is going: trials done, spend, active trials, whether the process is still alive
   patterns                            what keeps failing across the archive, most arm-skewed first (skew = one arm's doing)
   ui [--port 4177] [--open]           local web UI
   publish <runId> [--out dir]         bundle the sealed run with report.html and VERIFY.md for a third party
@@ -700,7 +785,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   switch (args.command) {
     case 'init': return cmdInit(project, args)
     case 'add': return cmdAdd(project, args)
-    case 'scenarios': return args.positional[0] === 'new' ? cmdScenarioNew(project, args) : cmdScenarios(project, args)
+    case 'scenarios': return args.positional[0] === 'new' ? await cmdScenarioNew(project, args) : await cmdScenarios(project, args)
     case 'selfcheck': return cmdSelfcheck(project, args)
     case 'diff': return cmdDiff(project, args)
     case 'run': return cmdRun(project, args)
@@ -714,7 +799,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case 'rerun': return cmdRerun(project, args)
     case 'publish': return cmdPublish(project, args)
     case 'judge': return cmdJudge(project, args)
-    case 'runs': return cmdRuns(project)
+    case 'runs': return cmdRuns(project, args)
+    case 'progress': return cmdProgress(project, args)
     case 'bench': return cmdBench(project, args)
     case 'patterns': return cmdPatterns(project)
     case 'ui': return cmdUi(project, args)

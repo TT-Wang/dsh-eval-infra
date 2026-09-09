@@ -231,17 +231,21 @@ cannot be trusted are withheld before any question of floors or intervals.
 
 ## Tool surface, first cut
 
-| tool | returns |
-|---|---|
-| `status` | above |
-| `scenarios.list` | name, category, turns, oracle, judge rubric, selfcheck state |
-| `scenarios.add` | writes a scenario, runs selfcheck, returns structured failures |
-| `scenarios.selfcheck` | per scenario: `blankPasses`, `oraclePasses`, and `findings` — the loop an agent uses to iterate on a `verify.py` (`dsh-eval selfcheck --json`) |
-| `arms.diff` | rows, variables, sources; `multi_variable` as a code |
-| `run.start` | run id; takes `aa`, `repeats`, `scenarios`, `northStar`, `maxUsd` — and no gate override |
-| `run.status` | progress, spend, active trials, early-stop decision |
-| `report.read` | above |
-| `verify` | sealed hashes, report re-derivation, receipt status, trusted-key state |
+Each maps to a CLI form today and to an MCP tool of the same name once the server
+is in place; the shapes are the same either way.
+
+| tool | CLI | returns |
+|---|---|---|
+| `status` | `dsh-eval status --json` | above |
+| `scenarios.list` | `scenarios --json` | name, category, turns, tags, oracle, setup, judge, holdout, runtime, and each one's selfcheck state |
+| `scenarios.add` | — (server `POST /api/scenarios`) | writes a scenario, runs selfcheck, returns structured failures |
+| `scenarios.selfcheck` | `selfcheck --json` | per scenario: `blankPasses`, `oraclePasses`, and `findings` — the loop an agent uses to iterate on a `verify.py` |
+| `arms.diff` | `diff a b --json` | rows, variables, route, patch sources; `state` is `ok` / `identical` / `multi_variable` |
+| `run.start` | — (server `POST /api/runs`) | run id, at once. A run takes minutes to hours, so it is never held open in a tool call: the server owns it and the caller polls. Takes `aa`, `repeats`, `scenarios`, `northStar`, `maxUsd` — and no gate override |
+| `run.status` | `progress <id> --json` | status, trials done, spend, active trials, early-stop decision, and `abandoned` when the process behind a "running" run is gone |
+| `report.read` | `report <id> --claims` | above |
+| `verify` | `verify <id> --json` | sealed hashes, report re-derivation, receipt status, trusted-key state |
+| `runs.list` | `runs --json` | the run index, each with `sealed` and its gate |
 
 ### Selfcheck findings
 
