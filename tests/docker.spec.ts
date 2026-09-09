@@ -16,8 +16,11 @@ describe('docker sandbox', () => {
     mkdirSync(join(home, 'profiles', 'eval', 'node_modules', '@x'), { recursive: true })
     symlinkSync(plugin, join(home, 'profiles', 'eval', 'node_modules', '@x', 'my-plugin'))
     const work = join(root, 'work'); mkdirSync(work)
+    // The real layout: overlays live in the run's arms/ directory, the evidence beside it.
     const runDir = join(root, 'run'); mkdirSync(runDir)
-    const overlay = join(runDir, 'a.patch.yml'); writeFileSync(overlay, '[]')
+    const armsDir = join(runDir, 'arms'); mkdirSync(armsDir)
+    mkdirSync(join(runDir, 'ledgers')); writeFileSync(join(runDir, 'plan.json'), '{}')
+    const overlay = join(armsDir, 'a.patch.yml'); writeFileSync(overlay, '[]')
     expect(linkedPluginPaths(home, 'eval')).toEqual([plugin])
     const input = { arm: { name: 'a', profile: 'eval', provider: 'deepseek-official', model: 'deepseek-v4-flash', effort: 'high', overlayPath: overlay, patchFilePaths: [] }, scenario: {} as never, workdir: work, evalHome: home, overlays: [overlay], env: { DEEPSEEK_API_KEY: 'k' } }
     const args = dockerArgs(input as never, { dshSource: src, nativeShims: [[join(root, 'shim'), join(src, 'node_modules', '.pnpm', 'koffi@1', 'node_modules', '@koromix')]] }, runDir)
@@ -27,7 +30,10 @@ describe('docker sandbox', () => {
     expect(joined).toContain(`type=bind,source=${src},target=${src},readonly`)
     expect(joined).toContain(`type=bind,source=${home},target=${home}`)
     expect(joined).toContain(`type=bind,source=${plugin},target=${plugin},readonly`)
-    expect(joined).toContain(`type=bind,source=${runDir},target=${runDir},readonly`)
+    // Only the overlays' own directory is mounted: the run directory also holds the ledgers, events, traces
+    // and the meter's recorded provider responses of both arms, and no trial has business reading those.
+    expect(joined).toContain(`type=bind,source=${armsDir},target=${armsDir},readonly`)
+    expect(joined).not.toContain(`source=${runDir},`)
     // a checkout reached through a symlink also mounts the link's directory so plugin dependency links resolve inside the container
     const linkDir = join(root, 'dshhome', 'source'); mkdirSync(linkDir, { recursive: true }); symlinkSync(src, join(linkDir, 'current'))
     const viaLink = dockerArgs(input as never, { dshSource: join(linkDir, 'current') }, runDir).join(' ')

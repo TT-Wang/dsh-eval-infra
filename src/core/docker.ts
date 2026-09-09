@@ -115,7 +115,13 @@ export function dshRuntimeMounts(input: DriverInput, options: Pick<DockerOptions
   }
   mounts.set(realpathSync(input.evalHome), 'rw')
   if (existsSync(input.workdir)) mounts.set(realpathSync(input.workdir), 'rw')
-  if (runDir !== undefined) mounts.set(realpathSync(runDir), 'ro')
+  // The runtime needs the overlays it is handed, which live in the run's `arms/` directory — not the run
+  // directory itself, which also holds the ledgers, events, traces and the meter's recorded provider
+  // responses of every trial, this one's and the other arm's. Mount each overlay's own directory, the way
+  // the task-container path already does; the run directory then appears inside the container as an empty
+  // mount point with `arms/` under it.
+  void runDir
+  for (const overlay of input.overlays) { const dir = dirname(realpathSync(overlay)); if (!mounts.has(dir)) mounts.set(dir, 'ro') }
   for (const p of linkedPluginPaths(input.evalHome, input.arm.profile)) if (existsSync(p)) mounts.set(p, 'ro')
   for (const p of options.mounts ?? []) if (existsSync(p)) mounts.set(realpathSync(p), 'ro')
   return [...mounts.entries()]
