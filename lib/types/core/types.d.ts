@@ -266,6 +266,8 @@ export interface RunLedger {
     errorKind?: 'runtime' | 'infrastructure';
     /** The model had no entry in the price table: usd figures are 0 and the report withholds cost readings. */
     unpriced?: boolean;
+    /** Tool calls that read the harness's own session store, where this trial's transcript sits: a recall or context-pressure reading is not one if the answer was read back off disk. */
+    harnessStateReads?: string[];
     /** What the safety gate could check on this trial: the write scope it enforced ('*' = unrestricted, a benchmark task's own container) and whether container writes were inspected at all. */
     safety?: {
         scope: string[];

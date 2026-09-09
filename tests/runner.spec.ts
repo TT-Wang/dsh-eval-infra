@@ -433,3 +433,78 @@ describe('pair dispatch under concurrency (H6)', () => {
     for (let i = 0; i < planned.length; i += 2) expect(planned[i]!.arm.name).toBe(planned[i]!.rep % 2 === 1 ? plan.baseline.name : plan.candidates[0]!.name)
   })
 })
+
+describe('a session ended on purpose leaves nothing to read (memory scenarios)', () => {
+  it('moves the finished session\'s transcript out of the eval home and restores it after the trial', async () => {
+    const { stashSessionStore } = await import('../src/core/runner.js')
+    const { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } = await import('node:fs')
+    const root = mkdtempSync(join(tmpdir(), 'dsh-eval-sessions-')); tmp.push(root)
+    const evalHome = join(root, 'home')
+    const workdir = join(root, 'work', 'dsh-eval-m1_cross_session_recall-baseline-Ab12Cd')
+    mkdirSync(workdir, { recursive: true })
+    // dsh's slug carries the workspace path; another trial's sessions sit beside it and must not move
+    const slug = `--${workdir.replace(/\//g, '-')}--`
+    const other = '--some-other-trial--'
+    const store = join(evalHome, 'sessions')
+    for (const [dir, sid] of [[slug, 'eval-one'], [slug, 'eval-two'], [other, 'eval-x']] as Array<[string, string]>) {
+      mkdirSync(join(store, dir, sid), { recursive: true })
+      writeFileSync(join(store, dir, sid, 'session.jsonl.zstd'), `transcript of ${sid}`)
+    }
+    // dsh also keeps a plaintext cache per session holding its first prompt verbatim
+    const cache = join(evalHome, 'storages', 'session_projcache', 'sessions')
+    mkdirSync(cache, { recursive: true })
+    for (const sid of ['eval-one', 'eval-two', 'eval-x']) writeFileSync(join(cache, `${sid}.json`), JSON.stringify({ record: { rows: { titleInput: { val: { first: { text: `first prompt of ${sid}` } } } } } }))
+    const restore = stashSessionStore(evalHome, workdir)!
+    expect(readdirSync(store)).toEqual([other])                                   // this trial's sessions are gone from the store
+    expect(existsSync(join(store, slug))).toBe(false)
+    expect(readdirSync(cache).sort()).toEqual(['eval-x.json'])                    // and so is their plaintext first prompt
+    // the new session writes its own directory under the same slug while the old one is away
+    mkdirSync(join(store, slug, 'eval-three'), { recursive: true })
+    writeFileSync(join(store, slug, 'eval-three', 'session.jsonl.zstd'), 'transcript of eval-three')
+    restore()
+    expect(readdirSync(join(store, slug)).sort()).toEqual(['eval-one', 'eval-three', 'eval-two'])   // merged back, nothing lost
+    expect(readFileSync(join(store, slug, 'eval-one', 'session.jsonl.zstd'), 'utf8')).toBe('transcript of eval-one')
+    expect(readFileSync(join(store, slug, 'eval-three', 'session.jsonl.zstd'), 'utf8')).toBe('transcript of eval-three')
+    expect(readdirSync(cache).sort()).toEqual(['eval-one.json', 'eval-two.json', 'eval-x.json'])
+    expect(stashSessionStore(join(root, 'nothing-here'), workdir)).toBeUndefined()
+  })
+
+  it('flags a trial that opened the session store, and says the reading is retrieval not memory', async () => {
+    const { harnessStateReads } = await import('../src/core/safety.js')
+    const { buildReport } = await import('../src/core/report.js')
+    const call = (name: string, args: unknown) => ({ type: 'tool/call', seq: 1, time: 1, data: { name, arguments: args } })
+    const home = '/p/.dsh-eval/home'
+    const scenarioDir = '/p/bench/scenarios/m1_cross_session_recall'
+    const runDir = '/p/.dsh-eval/runs/r1'
+    const where = { evalHome: home, scenarioDir, runDir, workdir: '/w' }
+    expect(harnessStateReads([call('read', { path: '/w/answer.txt' })], where)).toEqual([])
+    expect(harnessStateReads([call('bash', { command: 'ls -la .' })], where)).toEqual([])
+    expect(harnessStateReads([call('read', { path: '/w/tests/verify.py' })], where)).toEqual([])   // the task's own file, inside the workspace
+    const found = harnessStateReads([
+      call('bash', { command: `zstd -d ${home}/sessions/--slug--/eval-1/session.jsonl.zstd -c | grep codename` }),
+      call('read', JSON.stringify({ path: `${home}/storages/session_projcache/sessions/eval-1.json` })),
+      call('read', { path: '/elsewhere/session.jsonl' }),
+      call('read', { path: `${scenarioDir}/prompts.json` }),          // every turn's text, including the one to remember
+      call('read', { path: `${scenarioDir}/verify.py` }),             // the grading criteria
+      call('bash', { command: `cat ${runDir}/env.json` }),            // the evidence
+      call('bash', { command: 'ls -la "$DSH_HOME"; find "$DSH_HOME" -maxdepth 4 -type d' }),   // the store by env var, not by path
+      call('read', { path: '/elsewhere/some_scenario/prompts.json' }),                          // a scenario's prompts by any path
+    ], where)
+    expect(found).toHaveLength(8)
+    expect(found[6]).toMatch(/^session store — bash: .*\$DSH_HOME/)
+    expect(found[7]).toMatch(/^the scenario's own directory — read: .*prompts\.json/)
+    expect(found[0]).toMatch(/^session store — bash: .*zstd -d .*session\.jsonl\.zstd/)
+    expect(found[1]).toMatch(/^session store — read: /)
+    expect(found[3]).toMatch(/^the scenario's own directory — read: .*prompts\.json/)
+    expect(found[4]).toMatch(/^the scenario's own directory — read: .*verify\.py/)
+    expect(found[5]).toMatch(/^the run directory — bash: /)
+    const led = (arm: string, extra: Record<string, unknown> = {}) => ({
+      schema: 'dsh-eval-ledger/1' as const, runId: 'r', scenario: 'm1', arm, rep: 1, order: 0, startedAt: '', endedAt: '', wallMs: 1, provider: 'p', model: 'm', resolvedEffort: null, headerModel: null, tools: [], systemPromptSha: null, systemPromptChars: 0,
+      turns: [], steps: [], totals: { hit: 0, miss: 0, output: 0, reasoning: 0, steps: 1, turns: 1, usd: 1, usdPeak: 1, usdOffpeak: 1, peakPrompt: 0 }, toolHistogram: {}, eventCounts: {}, verdict: { ok: true, detail: 'ok' }, behaviour: { toolErrors: 0, repeatedCalls: 0, noActionSteps: 0, observationChars: 0, compactions: 0 }, sessionId: null, sessions: 2, workdir: '', eventsFile: '', traceFile: '', ...extra,
+    })
+    const plan = { id: 'r', createdAt: '', baseline: { name: 'a' }, candidates: [{ name: 'b' }], scenarios: ['m1'], repeats: 1, concurrency: 1, scenarioRoot: '' }
+    const report = buildReport(plan, [led('a'), led('b', { harnessStateReads: [found[0]!] })])
+    expect(report.notes.join(' ')).toMatch(/READ THE EVALUATION'S OWN FILES: 1 trial\(s\)/)
+    expect(report.notes.join(' ')).toMatch(/--sandbox docker, where none of the three is mounted/)
+  })
+})

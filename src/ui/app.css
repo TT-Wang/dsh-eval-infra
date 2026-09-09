@@ -52,6 +52,8 @@ a.pip:hover { outline: 2px solid hsl(var(--primary)); outline-offset: 1px; }
 .cls.same { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
 .cls.regression { background: hsl(var(--destructive) / .12); color: hsl(var(--destructive)); }
 .cls.unsafe { background: hsl(var(--destructive)); color: white; font-weight: 600; }
+/* suspected: regression-coloured but outlined, not filled — flagged, not called. */
+.cls.suspected { background: transparent; color: hsl(var(--destructive)); box-shadow: inset 0 0 0 1px hsl(var(--destructive) / .45); }
 .cls.improvement { background: #10a37f1f; color: #0b7a5f; }
 .cls.incomplete, .cls.unrun { background: #b26a001f; color: #8a5200; }
 .cls.both-fail { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }

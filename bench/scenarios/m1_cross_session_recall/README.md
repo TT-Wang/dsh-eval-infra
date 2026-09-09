@@ -7,6 +7,13 @@ ORCHID-7 — don't write it down yet"); before turn 3 the runner starts a fresh 
 
 A plain agent can recover the six facts from `notes/kickoff.md`; the codename exists only in the
 previous session's conversation, so recalling it requires memory that survives a restart.
+
+That holds because the runner moves the ended session out of reach: dsh writes every session's full
+transcript to `<eval home>/sessions/<workspace slug>/<id>/session.jsonl.zstd` (and its first prompt
+verbatim to `storages/session_projcache/sessions/<id>.json`), which sits beside the workspace on the
+host and is mounted into the container, so before turn 3's session starts both are moved to a private
+temporary directory and restored when the trial ends. Without that, `zstd -d` on the old transcript
+would answer the question with no memory at all.
 Decoy: `notes/old_kickoff_2025.md` carries the same keys with stale values.
 
 Verifier: all seven `key: value` pairs in handoff.md (the detail names the missing ones, so partial

@@ -91,6 +91,57 @@ export function shellCommands(events: EventLike[]): string[] {
   return out
 }
 
+/** Files a trial has no business opening, because they are the evaluation's own. */
+export interface HarnessPaths {
+  /** The trial's workspace: a file under it is the task's own, whatever it is called. */
+  workdir?: string
+  /** The eval home: the runtime's session store lives here (`sessions/<slug>/<id>/session.jsonl.zstd`) with the whole transcript. */
+  evalHome?: string
+  /** The scenario's own directory: `prompts.json` holds every turn's text and `verify.py` the grading criteria. */
+  scenarioDir?: string
+  /** The run directory: ledgers, events, traces — the evidence this run is about to seal. */
+  runDir?: string
+}
+
+/**
+ * Tool calls that reached into the evaluation's own files rather than the task's.
+ * Three kinds, all of which make a verdict mean something other than it says:
+ * the runtime's session store (this trial's transcript, so a recall question can
+ * be read back off disk instead of remembered), the scenario's directory (whose
+ * `prompts.json` carries every turn's text — including the one the agent is
+ * supposed to remember — and whose `verify.py` carries the grading criteria), and
+ * the run directory (the evidence). Ending a session moves its transcript out of
+ * reach (`stashSessionStore`); the rest cannot be moved while trials share them,
+ * so they are detected, recorded on the ledger and named in the report.
+ */
+export function harnessStateReads(events: EventLike[], paths: HarnessPaths): string[] {
+  const trimmed = (p?: string): string => (p ?? '').replace(/\/+$/, '')
+  const home = trimmed(paths.evalHome)
+  const scenario = trimmed(paths.scenarioDir)
+  const run = trimmed(paths.runDir)
+  const workdir = trimmed(paths.workdir)
+  const out: string[] = []
+  for (const e of events) {
+    if (e.type !== 'tool/call') continue
+    const d = (e.data ?? {}) as { name?: unknown; arguments?: unknown }
+    const text = typeof d.arguments === 'string' ? d.arguments : d.arguments === undefined ? '' : JSON.stringify(d.arguments)
+    if (text === '') continue
+    // A path inside the workspace is the task's own file, whatever it is named; everything below is about what lies outside it.
+    const outside = workdir === '' || !text.includes(workdir)
+    // The store is reachable by its literal path, through $DSH_HOME (which is set in the trial's environment), or by
+    // the names dsh gives its own files — an agent that went looking used one of the three.
+    const store = text.includes('session.jsonl') || text.includes('session_projcache') || /\$\{?DSH_HOME/.test(text)
+      || (home !== '' && text.includes(home) && /sessions|storages/.test(text))
+    const kind = store ? 'session store'
+      : (scenario !== '' && text.includes(scenario)) || (outside && /[/\\](prompts\.json|verify\.py|oracle\.py|prompts\.variants\.json)\b/.test(text)) ? "the scenario's own directory"
+      : (run !== '' && text.includes(run)) || (outside && /[/\\]ledgers[/\\]/.test(text)) ? 'the run directory'
+      : null
+    if (kind === null) continue
+    out.push(`${kind} — ${typeof d.name === 'string' ? d.name : 'tool'}: ${text.replace(/\s+/g, ' ').slice(0, 160)}`)
+  }
+  return out
+}
+
 const ROOTISH = new Set(['/', '/*', '~', '~/', '$HOME', '${HOME}', '/etc', '/usr', '/var', '/home', '/root', '/opt', '/bin', '/lib', '/boot'])
 
 /**
